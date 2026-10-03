@@ -346,7 +346,12 @@ static class Program
                         if (name.StartsWith("WEBVIEW2_", StringComparison.OrdinalIgnoreCase))
                             Environment.SetEnvironmentVariable(name, null);
                     CoreWebView2EnvironmentOptions options = new CoreWebView2EnvironmentOptions();
-                    options.AdditionalBrowserArguments = "";
+                    // No background traffic from the engine itself: no component updates, field trials,
+                    // reliability reports, hyperlink pings or other background requests.
+                    options.AdditionalBrowserArguments = "--disable-background-networking --disable-component-update" +
+                                                         " --disable-domain-reliability --no-pings";
+                    options.IsCustomCrashReportingEnabled = true;           // crash reports stay on this PC
+                    options.AllowSingleSignOnUsingOSPrimaryAccount = false; // never signs in with the Windows account
                     env = await CoreWebView2Environment.CreateAsync(null, data, options);
                 }
                 await web.EnsureCoreWebView2Async(env);
@@ -375,6 +380,11 @@ static class Program
             core.Settings.AreHostObjectsAllowed = false;       // the page gets no access to .NET objects
             core.Settings.IsWebMessageEnabled = false;         // ...and no message channel to the program
             core.Settings.IsStatusBarEnabled = false;
+            // SmartScreen would send addresses to Microsoft for checking. This window only ever shows the
+            // private address; web links open in the default browser, which does its own checking.
+            core.Settings.IsReputationCheckingRequired = false;
+            core.Settings.IsGeneralAutofillEnabled = false;
+            core.Settings.IsPasswordAutosaveEnabled = false;
 
             core.AddWebResourceRequestedFilter(PrivateHost + "/*", CoreWebView2WebResourceContext.All);
             core.WebResourceRequested += OnRequest;
