@@ -61,12 +61,13 @@ if ($WebView2) {
         if (-not (Test-Path (Join-Path $wv2 $f))) { throw "WebView2 SDK file missing: $wv2\$f" }
     }
     $cscArgs = $cscArgs -replace '^/platform:anycpu$', '/platform:x64'     # WebView2Loader.dll is the x64 build
-    $cscArgs += '/define:WEBVIEW2'
     $cscArgs += "/r:$(Join-Path $wv2 'Microsoft.Web.WebView2.Core.dll')"
     $cscArgs += "/r:$(Join-Path $wv2 'Microsoft.Web.WebView2.WinForms.dll')"
     $cscArgs += '/r:System.Management.dll'
 }
-$cscArgs += (Join-Path $here 'MarkdownViewer.cs')
+# The WebView2 edition has its own source file; online and offline share MarkdownViewer.cs.
+$source = if ($WebView2) { 'MarkdownViewerWebView2.cs' } else { 'MarkdownViewer.cs' }
+$cscArgs += (Join-Path $here $source)
 & $csc @cscArgs
 if ($LASTEXITCODE -ne 0) { throw "Compilation failed ($LASTEXITCODE)." }
 

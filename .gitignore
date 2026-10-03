@@ -18,3 +18,6 @@ app/firewall.ps1
 # Test documents and spare files
 BAD/
 favicon_readme0.png
+
+# Shared source of the online/offline editions (the WebView2 edition builds from MarkdownViewerWebView2.cs)
+app/MarkdownViewer.cs
