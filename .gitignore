@@ -1,2 +1,2 @@
-# Build output (recreate with appuild.ps1)
+# Build output (recreate with app\build.ps1)
 app/dist/

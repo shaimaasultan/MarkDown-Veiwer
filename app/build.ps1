@@ -13,6 +13,7 @@ $dist = Join-Path $here 'dist'
 $exeName = 'MarkdownViewerWebView2.exe'
 $contentName = 'MarkdownViewerWebView2.Content.dll'
 $certSubject = 'CN=Markdown Viewer (WebView2) Code Signing'
+$srcDir = Join-Path $root 'src'           # the viewer page, marked and lib\ (packed into the Content DLL)
 $wv2 = Join-Path $root 'webview2'          # Microsoft.Web.WebView2 SDK files (Core, WinForms, WebView2Loader)
 $sdkFiles = 'Microsoft.Web.WebView2.Core.dll', 'Microsoft.Web.WebView2.WinForms.dll', 'WebView2Loader.dll'
 $pageFiles = 'viewer.html', 'viewer.js', 'marked.min.js', 'favicon_readme.png'
@@ -24,28 +25,28 @@ foreach ($f in $sdkFiles) {
     if (-not (Test-Path (Join-Path $wv2 $f))) { throw "WebView2 SDK file missing: $wv2\$f" }
     if ((Get-AuthenticodeSignature (Join-Path $wv2 $f)).Status -ne 'Valid') { throw "WebView2 SDK file $f does not carry a valid Microsoft signature." }
 }
-if (-not (Test-Path (Join-Path $root 'lib'))) { throw "Bundled libraries not found in $root\lib." }
+if (-not (Test-Path (Join-Path $srcDir 'lib'))) { throw "Bundled libraries not found in $srcDir\lib." }
 
 # --- Checks on the page sources
 # The bundled library files must be the versions viewer.js lists (both About windows show those).
-$js = [IO.File]::ReadAllText((Join-Path $root 'viewer.js'))
+$js = [IO.File]::ReadAllText((Join-Path $srcDir 'viewer.js'))
 $files = @{ 'marked' = 'marked.min.js'; 'KaTeX' = 'lib\katex\katex.min.js'; 'highlight.js' = 'lib\highlight\highlight.min.js'; 'Mermaid' = 'lib\mermaid\mermaid.min.js' }
 foreach ($lib in $files.Keys) {
     $m = [regex]::Match($js, "name: '$([regex]::Escape($lib))', version: '([^']+)'")
     if (-not $m.Success) { throw "viewer.js does not list a version for $lib." }
-    $text = [IO.File]::ReadAllText((Join-Path $root $files[$lib]))
+    $text = [IO.File]::ReadAllText((Join-Path $srcDir $files[$lib]))
     if (-not $text.Contains('"' + $m.Groups[1].Value + '"') -and -not $text.Contains('v' + $m.Groups[1].Value)) {
         throw "$($files[$lib]) is not $lib $($m.Groups[1].Value) as listed in viewer.js."
     }
 }
 # Nothing the page loads may point to the internet.
-$page = [IO.File]::ReadAllText((Join-Path $root 'viewer.html'))
+$page = [IO.File]::ReadAllText((Join-Path $srcDir 'viewer.html'))
 if ($page -match '(?:src|href)="https?:') { throw 'The page loads something from the internet; every library must come from lib\.' }
 
 # --- App icon: favicon_readme.png scaled to 256/48/32/16 and packed into an .ico (PNG entries).
 Add-Type -AssemblyName System.Drawing
 $ico = Join-Path $dist 'MarkdownViewer.ico'
-$src = [System.Drawing.Image]::FromFile((Join-Path $root 'favicon_readme.png'))
+$src = [System.Drawing.Image]::FromFile((Join-Path $srcDir 'favicon_readme.png'))
 try {
     $images = foreach ($size in 256, 48, 32, 16) {
         $bmp = New-Object System.Drawing.Bitmap $size, $size
@@ -87,9 +88,9 @@ $cscArgs = @('/nologo', '/target:winexe', '/optimize+', '/platform:x64',
 if ($LASTEXITCODE -ne 0) { throw "Compilation failed ($LASTEXITCODE)." }
 
 # --- Compile the Content DLL: page files and lib\ as resources named by their path ("lib/katex/katex.min.js").
-$resources = @(foreach ($f in $pageFiles) { "/resource:`"$(Join-Path $root $f)`",$f" })
-$resources += Get-ChildItem (Join-Path $root 'lib') -Recurse -File | ForEach-Object {
-    $name = $_.FullName.Substring($root.Length + 1).Replace('\', '/')
+$resources = @(foreach ($f in $pageFiles) { "/resource:`"$(Join-Path $srcDir $f)`",$f" })
+$resources += Get-ChildItem (Join-Path $srcDir 'lib') -Recurse -File | ForEach-Object {
+    $name = $_.FullName.Substring($srcDir.Length + 1).Replace('\', '/')
     "/resource:`"$($_.FullName)`",$name"
 }
 $rsp = Join-Path $dist 'content.rsp'
