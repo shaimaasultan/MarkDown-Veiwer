@@ -297,6 +297,7 @@ static class Program
         marker.ForeColor = System.Drawing.Color.FromArgb(0x1A, 0x7F, 0x37);
         marker.BackColor = System.Drawing.Color.FromArgb(0xDA, 0xFB, 0xE1);
         marker.BorderStyle = BorderStyle.FixedSingle;
+        marker.UseMnemonic = false;                     // show "&" as text (not a keyboard-shortcut marker)
         marker.Text = "\u25CF  Firewall: " + fw.Label + "   \u2014   " + fw.Summary +
                       (fw.FirewallOn ? " \u00B7 Windows Firewall on" : " \u00B7 Windows Firewall OFF");
         ToolTip tip = new ToolTip();
