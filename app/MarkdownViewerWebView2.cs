@@ -1,7 +1,7 @@
 // Markdown Viewer (WebView2) - desktop app.
 //
 // Opens a .md file in the HTML viewer (ReadMe.html) inside the program's own window, using Microsoft's
-// WebView2 control. The page lives at a private address (https://mdviewer.local) that exists only inside
+// WebView2 control. The page lives at a private address (https://mdviewer.example) that exists only inside
 // this window: every request it makes is intercepted and answered in-process. There is no web server
 // and no network port at all.
 //
@@ -35,7 +35,9 @@ static class Program
     const string Edition = "webview2";
     const string DataFolder = "MarkdownViewerWebView2";     // %APPDATA% (settings) and %LOCALAPPDATA% (browser data)
     const string AppVersion = "1.4.0";
-    const string PrivateHost = "https://mdviewer.local";     // exists only inside this program's windows
+    // Exists only inside this program's windows. Not a .local name: Windows would first spend ~2 s
+    // looking for a device called "mdviewer" on the local network before the page could load.
+    const string PrivateHost = "https://mdviewer.example";
 
     static readonly string[] AppFiles = { "ReadMe.html", "viewer.js", "marked.min.js", "favicon_readme.png" };
 

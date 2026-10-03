@@ -21,7 +21,7 @@ let mdPaths = [];
 let currentPath = null;
 
 // Desktop app mode: opened by MarkdownViewer.exe, which serves files from disk at <token>/fs/<path>.
-const APP = (location.hostname === '127.0.0.1' || location.hostname === 'mdviewer.local') && /\/app\/[^/]*$/.test(location.pathname);
+const APP = (location.hostname === '127.0.0.1' || location.hostname === 'mdviewer.example') && /\/app\/[^/]*$/.test(location.pathname);
 const apiBase = APP ? location.pathname.replace(/app\/[^/]*$/, '') : '';
 let source = 'local';        // 'local' = files picked/dropped in the page, 'app' = files on disk via the exe
 let repoRoot = '';           // app mode: folder that "/x" links resolve against
