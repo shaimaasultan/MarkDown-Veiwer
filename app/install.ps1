@@ -24,7 +24,7 @@ if ($running.Count) {
 # Always rebuild so the installed copy matches the current sources.
 & (Join-Path $here 'build.ps1')
 New-Item -ItemType Directory -Force $dest | Out-Null
-foreach ($f in $exeName, 'MarkdownViewer.ico', 'ReadMe.html', 'viewer.js', 'marked.min.js', 'favicon_readme.png',
+foreach ($f in $exeName, 'MarkdownViewer.ico', 'viewer.html', 'viewer.js', 'marked.min.js', 'favicon_readme.png',
                'Microsoft.Web.WebView2.Core.dll', 'Microsoft.Web.WebView2.WinForms.dll', 'WebView2Loader.dll') {
     Copy-Item (Join-Path $dist $f) $dest -Force
 }
@@ -32,8 +32,8 @@ $libDest = Join-Path $dest 'lib'
 if (Test-Path $libDest) { Remove-Item $libDest -Recurse -Force }
 Copy-Item (Join-Path $dist 'lib') $libDest -Recurse -Force
 foreach ($f in 'uninstall.ps1', 'firewall.ps1') { Copy-Item (Join-Path $here $f) $dest -Force }
-# File earlier versions of the installer left behind.
-Remove-Item (Join-Path $dest 'editions.ps1') -Force -ErrorAction SilentlyContinue
+# Files earlier versions of the installer left behind (the page was called ReadMe.html).
+foreach ($f in 'editions.ps1', 'ReadMe.html') { Remove-Item (Join-Path $dest $f) -Force -ErrorAction SilentlyContinue }
 
 # Create a registry key only if it's missing. (New-Item -Force would recreate an existing key and
 # wipe its values - e.g. other apps' entries under .md.)

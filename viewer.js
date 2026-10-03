@@ -1,4 +1,4 @@
-// Markdown Folder Viewer — page logic (kept out of ReadMe.html so the page can forbid inline scripts).
+// Markdown Folder Viewer — page logic (kept out of viewer.html so the page can forbid inline scripts).
 "use strict";
 
 document.getElementById('year').textContent = new Date().getFullYear();
@@ -2341,7 +2341,7 @@ function builtWith() {
       use: 'Build, install and uninstall for the current user — no admin rights',
       items: ['build.ps1 — compiles the app and makes the icon (System.Drawing)',
               'install.ps1 / uninstall.ps1 — per-user .md file association (HKCU registry), Start menu shortcuts, Settings › Apps entry'] },
-    { name: 'Viewer', detail: 'HTML, CSS and JavaScript (ReadMe.html + viewer.js), no frameworks',
+    { name: 'Viewer', detail: 'HTML, CSS and JavaScript (viewer.html + viewer.js), no frameworks',
       use: 'Renders, counts, inspects, finds and exports',
       items: [
         feature('Intl.Segmenter', 'word and sentence counts in any language', typeof Intl !== 'undefined' && !!Intl.Segmenter),

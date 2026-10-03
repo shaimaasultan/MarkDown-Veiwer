@@ -1,6 +1,6 @@
 // Markdown Viewer (WebView2) - desktop app.
 //
-// Opens a .md file in the HTML viewer (ReadMe.html) inside the program's own window, using Microsoft's
+// Opens a .md file in the HTML viewer (viewer.html) inside the program's own window, using Microsoft's
 // WebView2 control. The page lives at a private address (https://mdviewer.example) that exists only inside
 // this window: every request it makes is intercepted and answered in-process. There is no web server
 // and no network port at all.
@@ -38,7 +38,7 @@ static class Program
     // looking for a device called "mdviewer" on the local network before the page could load.
     const string PrivateHost = "https://mdviewer.example";
 
-    static readonly string[] AppFiles = { "ReadMe.html", "viewer.js", "marked.min.js", "favicon_readme.png" };
+    static readonly string[] AppFiles = { "viewer.html", "viewer.js", "marked.min.js", "favicon_readme.png" };
 
     // Preview only: the only files handed out from disk are documents and media that cannot run code.
     // HTML, scripts, PDFs, programs etc. are refused (403) even if a document links to them.
@@ -106,7 +106,7 @@ static class Program
             allowRoot = git ?? (parent != null ? parent.FullName : startDir);
         }
 
-        string startUrl = AppBase + "ReadMe.html";
+        string startUrl = AppBase + "viewer.html";
         if (startFile != null) startUrl += "?file=" + Uri.EscapeDataString(ToWeb(startFile));
         Application.Run(new ViewerForm(startUrl));
         return 0;
@@ -588,7 +588,7 @@ static class Program
 
         string csp = null;
         byte[] body = File.ReadAllBytes(full);
-        if (name == "ReadMe.html")
+        if (name == "viewer.html")
         {
             // Apply saved view settings before the page is shown (no flash of the wrong theme/layout).
             StringBuilder attrs = new StringBuilder();

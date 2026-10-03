@@ -62,7 +62,7 @@ $cscArgs = @('/nologo', '/target:winexe', '/optimize+', '/platform:x64',
 if ($LASTEXITCODE -ne 0) { throw "Compilation failed ($LASTEXITCODE)." }
 
 # --- Page files, bundled libraries and the WebView2 SDK files next to the program
-foreach ($f in 'ReadMe.html', 'viewer.js', 'marked.min.js', 'favicon_readme.png') { Copy-Item (Join-Path $root $f) $dist -Force }
+foreach ($f in 'viewer.html', 'viewer.js', 'marked.min.js', 'favicon_readme.png') { Copy-Item (Join-Path $root $f) $dist -Force }
 $libDst = Join-Path $dist 'lib'
 if (Test-Path $libDst) { Remove-Item $libDst -Recurse -Force }
 Copy-Item (Join-Path $root 'lib') $libDst -Recurse -Force
@@ -81,6 +81,6 @@ foreach ($lib in $files.Keys) {
 }
 
 # Nothing the page loads may point to the internet.
-$page = [IO.File]::ReadAllText((Join-Path $dist 'ReadMe.html'))
+$page = [IO.File]::ReadAllText((Join-Path $dist 'viewer.html'))
 if ($page -match '(?:src|href)="https?:') { throw 'The page loads something from the internet; every library must come from lib\.' }
 Write-Host "Built $dist\$exeName"
