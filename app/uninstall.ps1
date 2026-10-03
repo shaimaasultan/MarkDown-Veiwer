@@ -16,6 +16,15 @@ if (Get-NetFirewallRule -Group $name -ErrorAction SilentlyContinue) {
     else { Write-Host "The $name firewall rules remain; remove them with Firewall-Unblock.cmd." }
 }
 
+# The signing certificate, if it was added to the trusted lists with Trust-Certificate.cmd.
+$exePath = Join-Path $dest "$key.exe"
+$trust = Join-Path $PSScriptRoot 'trust.ps1'
+if ((Test-Path $exePath) -and (Test-Path $trust)) {
+    $thumb = (Get-AuthenticodeSignature $exePath).SignerCertificate.Thumbprint
+    if ($thumb -and (Get-ChildItem Cert:\CurrentUser\TrustedPublisher, Cert:\CurrentUser\Root | Where-Object Thumbprint -eq $thumb)) {
+        & $trust -Remove -Exe $exePath
+    }
+}
 foreach ($ext in '.md', '.markdown', '.mdown', '.mkd') {
     $extKey = "$classes\$ext"
     if (Test-Path "$extKey\OpenWithProgids") {

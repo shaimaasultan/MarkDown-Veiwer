@@ -1,21 +1,46 @@
 # Builds Markdown Viewer (WebView2) with the C# compiler that ships with Windows (.NET Framework 4).
-#   build.ps1  ->  .\dist\MarkdownViewerWebView2.exe, together with the page, the bundled libraries
-#                  and Microsoft's WebView2 SDK files it needs.
+#   build.ps1  ->  .\dist\MarkdownViewerWebView2.exe and MarkdownViewerWebView2.Content.dll (the page and the
+#                  bundled libraries as resources - no loose script files), both signed, plus Microsoft's
+#                  WebView2 SDK files it needs.
+#   -CertificateThumbprint <thumbprint>  sign with that code-signing certificate from Cert:\CurrentUser\My
+#                  (e.g. one bought from a certificate authority). Without it, the build uses - or creates
+#                  once - a certificate on this PC named "Markdown Viewer (WebView2) Code Signing".
+param([string]$CertificateThumbprint)
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
 $root = Split-Path $here -Parent
 $dist = Join-Path $here 'dist'
 $exeName = 'MarkdownViewerWebView2.exe'
+$contentName = 'MarkdownViewerWebView2.Content.dll'
+$certSubject = 'CN=Markdown Viewer (WebView2) Code Signing'
 $wv2 = Join-Path $root 'webview2'          # Microsoft.Web.WebView2 SDK files (Core, WinForms, WebView2Loader)
 $sdkFiles = 'Microsoft.Web.WebView2.Core.dll', 'Microsoft.Web.WebView2.WinForms.dll', 'WebView2Loader.dll'
+$pageFiles = 'viewer.html', 'viewer.js', 'marked.min.js', 'favicon_readme.png'
 New-Item -ItemType Directory -Force $dist | Out-Null
 
 $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 if (-not (Test-Path $csc)) { throw 'The 64-bit C# compiler (csc.exe) from .NET Framework 4 was not found.' }
 foreach ($f in $sdkFiles) {
     if (-not (Test-Path (Join-Path $wv2 $f))) { throw "WebView2 SDK file missing: $wv2\$f" }
+    if ((Get-AuthenticodeSignature (Join-Path $wv2 $f)).Status -ne 'Valid') { throw "WebView2 SDK file $f does not carry a valid Microsoft signature." }
 }
 if (-not (Test-Path (Join-Path $root 'lib'))) { throw "Bundled libraries not found in $root\lib." }
+
+# --- Checks on the page sources
+# The bundled library files must be the versions viewer.js lists (both About windows show those).
+$js = [IO.File]::ReadAllText((Join-Path $root 'viewer.js'))
+$files = @{ 'marked' = 'marked.min.js'; 'KaTeX' = 'lib\katex\katex.min.js'; 'highlight.js' = 'lib\highlight\highlight.min.js'; 'Mermaid' = 'lib\mermaid\mermaid.min.js' }
+foreach ($lib in $files.Keys) {
+    $m = [regex]::Match($js, "name: '$([regex]::Escape($lib))', version: '([^']+)'")
+    if (-not $m.Success) { throw "viewer.js does not list a version for $lib." }
+    $text = [IO.File]::ReadAllText((Join-Path $root $files[$lib]))
+    if (-not $text.Contains('"' + $m.Groups[1].Value + '"') -and -not $text.Contains('v' + $m.Groups[1].Value)) {
+        throw "$($files[$lib]) is not $lib $($m.Groups[1].Value) as listed in viewer.js."
+    }
+}
+# Nothing the page loads may point to the internet.
+$page = [IO.File]::ReadAllText((Join-Path $root 'viewer.html'))
+if ($page -match '(?:src|href)="https?:') { throw 'The page loads something from the internet; every library must come from lib\.' }
 
 # --- App icon: favicon_readme.png scaled to 256/48/32/16 and packed into an .ico (PNG entries).
 Add-Type -AssemblyName System.Drawing
@@ -50,7 +75,7 @@ foreach ($img in $images) {
 foreach ($img in $images) { $w.Write([byte[]]$img[1]) }
 $w.Dispose()
 
-# --- Compile (x64: WebView2Loader.dll is the x64 build)
+# --- Compile the program (x64: WebView2Loader.dll is the x64 build)
 $cscArgs = @('/nologo', '/target:winexe', '/optimize+', '/platform:x64',
              "/out:$(Join-Path $dist $exeName)", "/win32icon:$ico",
              '/r:System.Windows.Forms.dll', '/r:System.Drawing.dll', '/r:System.Core.dll', '/r:Microsoft.CSharp.dll',
@@ -61,26 +86,46 @@ $cscArgs = @('/nologo', '/target:winexe', '/optimize+', '/platform:x64',
 & $csc @cscArgs
 if ($LASTEXITCODE -ne 0) { throw "Compilation failed ($LASTEXITCODE)." }
 
-# --- Page files, bundled libraries and the WebView2 SDK files next to the program
-foreach ($f in 'viewer.html', 'viewer.js', 'marked.min.js', 'favicon_readme.png') { Copy-Item (Join-Path $root $f) $dist -Force }
-$libDst = Join-Path $dist 'lib'
-if (Test-Path $libDst) { Remove-Item $libDst -Recurse -Force }
-Copy-Item (Join-Path $root 'lib') $libDst -Recurse -Force
-foreach ($f in $sdkFiles) { Copy-Item (Join-Path $wv2 $f) $dist -Force }
+# --- Compile the Content DLL: page files and lib\ as resources named by their path ("lib/katex/katex.min.js").
+$resources = @(foreach ($f in $pageFiles) { "/resource:`"$(Join-Path $root $f)`",$f" })
+$resources += Get-ChildItem (Join-Path $root 'lib') -Recurse -File | ForEach-Object {
+    $name = $_.FullName.Substring($root.Length + 1).Replace('\', '/')
+    "/resource:`"$($_.FullName)`",$name"
+}
+$rsp = Join-Path $dist 'content.rsp'
+$rspLines = @('/nologo', '/target:library', '/optimize+', '/platform:anycpu',
+              "/out:`"$(Join-Path $dist $contentName)`"") + $resources + "`"$(Join-Path $here 'Content.cs')`""
+[IO.File]::WriteAllLines($rsp, [string[]]$rspLines)
+& $csc "@$rsp"
+$code = $LASTEXITCODE
+Remove-Item $rsp
+if ($code -ne 0) { throw "Compiling $contentName failed ($code)." }
 
-# The bundled library files must be the versions viewer.js lists (both About windows show those).
-$js = [IO.File]::ReadAllText((Join-Path $root 'viewer.js'))
-$files = @{ 'marked' = 'marked.min.js'; 'KaTeX' = 'lib\katex\katex.min.js'; 'highlight.js' = 'lib\highlight\highlight.min.js'; 'Mermaid' = 'lib\mermaid\mermaid.min.js' }
-foreach ($lib in $files.Keys) {
-    $m = [regex]::Match($js, "name: '$([regex]::Escape($lib))', version: '([^']+)'")
-    if (-not $m.Success) { throw "viewer.js does not list a version for $lib." }
-    $text = [IO.File]::ReadAllText((Join-Path $root $files[$lib]))
-    if (-not $text.Contains('"' + $m.Groups[1].Value + '"') -and -not $text.Contains('v' + $m.Groups[1].Value)) {
-        throw "$($files[$lib]) is not $lib $($m.Groups[1].Value) as listed in viewer.js."
+# --- Sign the program and the Content DLL with the same certificate
+if ($CertificateThumbprint) {
+    $cert = Get-Item "Cert:\CurrentUser\My\$CertificateThumbprint" -ErrorAction SilentlyContinue
+    if (-not $cert) { throw "Certificate $CertificateThumbprint not found in Cert:\CurrentUser\My." }
+} else {
+    $cert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert | Where-Object { $_.Subject -eq $certSubject -and $_.NotAfter -gt (Get-Date).AddDays(30) } |
+            Sort-Object NotAfter -Descending | Select-Object -First 1
+    if (-not $cert) {
+        # Private key stays on this PC and cannot be exported.
+        $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject $certSubject -CertStoreLocation Cert:\CurrentUser\My `
+                    -KeyAlgorithm RSA -KeyLength 3072 -HashAlgorithm SHA256 -KeyExportPolicy NonExportable -NotAfter (Get-Date).AddYears(10)
+        Write-Host "Created the code-signing certificate '$certSubject' ($($cert.Thumbprint)) in your personal certificate store."
     }
 }
+if (-not $cert.HasPrivateKey) { throw "Certificate $($cert.Thumbprint) has no private key on this PC; it cannot sign." }
+foreach ($f in $exeName, $contentName) {
+    $path = Join-Path $dist $f
+    Set-AuthenticodeSignature -FilePath $path -Certificate $cert -HashAlgorithm SHA256 | Out-Null
+    $sig = Get-AuthenticodeSignature $path
+    if (-not $sig.SignerCertificate -or $sig.SignerCertificate.Thumbprint -ne $cert.Thumbprint) { throw "Signing $f failed ($($sig.StatusMessage))." }
+}
 
-# Nothing the page loads may point to the internet.
-$page = [IO.File]::ReadAllText((Join-Path $dist 'viewer.html'))
-if ($page -match '(?:src|href)="https?:') { throw 'The page loads something from the internet; every library must come from lib\.' }
-Write-Host "Built $dist\$exeName"
+# --- WebView2 SDK files next to the program; loose page files from older builds are removed.
+foreach ($f in $sdkFiles) { Copy-Item (Join-Path $wv2 $f) $dist -Force }
+foreach ($f in $pageFiles + 'ReadMe.html') { Remove-Item (Join-Path $dist $f) -Force -ErrorAction SilentlyContinue }
+$libDst = Join-Path $dist 'lib'
+if (Test-Path $libDst) { Remove-Item $libDst -Recurse -Force }
+Write-Host "Built $dist\$exeName and $contentName, signed by $($cert.Subject) ($($cert.Thumbprint))"

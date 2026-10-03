@@ -2343,7 +2343,7 @@ function builtWith() {
       items: appInfo && appInfo.webview2Sdk ? [`WebView2 SDK ${appInfo.webview2Sdk} (Microsoft.Web.WebView2) — built into ${APP_EXE}`] : [] },
     { name: 'Installer', detail: 'PowerShell 5.1 scripts',
       use: 'Build, install and uninstall for the current user — no admin rights',
-      items: ['build.ps1 — compiles the app and makes the icon (System.Drawing)',
+      items: ['build.ps1 — compiles the app, packs the page and libraries into MarkdownViewerWebView2.Content.dll, signs both (Authenticode) and makes the icon (System.Drawing)',
               'install.ps1 / uninstall.ps1 — per-user .md file association (HKCU registry), Start menu shortcuts, Settings › Apps entry'] },
     { name: 'Viewer', detail: 'HTML, CSS and JavaScript (viewer.html + viewer.js), no frameworks',
       use: 'Renders, counts, inspects, finds and exports',
@@ -2401,7 +2401,8 @@ function showAbout() {
       el('span', 'lib-use', lib.use),
       el('span', ok ? 'ok' : 'bad', ok ? '✓ loaded' : '✗ not loaded'));
     const src = el('ul', 'lib-src');
-    for (const f of files.filter(u => lib.match.test(u))) src.appendChild(el('li', '', `${f} (bundled)`));
+    const where = appInfo?.signature ? `inside the signed ${appInfo.signature.content}` : 'bundled';
+    for (const f of files.filter(u => lib.match.test(u))) src.appendChild(el('li', '', `${f} (${where})`));
     card.append(head, src);
     list.appendChild(card);
   }
@@ -2425,6 +2426,10 @@ function showAbout() {
       ['Developer tools', 'Off (no F12 / Inspect). Documents are refused if WebView2 debugging has been switched on'],
       ['WebView2', wv]
     ];
+    const sig = appInfo.signature;
+    if (sig) rows.splice(2, 0, ['Signed', `Program and ${sig.content} (the page and every library — no loose script files) ` +
+      `signed by “${sig.signer}”, checked at every start; WebView2 files signed by Microsoft. Certificate ${sig.thumbprint}` +
+      (sig.trusted ? ' — trusted by Windows' : ' — made on this PC, not in Windows’ trusted list')]);
     for (const [k, v] of rows) dl.append(el('dt', '', k), el('dd', '', v));
     // Firewall: shown from the last check, then refreshed.
     const fwDd = el('dd');

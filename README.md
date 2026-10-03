@@ -24,6 +24,7 @@ and never goes online.
 - **Links ask first.** Web and mail links open outside the app only after a question that shows the real address.
 - **Private.** The window runs InPrivate, so no history of the documents you view is kept. Camera, microphone, location, notifications and clipboard reading are refused; downloads come only from the viewer itself; the right-click menu has no Share, web capture or other browser extras.
 - **Stays in the document's folder.** Folder links (junctions, symbolic links) cannot lead outside it, and very large files (over 50 MB of text or 200 MB of media) are not opened. A document cannot draw over the viewer's own controls, and a diagram cannot add CSS of its own.
+- **Signed, no loose script files.** The page and every library are packed into `MarkdownViewerWebView2.Content.dll`. It and the program are signed with the same Authenticode certificate. At every start the program checks both signatures, plus Microsoft's signature on the WebView2 files, without going online. If any of these files is changed, swapped or missing, the app does not start.
 - **No developer access.** Developer tools are off; the app refuses to show documents if WebView2 remote debugging has been switched on, or if it cannot check.
 - **Optional firewall rules.** `Firewall-Block.cmd` blocks all traffic in and out of `MarkdownViewerWebView2.exe` (needs administrator rights); `Firewall-Unblock.cmd` removes the rules.
 
@@ -50,7 +51,22 @@ powershell -NoProfile -ExecutionPolicy Bypass -File app\build.ps1
 ```
 
 Output goes to `app\dist\`. The build checks that the bundled libraries match the versions listed in
-`viewer.js` and that the page loads nothing from the internet.
+`viewer.js` and that the page loads nothing from the internet. It then packs the page and libraries into
+`MarkdownViewerWebView2.Content.dll` and signs the program and that DLL.
+
+**Signing certificate.** The first build creates a code-signing certificate on your PC named
+"Markdown Viewer (WebView2) Code Signing". It is stored in your personal certificate store, and its private
+key cannot be exported. Later builds reuse it. To sign with a certificate bought from a certificate
+authority instead, run:
+
+```bash
+powershell -NoProfile -ExecutionPolicy Bypass -File app\build.ps1 -CertificateThumbprint <thumbprint>
+```
+
+Windows doesn't trust a certificate made on your own PC by default. The app's start-up check works either
+way. If you also want Windows (file Properties › Digital Signatures) to show the program as signed by a
+trusted publisher, run `app\Trust-Certificate.cmd`. `Untrust-Certificate.cmd` undoes that, and so does
+uninstalling the app.
 
 ## Project layout
 
@@ -59,6 +75,7 @@ Output goes to `app\dist\`. The build checks that the bundled libraries match th
 | `viewer.html`, `viewer.js` | The viewer page and its logic |
 | `marked.min.js`, `lib\` | Bundled libraries (marked, KaTeX, highlight.js, Mermaid) |
 | `app\MarkdownViewerWebView2.cs` | The Windows app (C# 5, Windows Forms + WebView2) |
+| `app\Content.cs` | Resource-only `MarkdownViewerWebView2.Content.dll` that carries the page and the libraries |
 | `app\*.ps1`, `app\*.cmd` | Build, install, uninstall and firewall scripts |
 | `webview2\` | Microsoft WebView2 SDK files needed to build the app, with their license |
 

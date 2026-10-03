@@ -1,12 +1,14 @@
 // Markdown Viewer (WebView2) - desktop app.
 //
 // Opens a .md file in the HTML viewer (viewer.html) inside the program's own window, using Microsoft's
-// WebView2 control. The page lives at a private address (https://mdviewer.example) that exists only inside
+// WebView2 control. The page and its libraries are resources of the signed MarkdownViewerWebView2.Content.dll
+// (no loose script files); at every start the program checks its own signature, the Content DLL's (same
+// certificate) and Microsoft's on the WebView2 files. The page lives at a private address (https://mdviewer.example) that exists only inside
 // this window: every request it makes is intercepted and answered in-process. There is no web server
 // and no network port at all.
 //
-// Build: build.ps1 -WebView2 (uses the C# compiler that ships with Windows / .NET Framework 4,
-// plus the WebView2 SDK files in ..\webview2).
+// Build: build.ps1 (uses the C# compiler that ships with Windows / .NET Framework 4, plus the WebView2
+// SDK files in ..\webview2), which also builds and signs the Content DLL.
 
 using System;
 using System.Collections.Generic;
@@ -15,6 +17,7 @@ using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -27,20 +30,23 @@ using Microsoft.Win32.SafeHandles;
 [assembly: AssemblyProduct("Markdown Viewer (WebView2)")]
 [assembly: AssemblyDescription("Previews Markdown files with figures, math and diagrams. Never runs code from a document.")]
 [assembly: AssemblyCopyright("Markdown Viewer")]
-[assembly: AssemblyVersion("1.5.0.0")]
-[assembly: AssemblyFileVersion("1.5.0.0")]
-[assembly: AssemblyInformationalVersion("1.5.0")]
+[assembly: AssemblyVersion("1.6.0.0")]
+[assembly: AssemblyFileVersion("1.6.0.0")]
+[assembly: AssemblyInformationalVersion("1.6.0")]
 
 static class Program
 {
     const string AppName = "Markdown Viewer (WebView2)";
     const string DataFolder = "MarkdownViewerWebView2";     // %APPDATA% (settings) and %LOCALAPPDATA% (browser data)
-    const string AppVersion = "1.5.0";
+    const string AppVersion = "1.6.0";
     // Exists only inside this program's windows. Not a .local name: Windows would first spend ~2 s
     // looking for a device called "mdviewer" on the local network before the page could load.
     const string PrivateHost = "https://mdviewer.example";
 
+    // Page files: resources of the signed Content DLL (named by their path, e.g. "lib/katex/katex.min.js").
+    const string ContentDll = "MarkdownViewerWebView2.Content.dll";
     static readonly string[] AppFiles = { "viewer.html", "viewer.js", "marked.min.js", "favicon_readme.png" };
+    static readonly string[] MicrosoftFiles = { "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll", "WebView2Loader.dll" };
 
     // Preview only: the only files handed out from disk are documents and media that cannot run code.
     // HTML, scripts, PDFs, programs etc. are refused (403) even if a document links to them.
@@ -72,6 +78,14 @@ static class Program
     {
         try
         {
+            appDir = AppDomain.CurrentDomain.BaseDirectory;
+            // Before anything is loaded from the WebView2 files or the Content DLL.
+            string problem = CheckSignatures();
+            if (problem != null)
+            {
+                MessageBox.Show(problem, AppName, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return 1;
+            }
             return Run(args);
         }
         catch (Exception ex)
@@ -83,7 +97,6 @@ static class Program
 
     static int Run(string[] args)
     {
-        appDir = AppDomain.CurrentDomain.BaseDirectory;
         try { SetProcessDPIAware(); } catch { }
         Application.EnableVisualStyles();
 
@@ -117,6 +130,138 @@ static class Program
         if (startFile != null) startUrl += "?file=" + Uri.EscapeDataString(ToWeb(startFile));
         Application.Run(new ViewerForm(startUrl));
         return 0;
+    }
+
+    // ------------------------------------------------------------------ signatures
+
+    class SignatureInfo
+    {
+        public int Status = unchecked((int)0x800B0100);     // TRUST_E_NOSIGNATURE
+        public string Subject, Thumbprint;
+        // The file is exactly as it was signed. A certificate made on this PC is not in Windows' trusted
+        // list (untrusted root), but the check of the file's contents is the same.
+        public bool Intact
+        {
+            get { return Subject != null && (Status == 0 || Status == unchecked((int)0x800B0109) || Status == unchecked((int)0x800B010A)); }
+        }
+        public bool Trusted { get { return Status == 0; } }
+        public string Signer
+        {
+            get
+            {
+                if (Subject == null) return null;
+                Match m = Regex.Match(Subject, @"CN=(""[^""]*""|[^,]*)");
+                return m.Success ? m.Groups[1].Value.Trim('"') : Subject;
+            }
+        }
+    }
+
+    static SignatureInfo signature;          // this program's, after a successful check
+
+    // The program and its Content DLL must be signed by the same certificate and unchanged since; the
+    // WebView2 files must carry Microsoft's valid signature.
+    static string CheckSignatures()
+    {
+        SignatureInfo self = Signature(Application.ExecutablePath);
+        if (!self.Intact) return Tampered(Path.GetFileName(Application.ExecutablePath), self);
+        SignatureInfo content = Signature(Path.Combine(appDir, ContentDll));
+        if (!content.Intact) return Tampered(ContentDll, content);
+        if (content.Thumbprint != self.Thumbprint)
+            return ContentDll + " is signed by \"" + content.Signer + "\", not by the certificate of this program.\n\nReinstall " + AppName + ".";
+        foreach (string f in MicrosoftFiles)
+        {
+            SignatureInfo ms = Signature(Path.Combine(appDir, f));
+            if (!ms.Trusted || ms.Subject.IndexOf("O=Microsoft Corporation", StringComparison.Ordinal) < 0) return Tampered(f, ms);
+        }
+        signature = self;
+        return null;
+    }
+
+    static string Tampered(string file, SignatureInfo s)
+    {
+        string why = !File.Exists(Path.Combine(appDir, file)) ? "it is missing"
+                   : s.Subject == null ? "it is not signed"
+                   : s.Status == unchecked((int)0x80096010) ? "it has been changed since it was signed"
+                   : "its signature is not valid (0x" + s.Status.ToString("X8") + ")";
+        return file + " cannot be trusted: " + why + ".\n\n" + AppName + " will not start. Reinstall it (app\\Install.cmd).";
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    class WinTrustFileInfo
+    {
+        public uint cbStruct = (uint)Marshal.SizeOf(typeof(WinTrustFileInfo));
+        public string pcwszFilePath;
+        public IntPtr hFile = IntPtr.Zero, pgKnownSubject = IntPtr.Zero;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    class WinTrustData
+    {
+        public uint cbStruct = (uint)Marshal.SizeOf(typeof(WinTrustData));
+        public IntPtr pPolicyCallbackData = IntPtr.Zero, pSIPClientData = IntPtr.Zero;
+        public uint dwUIChoice = 2;                 // WTD_UI_NONE
+        public uint fdwRevocationChecks = 0;        // WTD_REVOKE_NONE
+        public uint dwUnionChoice = 1;              // WTD_CHOICE_FILE
+        public IntPtr pFile;
+        public uint dwStateAction = 0;
+        public IntPtr hWVTStateData = IntPtr.Zero, pwszURLReference = IntPtr.Zero;
+        // Never goes online for the check: cached certificate data only, no revocation lookups.
+        public uint dwProvFlags = 0x1000 /* WTD_CACHE_ONLY_URL_RETRIEVAL */ | 0x10 /* WTD_REVOCATION_CHECK_NONE */;
+        public uint dwUIContext = 0;
+        public IntPtr pSignatureSettings = IntPtr.Zero;
+    }
+
+    [DllImport("wintrust.dll", CharSet = CharSet.Unicode)]
+    static extern int WinVerifyTrust(IntPtr hwnd, [MarshalAs(UnmanagedType.LPStruct)] Guid action, WinTrustData data);
+
+    static readonly Guid VerifyV2 = new Guid("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");   // WINTRUST_ACTION_GENERIC_VERIFY_V2
+
+    static SignatureInfo Signature(string path)
+    {
+        SignatureInfo s = new SignatureInfo();
+        if (!File.Exists(path)) return s;
+        WinTrustFileInfo file = new WinTrustFileInfo { pcwszFilePath = path };
+        WinTrustData data = new WinTrustData();
+        data.pFile = Marshal.AllocCoTaskMem(Marshal.SizeOf(typeof(WinTrustFileInfo)));
+        try
+        {
+            Marshal.StructureToPtr(file, data.pFile, false);
+            s.Status = WinVerifyTrust(IntPtr.Zero, VerifyV2, data);
+        }
+        finally
+        {
+            Marshal.DestroyStructure(data.pFile, typeof(WinTrustFileInfo));
+            Marshal.FreeCoTaskMem(data.pFile);
+        }
+        try
+        {
+            X509Certificate2 cert = new X509Certificate2(X509Certificate.CreateFromSignedFile(path));
+            s.Subject = cert.Subject;
+            s.Thumbprint = cert.Thumbprint;
+        }
+        catch { }
+        return s;
+    }
+
+    // ------------------------------------------------------------------ page files (signed Content DLL)
+
+    static Assembly content;
+    static readonly object contentLock = new object();
+
+    // A page file or bundled library by its path ("viewer.html", "lib/katex/katex.min.js"); null if absent.
+    static byte[] ContentFile(string name)
+    {
+        lock (contentLock)
+        {
+            if (content == null) content = Assembly.LoadFrom(Path.Combine(appDir, ContentDll));
+            using (Stream s = content.GetManifestResourceStream(name))
+            {
+                if (s == null) return null;
+                MemoryStream m = new MemoryStream();
+                s.CopyTo(m);
+                return m.ToArray();
+            }
+        }
     }
 
     // ------------------------------------------------------------------ status for the page
@@ -184,12 +329,12 @@ static class Program
 
     class Library { public string Name, Use, Version, File; }
 
-    // Library versions come from the list in the installed viewer.js (LIBRARIES), so both About windows
-    // show the same thing; build.ps1 checks that each bundled file really is that version.
+    // Library versions come from the list in viewer.js (LIBRARIES) inside the Content DLL, so both About
+    // windows show the same thing; build.ps1 checks that each bundled file really is that version.
     static List<Library> Libraries()
     {
         string js = "";
-        try { js = File.ReadAllText(Path.Combine(appDir, "viewer.js"), Encoding.UTF8); } catch { }
+        try { js = Encoding.UTF8.GetString(ContentFile("viewer.js")); } catch { }
         Dictionary<string, string> versions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (Match m in Regex.Matches(js, @"name: '([^']+)', version: '([^']+)'"))
             versions[m.Groups[1].Value] = m.Groups[2].Value;
@@ -233,12 +378,23 @@ static class Program
         sb.AppendLine("microphone, location, notification or clipboard-reading access; downloads only from the viewer.");
         sb.AppendLine("Folder links (junctions, symbolic links) cannot lead outside the document's folder.");
         sb.AppendLine();
+        if (signature != null)
+        {
+            sb.AppendLine("SIGNED: the program and " + ContentDll + " (the page and every");
+            sb.AppendLine("library - there are no loose script files) are signed by \"" + signature.Signer + "\"");
+            sb.AppendLine("and checked at every start; the WebView2 files must carry Microsoft's signature.");
+            sb.AppendLine("A changed, swapped or missing file stops the app.");
+            sb.AppendLine("     certificate " + signature.Thumbprint);
+            sb.AppendLine("     " + (signature.Trusted ? "trusted by Windows"
+                          : "made on this PC, not in Windows' trusted list (Trust-Certificate.cmd adds it)"));
+            sb.AppendLine();
+        }
         sb.AppendLine("LIBRARIES (all bundled - this app never needs the internet):");
         foreach (Library lib in Libraries())
         {
             sb.AppendLine();
             sb.AppendLine("- " + lib.Name + " " + lib.Version + "  (" + lib.Use + ")");
-            sb.AppendLine("     " + lib.File + " (bundled)");
+            sb.AppendLine("     " + lib.File + " (inside the signed " + ContentDll + ")");
         }
         sb.AppendLine();
         sb.AppendLine("BUILT WITH:");
@@ -644,25 +800,15 @@ static class Program
         return null;
     }
 
+    // Page files and bundled libraries come only from the signed Content DLL, never from loose files.
     static void SendAppFile(Stream s, string name, bool headOnly)
     {
-        string full;
-        if (name.StartsWith("lib/", StringComparison.Ordinal))
-        {
-            string libDir = Path.Combine(appDir, "lib");
-            try { full = Path.GetFullPath(Path.Combine(appDir, name.Replace('/', '\\'))); }
-            catch { NotFound(s); return; }
-            if (!IsUnder(full, libDir) || !LibTypes.Contains(Path.GetExtension(full))) { NotFound(s); return; }
-        }
-        else
-        {
-            if (Array.IndexOf(AppFiles, name) < 0) { NotFound(s); return; }
-            full = Path.Combine(appDir, name);
-        }
-        if (!File.Exists(full)) { NotFound(s); return; }
+        bool lib = name.StartsWith("lib/", StringComparison.Ordinal);
+        if (lib ? !LibTypes.Contains(Path.GetExtension(name)) : Array.IndexOf(AppFiles, name) < 0) { NotFound(s); return; }
+        byte[] body = ContentFile(name);
+        if (body == null) { NotFound(s); return; }
 
         string csp = null;
-        byte[] body = File.ReadAllBytes(full);
         if (name == "viewer.html")
         {
             // Apply saved view settings before the page is shown (no flash of the wrong theme/layout).
@@ -685,7 +831,7 @@ static class Program
                 "img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self'; " +
                 "object-src 'none'; frame-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'";
         }
-        Send(s, 200, Mime(full), body, csp, headOnly);
+        Send(s, 200, Mime(name), body, csp, headOnly);
     }
 
     static void SendDiskFile(Stream s, string webPath, bool headOnly)
@@ -744,6 +890,9 @@ static class Program
           .Append(",\"servedTypes\":").Append(Json(string.Join(" ", served.ToArray())))
           .Append(",\"webview2Runtime\":").Append(Json(wvRuntime))
           .Append(",\"webview2Sdk\":").Append(Json(wvSdk))
+          .Append(",\"signature\":").Append(signature == null ? "null" :
+              "{\"signer\":" + Json(signature.Signer) + ",\"thumbprint\":" + Json(signature.Thumbprint) +
+              ",\"trusted\":" + (signature.Trusted ? "true" : "false") + ",\"content\":" + Json(ContentDll) + "}")
           .Append("}}");
         Send(s, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(sb.ToString()), null, headOnly);
     }
