@@ -147,7 +147,7 @@
     .sentences-only h1, .sentences-only h2, .sentences-only h3, .sentences-only h4, .sentences-only h5,
     .sentences-only h6, .sentences-only table { display: none !important; }   /* root signs, fraction bars, slashes: drawings, no text */
     .measuring .katex .katex-mathml, .measuring .katex .katex-mathml * { display: none !important; }
-    #toc .toc-title, #imgPanel .toc-title { font-weight: 600; padding: 0 1rem .4rem; color: var(--muted); text-transform: uppercase; font-size: .72rem; letter-spacing: .05em; }
+    #toc .toc-title, #imgPanel .toc-title, #linkPanel .toc-title { font-weight: 600; padding: 0 1rem .4rem; color: var(--muted); text-transform: uppercase; font-size: .72rem; letter-spacing: .05em; }
     #toc ol { list-style: none; margin: 0; padding: 0; }
     #toc a {
       display: block; padding: .22rem 1rem .22rem calc(1rem + var(--lvl, 0) * .85rem); color: var(--fg);
@@ -157,19 +157,32 @@
     #toc a.active { border-left-color: var(--accent); background: var(--active); font-weight: 600; }
 
     /* ---- Images list (right) ---- */
-    #imgPanel {
+    #imgPanel, #linkPanel {
       width: 280px; flex-shrink: 0; border-left: 1px solid var(--border); background: var(--panel);
       overflow: auto; padding: .75rem 0 1.5rem; font-size: .83rem;
     }
     :root:not([data-imgs-open]) #imgPanel { display: none; }
     :root[data-imgs-open] #toc { display: none; }
-    #imgList { list-style: none; margin: 0; padding: 0; }
-    #imgList button {
+    :root:not([data-links-open]) #linkPanel { display: none; }
+    :root[data-links-open] #toc { display: none; }
+    #imgList, #linkList { list-style: none; margin: 0; padding: 0; }
+    #linkList li { display: flex; align-items: stretch; }
+    #imgList button, #linkList button.link-go {
       display: flex; gap: .6rem; align-items: center; width: 100%; padding: .35rem 1rem; border: 0;
       border-left: 3px solid transparent; background: none; color: var(--fg); text-align: left; cursor: pointer; font: inherit;
     }
-    #imgList button:hover { background: var(--active); }
-    #imgList button.active { border-left-color: var(--accent); background: var(--active); font-weight: 600; }
+    #imgList button:hover, #linkList li:hover { background: var(--active); }
+    #imgList button.active, #linkList button.link-go.active { border-left-color: var(--accent); background: var(--active); }
+    #imgList button.active, #linkList button.link-go.active .link-text { font-weight: 600; }
+    #linkList button.link-go { flex: 1; min-width: 0; align-items: flex-start; padding: .4rem .3rem .4rem 1rem; }
+    .link-icon { width: 1.3rem; flex-shrink: 0; text-align: center; }
+    .link-body { min-width: 0; flex: 1; }
+    .link-text { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .link-text.wrap { white-space: normal; word-break: break-all; }
+    .link-url { display: block; color: var(--muted); font: .72rem/1.35 ui-monospace, Consolas, monospace; word-break: break-all; }
+    .link-flag { display: block; color: var(--bad); font-size: .74rem; font-weight: 600; }
+    .link-copy { flex-shrink: 0; border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 .7rem; font-size: .95rem; }
+    .link-copy:hover { color: var(--accent); }
     .img-thumb {
       width: 64px; height: 48px; flex-shrink: 0; border-radius: 4px; background: var(--bg); border: 1px solid var(--border);
       display: flex; align-items: center; justify-content: center; overflow: hidden; font-size: 1.1rem;
@@ -458,7 +471,7 @@
         --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --border: #d1d9e0;
         --panel: #f6f8fa; --accent: #0969da; --code-bg: #f6f8fa;
       }
-      header, aside, footer, #crumb, #drop, #toc, #imgPanel, #lightbox, .measure-box { display: none !important; }
+      header, aside, footer, #crumb, #drop, #toc, #imgPanel, #linkPanel, #lightbox, .measure-box { display: none !important; }
       html, body, main, #content { display: block; height: auto; overflow: visible; background: #fff; }
       .markdown-body { max-width: none; padding: 0; font-size: 11pt; contain: none; }
       .markdown-body pre, .markdown-body pre code { white-space: pre-wrap; word-break: break-word; }
@@ -475,7 +488,7 @@
     @media (max-width: 1000px) {
       #toc { position: fixed; right: 0; top: 0; bottom: 0; z-index: 40; width: min(300px, 85vw); box-shadow: -8px 0 24px rgba(0,0,0,.25); }
       :root:not([data-toc-open]) #toc { display: none; }
-      #imgPanel { position: fixed; right: 0; top: 0; bottom: 0; z-index: 40; width: min(320px, 85vw); box-shadow: -8px 0 24px rgba(0,0,0,.25); }
+      #imgPanel, #linkPanel { position: fixed; right: 0; top: 0; bottom: 0; z-index: 40; width: min(320px, 85vw); box-shadow: -8px 0 24px rgba(0,0,0,.25); }
     }
     @media (max-width: 760px) {
       main { flex-direction: column; }
@@ -497,6 +510,7 @@
     <button id="findBtn" class="btn secondary" disabled title="Find in document (Ctrl+F)">🔎 Find</button>
     <button id="tocBtn" class="btn secondary" disabled title="Show/hide the table of contents (Ctrl+Shift+O)">📑 Contents</button>
     <button id="imgBtn" class="btn secondary" disabled title="Show/hide the list of pictures in this document (Ctrl+Shift+G)">🖼️ Images</button>
+    <button id="linkBtn" class="btn secondary" disabled title="Show/hide the list of links in this document (Ctrl+Shift+L)">🔗 Links</button>
     <div class="menu-wrap">
       <button id="copyBtn" class="btn secondary" disabled aria-haspopup="menu" aria-expanded="false"
               title="Save or copy the document without hidden characters">💾 Export ▾</button>
@@ -631,6 +645,10 @@
     <nav id="imgPanel" aria-label="Pictures in this document">
       <div class="toc-title" id="imgTitle">Images</div>
       <ol id="imgList"></ol>
+    </nav>
+    <nav id="linkPanel" aria-label="Links in this document">
+      <div class="toc-title" id="linkTitle">Links</div>
+      <ol id="linkList"></ol>
     </nav>
   </main>
 

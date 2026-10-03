@@ -78,6 +78,7 @@ function markWeb(el, src) {
   if (el.tagName === 'IMG') {
     el.classList.remove('zoomable');
     el.classList.add('web');
+    el.dataset.origAlt = el.getAttribute('alt') || '';
     el.alt = `🌐 Web picture not loaded (this app never goes online): ${src}`;
   }
   el.title = `Not loaded — this app never goes online: ${src}`;
@@ -391,6 +392,7 @@ function renderDoc({ anchor = null, keepScroll = false } = {}) {
 
   document.getElementById('docPath').textContent = currentPath + (isEdited() ? '  •  edited (unsaved)' : '');
   updateStats();
+  buildLinkList();
   // Diagrams draw asynchronously; refresh what depends on them once they're done.
   renderDiagrams(output).then(() => {
     markZoomable(output);
@@ -439,6 +441,7 @@ function fixResources(root, baseDir) {
   });
   root.querySelectorAll('a[href]').forEach(a => {
     const href = a.getAttribute('href');
+    a.dataset.origHref = href;
     if (href.startsWith('#')) {
       a.addEventListener('click', ev => { ev.preventDefault(); scrollToAnchor(href.slice(1)); });
       return;
@@ -2482,7 +2485,7 @@ content.addEventListener('scroll', () => {
 });
 
 function updateTocButton() {
-  const open = !('imgsOpen' in document.documentElement.dataset) &&
+  const open = !('imgsOpen' in document.documentElement.dataset) && !('linksOpen' in document.documentElement.dataset) &&
     (narrowScreen.matches ? 'tocOpen' in document.documentElement.dataset : loadPrefLive('toc') === 'shown');
   tocBtn.classList.toggle('on', open && !tocBtn.disabled);
 }
@@ -2490,8 +2493,9 @@ function updateTocButton() {
 function toggleToc() {
   if (tocBtn.disabled) return;
   const root = document.documentElement;
-  if ('imgsOpen' in root.dataset) {            // the images list takes the same place: switch back to Contents
+  if ('imgsOpen' in root.dataset || 'linksOpen' in root.dataset) {   // these lists take the same place: back to Contents
     closeImages();
+    closeLinks();
     if (narrowScreen.matches ? 'tocOpen' in root.dataset : loadPrefLive('toc') === 'shown') { updateTocButton(); updateTocActive(); return; }
   }
   if (narrowScreen.matches) {
@@ -2510,6 +2514,7 @@ narrowScreen.addEventListener('change', () => { delete document.documentElement.
 content.addEventListener('click', () => {
   if ('tocOpen' in document.documentElement.dataset) { delete document.documentElement.dataset.tocOpen; updateTocButton(); }
   if (narrowScreen.matches && 'imgsOpen' in document.documentElement.dataset) closeImages();
+  if (narrowScreen.matches && 'linksOpen' in document.documentElement.dataset) closeLinks();
 });
 setRootPref('toc', loadPref('toc'));
 setRootPref('hiddenchars', loadPref('hiddenchars'));
@@ -2527,7 +2532,7 @@ const imageFile = img => {
   try { return decodeURIComponent(src.split(/[?#]/)[0].split(/[\\/]/).pop() || ''); } catch { return src; }
 };
 const imageLabel = img => {
-  const alt = (img.getAttribute('alt') || '').replace(/^🌐 Web picture not loaded.*$/s, '').trim();
+  const alt = (img.dataset.origAlt ?? img.getAttribute('alt') ?? '').replace(/^🌐 Web picture not loaded.*$/s, '').trim();
   return alt || imageFile(img) || 'Picture';
 };
 
@@ -2576,7 +2581,10 @@ function buildImageList() {
   updateImagesActive();
 }
 
+let imgPin = null, imgPinUntil = 0;
 function goToImage(img) {
+  imgPin = img;
+  imgPinUntil = performance.now() + 1500;
   const details = img.closest('details');
   if (details && !details.open) details.open = true;
   img.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -2584,6 +2592,7 @@ function goToImage(img) {
   void img.offsetWidth;
   img.classList.add('img-flash');
   setTimeout(() => img.classList.remove('img-flash'), 1600);
+  updateImagesActive();
   if (narrowScreen.matches) closeImages();
 }
 
@@ -2596,6 +2605,7 @@ function updateImagesActive() {
     const r = e.img.getBoundingClientRect();
     if (r.height && r.top <= mid) current = e;
   }
+  if (imgPin && performance.now() < imgPinUntil) current = imgEntries.find(e => e.img === imgPin) || current;
   for (const e of imgEntries) e.button.classList.toggle('active', e === current);
   const r = current.button.getBoundingClientRect(), t = imgPanel.getBoundingClientRect();
   if (r.top < t.top || r.bottom > t.bottom) imgPanel.scrollTop += r.top - t.top - t.height / 3;
@@ -2623,12 +2633,145 @@ function toggleImages() {
   else {
     root.dataset.imgsOpen = '';
     delete root.dataset.tocOpen;
+    closeLinks();
     updateImgButton();
     updateTocButton();
     updateImagesActive();
   }
 }
 imgBtn.addEventListener('click', toggleImages);
+
+// ---------------------------------------------------------------- links list (right)
+// Every link in the document, in order, with its text and its real address. Clicking an entry only
+// goes to the link in the document; ⧉ copies the address. Links the safety check flagged are marked.
+const linkPanel = document.getElementById('linkPanel');
+const linkList = document.getElementById('linkList');
+const linkBtn = document.getElementById('linkBtn');
+let linkEntries = [];   // { a, button }
+
+const LINK_CHECKS = SAFETY_CHECKS.slice(1, 7);     // the safety checks that are about links
+function linkFlags(href) {
+  let full = href;
+  try { full = new URL(href).href; } catch { }
+  return (lastSafety?.findings || [])
+    .filter(f => LINK_CHECKS.includes(f.check) && f.level !== 'note' &&
+                 f.items.some(it => it.what.includes(href.slice(0, 120)) || it.what.includes(full.slice(0, 120))))
+    .map(f => f.title);
+}
+
+function linkInfo(a) {
+  const href = a.dataset.origHref || a.getAttribute('href') || '';
+  const readable = s => { try { return decodeURI(s); } catch { return s; } };
+  if (a.classList.contains('link-disabled')) return { icon: '⛔', address: href, note: a.title || 'disabled in preview mode' };
+  if (href.startsWith('#')) return { icon: '#', address: href, note: 'section of this document' };
+  if (/^mailto:/i.test(href)) return { icon: '✉', address: readable(href.slice(7)), note: '' };
+  if (/^https?:/i.test(href)) return { icon: '🌐', address: readable(href), note: '' };
+  if (MD_RE.test(href.split(/[?#]/)[0])) return { icon: '📄', address: readable(href), note: 'Markdown file' };
+  return { icon: '📎', address: readable(href), note: 'file next to the document' };
+}
+
+function buildLinkList() {
+  const links = [...output.querySelectorAll('a')].filter(a => a.dataset.origHref || a.hasAttribute('href'));
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  linkList.replaceChildren();
+  linkEntries = [];
+  linkBtn.disabled = !links.length;
+  linkBtn.textContent = links.length ? `🔗 Links (${fmt(links.length)})` : '🔗 Links';
+  const flagged = links.filter(a => linkFlags(a.dataset.origHref || a.getAttribute('href')).length).length;
+  document.getElementById('linkTitle').textContent = `Links (${fmt(links.length)})` + (flagged ? ` · ⚠ ${fmt(flagged)} flagged` : '');
+  if (!links.length) closeLinks();
+
+  links.forEach((a, i) => {
+    const info = linkInfo(a);
+    const text = a.textContent.trim() || (a.querySelector('img') ? imageLabel(a.querySelector('img')) : '') || '(no text)';
+    const go = el('button', 'link-go');
+    go.type = 'button';
+    const body = el('span', 'link-body');
+    const t = el('span', info.address === text ? 'link-text wrap' : 'link-text');   // text is the address: show all of it
+    t.append(el('span', 'img-num', `${i + 1}. `), document.createTextNode(text));
+    body.append(t);
+    if (info.address && info.address !== text) body.append(el('span', 'link-url', info.address));
+    if (info.note) body.append(el('span', 'img-note', info.note));
+    const flags = linkFlags(a.dataset.origHref || a.getAttribute('href'));
+    for (const f of flags) body.append(el('span', 'link-flag', '⚠ ' + f));
+    go.append(el('span', 'link-icon', info.icon), body);
+    go.title = `${text}\n${info.address}` + (flags.length ? `\n⚠ ${flags.join('\n⚠ ')}` : '') + '\nClick to go to this link in the document';
+    go.addEventListener('click', () => goToLink(a));
+    const copy = el('button', 'link-copy', '⧉');
+    copy.type = 'button';
+    copy.title = 'Copy the address';
+    copy.setAttribute('aria-label', `Copy the address of link ${i + 1}`);
+    copy.addEventListener('click', async () => {
+      showToast(await copyToClipboard(info.address) ? 'Address copied.' : 'Could not copy the address.');
+    });
+    const li = el('li');
+    li.append(go, copy);
+    linkList.append(li);
+    linkEntries.push({ a, button: go });
+  });
+  updateLinkButton();
+  updateLinksActive();
+}
+
+let linkPin = null, linkPinUntil = 0;     // the entry just clicked stays highlighted while the view scrolls to it
+function goToLink(a) {
+  linkPin = a;
+  linkPinUntil = performance.now() + 1500;
+  const details = a.closest('details');
+  if (details && !details.open) details.open = true;
+  a.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  a.classList.remove('img-flash');
+  void a.offsetWidth;
+  a.classList.add('img-flash');
+  setTimeout(() => a.classList.remove('img-flash'), 1600);
+  updateLinksActive();
+  if (narrowScreen.matches) closeLinks();
+}
+
+// Highlight the link being read: the last one above the middle of the view.
+function updateLinksActive() {
+  if (!linkEntries.length || !('linksOpen' in document.documentElement.dataset)) return;
+  const mid = content.getBoundingClientRect().top + content.clientHeight / 2;
+  let current = linkEntries[0];
+  for (const e of linkEntries) {
+    const r = e.a.getBoundingClientRect();
+    if (r.height && r.top <= mid) current = e;
+  }
+  if (linkPin && performance.now() < linkPinUntil) current = linkEntries.find(e => e.a === linkPin) || current;
+  for (const e of linkEntries) e.button.classList.toggle('active', e === current);
+  const r = current.button.getBoundingClientRect(), t = linkPanel.getBoundingClientRect();
+  if (r.top < t.top || r.bottom > t.bottom) linkPanel.scrollTop += r.top - t.top - t.height / 3;
+}
+
+let linkFrame = 0;
+content.addEventListener('scroll', () => {
+  if (!linkFrame) linkFrame = requestAnimationFrame(() => { linkFrame = 0; updateLinksActive(); });
+});
+
+function updateLinkButton() {
+  linkBtn.classList.toggle('on', 'linksOpen' in document.documentElement.dataset && !linkBtn.disabled);
+}
+
+function closeLinks() {
+  delete document.documentElement.dataset.linksOpen;
+  updateLinkButton();
+  updateTocButton();
+}
+
+function toggleLinks() {
+  if (linkBtn.disabled) return;
+  const root = document.documentElement;
+  if ('linksOpen' in root.dataset) closeLinks();
+  else {
+    closeImages();
+    root.dataset.linksOpen = '';
+    delete root.dataset.tocOpen;
+    updateLinkButton();
+    updateTocButton();
+    updateLinksActive();
+  }
+}
+linkBtn.addEventListener('click', toggleLinks);
 
 // ---------------------------------------------------------------- figure viewer (zoom & pan)
 const lightbox = document.getElementById('lightbox');
@@ -2805,12 +2948,14 @@ document.addEventListener('keydown', ev => {
   else if (mod && !ev.shiftKey && ev.key.toLowerCase() === 'b') { ev.preventDefault(); toggleSidebar(); }
   else if (mod && ev.shiftKey && ev.key.toLowerCase() === 'o') { ev.preventDefault(); toggleToc(); }
   else if (mod && ev.shiftKey && ev.key.toLowerCase() === 'g') { ev.preventDefault(); toggleImages(); }
+  else if (mod && ev.shiftKey && ev.key.toLowerCase() === 'l') { ev.preventDefault(); toggleLinks(); }
   else if (mod && ev.shiftKey && ev.key.toLowerCase() === 'h') { ev.preventDefault(); toggleHidden(); }
   else if (ev.key === 'Escape' && 'tocOpen' in document.documentElement.dataset) {
     delete document.documentElement.dataset.tocOpen;
     updateTocButton();
   }
   else if (ev.key === 'Escape' && 'imgsOpen' in document.documentElement.dataset && !document.querySelector('dialog[open]')) closeImages();
+  else if (ev.key === 'Escape' && 'linksOpen' in document.documentElement.dataset && !document.querySelector('dialog[open]')) closeLinks();
 });
 
 // ---------------------------------------------------------------- PDF
