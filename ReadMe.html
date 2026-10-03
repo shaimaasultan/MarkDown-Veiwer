@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Edition: "online" here; build.ps1 -Offline writes an offline copy that loads every library from ./lib/. -->
+  <meta name="mdv-edition" content="online">
+  <!--
+    Preview only: no code from a Markdown file may ever run.
+    Only the viewer's own script files below are allowed; inline <script>, onclick=/onerror=
+    handlers, javascript: links, frames, plugins and forms are all blocked by the browser.
+    (The library list is also shown in the page's "About" window — keep viewer.js LIBRARIES in sync.)
+  -->
+  <meta http-equiv="Content-Security-Policy" content="
+    default-src 'none';
+    script-src 'self' file: https://cdn.jsdelivr.net https://cdnjs.cloudflare.com;
+    style-src 'self' file: 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com;
+    font-src 'self' file: data: https://cdn.jsdelivr.net;
+    img-src * data: blob: file:;
+    media-src * data: blob: file:;
+    connect-src 'self';
+    object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none';
+    base-uri 'none'; form-action 'none'">
+  <link rel="icon" href="favicon_readme.png" type="image/png">
+  <title>Markdown Folder Viewer</title>
+
+  <!-- Markdown parser (bundled locally) -->
+  <script src="./marked.min.js"></script>
+
+  <!-- Math (KaTeX) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/contrib/auto-render.min.js"></script>
+
+  <!-- Code highlighting -->
+  <!-- (media attributes are switched by the theme button in viewer.js) -->
+  <link id="hljsLight" rel="stylesheet" media="print, (prefers-color-scheme: light)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+  <link id="hljsDark" rel="stylesheet" media="screen and (prefers-color-scheme: dark)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
+  <!-- Diagrams (```mermaid blocks) -->
+  <script defer src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+
+  <style>
+    /* Theme: follows Windows unless <html data-theme="light|dark"> is set by the theme button. */
+    :root {
+      color-scheme: light;
+      --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --border: #d1d9e0;
+      --panel: #f6f8fa; --accent: #0078d4; --accent-fg: #ffffff; --code-bg: #f6f8fa;
+      --active: #ddf4ff; --warn: #9a6700; --warn-bg: #fff8c5;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        color-scheme: dark;
+        --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --border: #3d444d;
+        --panel: #151b23; --accent: #2f81f7; --accent-fg: #ffffff; --code-bg: #151b23;
+        --active: #1f2d3d; --warn: #d29922; --warn-bg: #2b2111;
+      }
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --border: #3d444d;
+      --panel: #151b23; --accent: #2f81f7; --accent-fg: #ffffff; --code-bg: #151b23;
+      --active: #1f2d3d; --warn: #d29922; --warn-bg: #2b2111;
+    }
+    #themeBtn { min-width: 6.5rem; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+      background: var(--bg); color: var(--fg);
+      display: flex; flex-direction: column;
+    }
+    header {
+      display: flex; align-items: center; gap: .75rem; flex-wrap: wrap;
+      padding: .75rem 1rem; border-bottom: 1px solid var(--border); background: var(--panel);
+    }
+    header h1 { font-size: 1.15rem; margin: 0 auto 0 0; }
+    .btn {
+      display: inline-block; padding: .45rem .9rem; background: var(--accent); color: var(--accent-fg);
+      border-radius: 6px; cursor: pointer; font-size: .9rem; border: 0; user-select: none;
+    }
+    .btn.secondary { background: transparent; color: var(--fg); border: 1px solid var(--border); }
+    input[type=file] { display: none; }
+
+    main { flex: 1; display: flex; min-height: 0; }
+    aside {
+      width: 280px; flex-shrink: 0; border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; min-height: 0; background: var(--panel);
+    }
+    aside[hidden] { display: none; }
+    #filter {
+      margin: .75rem; padding: .4rem .6rem; border: 1px solid var(--border); border-radius: 6px;
+      background: var(--bg); color: var(--fg); font: inherit; font-size: .85rem;
+    }
+    #fileList { list-style: none; margin: 0; padding: 0 0 1rem; overflow: auto; font-size: .85rem; }
+    #fileList li {
+      padding: .3rem .9rem; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    #fileList li:hover { background: var(--active); }
+    #fileList li.active { background: var(--active); font-weight: 600; border-left: 3px solid var(--accent); }
+    #fileList .dir { color: var(--muted); }
+
+    .btn.icon { padding: .45rem .7rem; }
+    .btn:not(:disabled):hover { filter: brightness(1.08); }
+    .btn.secondary.on { background: var(--active); border-color: var(--accent); }
+    :root[data-sidebar="hidden"] #sidebar { display: none; }
+
+    #content { flex: 1; overflow: auto; min-width: 0; scroll-padding-top: 1rem; position: relative; }   /* keeps KaTeX's hidden copies inside the scroll area */
+    #crumb { padding: .5rem 2rem 0; color: var(--muted); font-size: .8rem; }
+    #docPath { word-break: break-all; }
+    #stats { display: flex; flex-wrap: wrap; gap: .1rem 1rem; margin-top: .15rem; }
+    #stats .group { white-space: nowrap; }
+    .edition-tag {
+      font-size: .7rem; font-weight: 600; vertical-align: .2em; padding: .1rem .45rem; border-radius: 999px;
+      color: var(--ok); background: var(--ok-bg); border: 1px solid currentColor;
+    }
+    #standaloneNote {
+      display: flex; align-items: center; gap: .75rem; padding: .4rem 1rem; font-size: .82rem;
+      background: var(--active); color: var(--fg); border-bottom: 1px solid var(--border);
+    }
+    #standaloneNote[hidden] { display: none; }
+    #standaloneNote span { flex: 1; }
+    #standaloneNote code { font-size: .78rem; background: var(--code-bg); padding: .05em .3em; border-radius: 4px; }
+    #standaloneClose { border: 0; background: transparent; color: var(--muted); font-size: 1.2rem; line-height: 1; cursor: pointer; padding: 0 .25rem; }
+    #standaloneClose:hover { color: var(--fg); }
+    @media print { #standaloneNote { display: none !important; } }
+    #appStatus { margin-top: .2rem; display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+    #appStatus[hidden] { display: none; }
+    #portStatus { font-variant-numeric: tabular-nums; }
+    #fwBadge.ok::before, #fwBadge.bad::before { content: ''; display: inline-block; width: .55em; height: .55em; border-radius: 50%; margin-right: .35em; background: currentColor; vertical-align: .05em; }
+    dialog#about dd.fw-ok { color: var(--ok); font-weight: 600; }
+    dialog#about dd.fw-bad { color: var(--bad); font-weight: 600; }
+    dialog#about dd .fw-detail { display: block; font-weight: 400; color: var(--muted); font-size: .8rem; margin-top: .15rem; }
+    #portStatus .closing { color: var(--warn-fg); }
+    #portStatus .closed { color: var(--ok); }
+    #portStatus .failed { color: var(--bad); font-weight: 600; }
+    dialog#portDialog {
+      width: min(460px, calc(100vw - 32px)); border: 1px solid var(--border); border-radius: 10px;
+      padding: 1.25rem 1.5rem; background: var(--bg); color: var(--fg);
+    }
+    dialog#portDialog::backdrop { background: rgba(0, 0, 0, .45); }
+    dialog#portDialog h2 { margin-top: 0; font-size: 1.1rem; color: var(--bad); }
+    dialog#portDialog p { font-size: .9rem; }
+    dialog#portDialog .actions { display: flex; gap: .5rem; justify-content: flex-end; flex-wrap: wrap; }
+    #stats b { color: var(--fg); font-weight: 600; }
+
+    /* ---- Table of contents (right) ---- */
+    #toc {
+      width: 250px; flex-shrink: 0; border-left: 1px solid var(--border); background: var(--panel);
+      overflow: auto; padding: .75rem 0 1.5rem; font-size: .83rem;
+    }
+    #toc[hidden], :root[data-toc="hidden"]:not([data-toc-open]) #toc { display: none; }
+    /* Viewed-text measuring: KaTeX keeps an invisible accessible copy of each formula; don't count it twice. */
+    /* …and read each formula as one run of symbols (its stacked layout would otherwise split into many lines). */
+    .measuring .katex, .measuring .katex * { display: inline !important; position: static !important; float: none !important; }
+    .measuring .katex svg { display: none !important; }
+    /* Word counting: leave out code blocks, equations and diagrams (inline `code` in sentences still counts). */
+    .words-only pre, .words-only .katex, .words-only .math-display { display: none !important; }
+    .sentences-only h1, .sentences-only h2, .sentences-only h3, .sentences-only h4, .sentences-only h5,
+    .sentences-only h6, .sentences-only table { display: none !important; }   /* root signs, fraction bars, slashes: drawings, no text */
+    .measuring .katex .katex-mathml, .measuring .katex .katex-mathml * { display: none !important; }
+    #toc .toc-title { font-weight: 600; padding: 0 1rem .4rem; color: var(--muted); text-transform: uppercase; font-size: .72rem; letter-spacing: .05em; }
+    #toc ol { list-style: none; margin: 0; padding: 0; }
+    #toc a {
+      display: block; padding: .22rem 1rem .22rem calc(1rem + var(--lvl, 0) * .85rem); color: var(--fg);
+      text-decoration: none; border-left: 3px solid transparent; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    #toc a:hover { background: var(--active); }
+    #toc a.active { border-left-color: var(--accent); background: var(--active); font-weight: 600; }
+
+    /* ---- Figures open in the viewer ---- */
+    .markdown-body img.zoomable, .markdown-body pre.mermaid.zoomable svg { cursor: zoom-in; }
+    #lightbox {
+      position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column;
+      background: rgba(0, 0, 0, .93); color: #fff; backdrop-filter: blur(3px);
+    }
+    #lightbox[hidden] { display: none; }
+    .lb-bar { display: flex; align-items: center; gap: .4rem; padding: .5rem .75rem; }
+    .lb-bar .btn.secondary { color: #fff; border-color: rgba(255, 255, 255, .35); min-width: 2.4rem; }
+    #lbCaption { margin-right: auto; font-size: .85rem; opacity: .85; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #lbStage { flex: 1; overflow: hidden; position: relative; cursor: grab; touch-action: none; }
+    #lbStage.dragging { cursor: grabbing; }
+    #lbItem { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+    #lbItem img, #lbItem svg { display: block; max-width: none; max-height: none; }
+    #lbItem.diagram { background: var(--bg); border-radius: 6px; padding: 12px; }
+
+    #drop {
+      margin: 3rem auto; max-width: 620px; padding: 3rem 2rem; text-align: center;
+      border: 2px dashed var(--border); border-radius: 12px; color: var(--muted);
+    }
+    body.dragging #drop, body.dragging #content { outline: 3px dashed var(--accent); outline-offset: -8px; }
+
+    /* ---- Rendered markdown (GitHub-like) ---- */
+    .markdown-body { max-width: 980px; margin: 0 auto; padding: 1rem 2rem 3rem; line-height: 1.6; font-size: 16px; }
+    .markdown-body h1, .markdown-body h2 { border-bottom: 1px solid var(--border); padding-bottom: .3em; }
+    .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 { margin: 1.5em 0 .6em; line-height: 1.25; }
+    .markdown-body a { color: var(--accent); text-decoration: none; }
+    .markdown-body a:hover { text-decoration: underline; }
+    .markdown-body img { max-width: 100%; height: auto; }
+    .markdown-body p > img:only-child, .markdown-body p > a:only-child > img { display: block; margin: 1rem auto; }
+    .markdown-body img.missing {
+      display: inline-block; min-width: 180px; padding: .5rem .75rem; border: 1px dashed var(--warn);
+      background: var(--warn-bg); color: var(--warn); font-size: .8rem;
+    }
+    .markdown-body code {
+      font-family: ui-monospace, Consolas, "Courier New", monospace; font-size: 85%;
+      background: var(--code-bg); padding: .2em .4em; border-radius: 6px;
+    }
+    .markdown-body pre { background: var(--code-bg); padding: 1rem; border-radius: 6px; overflow: auto; }
+    .markdown-body pre code { background: none; padding: 0; font-size: 85%; }
+    .markdown-body pre code.hljs { background: none; padding: 0; }
+    .markdown-body blockquote { margin: 0; padding: 0 1em; color: var(--muted); border-left: .25em solid var(--border); }
+    .markdown-body table { border-collapse: collapse; display: block; overflow: auto; }
+    .markdown-body th, .markdown-body td { border: 1px solid var(--border); padding: .4rem .8rem; }
+    .markdown-body tr:nth-child(2n) { background: var(--panel); }
+    .markdown-body hr { border: 0; border-top: 1px solid var(--border); margin: 1.5rem 0; }
+    .markdown-body .math-display { overflow-x: auto; overflow-y: hidden; margin: 1rem 0; text-align: center; }
+    .markdown-body .katex { font-size: 1.1em; }
+    .markdown-body code.math-raw { color: var(--warn); }
+    .markdown-body pre.mermaid { background: transparent; text-align: center; }
+    .markdown-body pre.mermaid svg { max-width: 100%; height: auto; }
+    .markdown-body a.link-disabled { color: var(--muted); text-decoration: underline dotted; cursor: not-allowed; }
+    .markdown-body input[type=checkbox] { margin: 0 .35em 0 -1.3em; vertical-align: middle; }
+    .markdown-body li:has(> input[type=checkbox]) { list-style: none; }
+
+    footer {
+      padding: .5rem; border-top: 1px solid var(--border); text-align: center;
+      font-size: .8rem; color: var(--muted);
+    }
+
+    .btn:disabled { opacity: .45; cursor: not-allowed; }
+
+    /* ---- Source → viewed breakdown ---- */
+    :root { --ok: #1a7f37; --ok-bg: #dafbe1; --bad: #cf222e; --bad-bg: #ffebe9; }
+    @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --ok: #3fb950; --ok-bg: #12261e; --bad: #f85149; --bad-bg: #2d1416; } }
+    :root[data-theme="dark"] { --ok: #3fb950; --ok-bg: #12261e; --bad: #f85149; --bad-bg: #2d1416; }
+    .breakdown-btn {
+      font: inherit; font-size: .78rem; font-weight: 600; padding: .05rem .5rem; border-radius: 999px; cursor: pointer;
+      border: 1px solid currentColor; background: transparent;
+    }
+    .breakdown-btn.ok { color: var(--ok); background: var(--ok-bg); }
+    .breakdown-btn.bad { color: var(--bad); background: var(--bad-bg); }
+    .measure-box { position: absolute; left: -100000px; top: 0; width: 900px; opacity: 0; pointer-events: none; }
+    dialog#breakdown, dialog#about {
+      width: min(860px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto;
+      border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem 1.5rem;
+      background: var(--bg); color: var(--fg);
+    }
+    dialog#breakdown { width: min(680px, calc(100vw - 32px)); }
+    dialog#breakdown::backdrop { background: rgba(0, 0, 0, .45); }
+    dialog#breakdown h2 { margin-top: 0; font-size: 1.2rem; }
+    dialog#breakdown .note { color: var(--muted); font-size: .85rem; word-break: break-word; }
+    dialog#breakdown .table-wrap { overflow-x: auto; }
+    #bdTable { border-collapse: collapse; width: 100%; font-size: .85rem; }
+    #bdTable th, #bdTable td { padding: .3rem .6rem; border-bottom: 1px solid var(--border); text-align: left; }
+    #bdTable .n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    #bdTable tr.total td { font-weight: 600; background: var(--panel); }
+    #bdTable tr.bad td { color: var(--bad); background: var(--bad-bg); font-weight: 600; }
+    .bd-status { padding: .5rem .75rem; border-radius: 6px; margin: .5rem 0 .75rem; font-weight: 600; font-size: .9rem; }
+    .bd-status.ok { color: var(--ok); background: var(--ok-bg); }
+    .bd-status.bad { color: var(--bad); background: var(--bad-bg); }
+    dialog#breakdown .actions, dialog#inspect .actions { text-align: right; margin-top: 1rem; }
+
+    /* ---- Find in document ---- */
+    #findBar {
+      position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: .35rem; flex-wrap: wrap;
+      padding: .45rem 2rem; background: var(--panel); border-bottom: 1px solid var(--border);
+    }
+    #findBar[hidden] { display: none; }
+    #findInput {
+      flex: 1 1 220px; min-width: 140px; padding: .35rem .55rem; border: 1px solid var(--border); border-radius: 6px;
+      background: var(--bg); color: var(--fg); font: inherit; font-size: .9rem;
+    }
+    #findInput.invalid { border-color: var(--bad); }
+    #findCount { font-size: .8rem; color: var(--muted); min-width: 5.5rem; text-align: center; font-variant-numeric: tabular-nums; }
+    #findCount.none { color: var(--bad); }
+    .find-btn {
+      border: 1px solid var(--border); background: var(--bg); color: var(--fg); border-radius: 6px;
+      padding: .25rem .55rem; cursor: pointer; font: inherit; font-size: .85rem;
+    }
+    .find-btn:hover { background: var(--active); }
+    .find-opt { display: inline-flex; align-items: center; gap: .2rem; font-size: .8rem; color: var(--muted); cursor: pointer; user-select: none; }
+    ::highlight(find) { background-color: #fff3a3; color: #1f2328; }
+    ::highlight(find-current) { background-color: #ff9632; color: #1f2328; }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) ::highlight(find) { background-color: #6e5a1f; color: #ffffff; }
+      :root:not([data-theme="light"]) ::highlight(find-current) { background-color: #d9771f; color: #ffffff; }
+    }
+    :root[data-theme="dark"] ::highlight(find) { background-color: #6e5a1f; color: #ffffff; }
+    :root[data-theme="dark"] ::highlight(find-current) { background-color: #d9771f; color: #ffffff; }
+    #replaceToggle.on { background: var(--active); border-color: var(--accent); }
+    #replaceRow { flex-basis: 100%; min-width: 0; max-width: 100%; display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; }
+    #replaceRow[hidden] { display: none; }
+    #replaceInput {
+      flex: 1 1 220px; min-width: 140px; padding: .35rem .55rem; border: 1px solid var(--border); border-radius: 6px;
+      background: var(--bg); color: var(--fg); font: inherit; font-size: .9rem;
+    }
+    .find-btn:disabled { opacity: .45; cursor: not-allowed; }
+    .find-btn.primary:not(:disabled) { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+    #replaceContext { flex-basis: 100%; min-width: 0; max-width: 100%; font-size: .8rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #replaceContext code { font-family: ui-monospace, Consolas, monospace; font-size: .78rem; color: var(--fg); white-space: pre; }
+    #replaceContext mark { background: #ff9632; color: #1f2328; border-radius: 2px; }
+    @media print { #findBar { display: none !important; } }
+    @media (max-width: 760px) { #findBar { padding: .45rem 1rem; } }
+
+    /* ---- Copy clean menu & toast ---- */
+    .menu-wrap { position: relative; }
+    .menu {
+      position: absolute; right: 0; top: calc(100% + 4px); z-index: 60; min-width: 270px;
+      background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: .3rem;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
+    }
+    .menu[hidden] { display: none; }
+    .menu button {
+      display: block; width: 100%; text-align: left; border: 0; background: transparent; color: var(--fg);
+      padding: .5rem .65rem; border-radius: 6px; cursor: pointer; font: inherit; font-size: .88rem;
+    }
+    .menu button:hover, .menu button:focus-visible { background: var(--active); outline: none; }
+    .menu button span { display: block; color: var(--muted); font-size: .78rem; margin-top: .1rem; }
+    .menu hr { border: 0; border-top: 1px solid var(--border); margin: .3rem 0; }
+    .menu-label { padding: .3rem .65rem .2rem; font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+    #toast {
+      position: fixed; left: 50%; bottom: 3rem; transform: translateX(-50%); z-index: 70;
+      max-width: min(560px, calc(100vw - 32px)); padding: .6rem .9rem; border-radius: 8px;
+      background: var(--fg); color: var(--bg); font-size: .85rem; box-shadow: 0 8px 24px rgba(0, 0, 0, .25);
+    }
+    #toast[hidden] { display: none; }
+    @media print { #toast, .menu { display: none !important; } }
+
+    /* ---- Hidden characters shown in the document (¶ Hidden) ---- */
+    .hc-badge { display: none; }
+    :root[data-hiddenchars="on"] .hc-badge {
+      display: inline-block; font: 600 .62em/1.35 ui-monospace, Consolas, monospace; padding: 0 .28em; margin: 0 .06em;
+      border-radius: 3px; vertical-align: .12em; color: var(--warn-fg); background: var(--warn-bg2);
+      border: 1px solid currentColor; cursor: help; white-space: nowrap; text-indent: 0;
+    }
+    :root[data-hiddenchars="on"] .hc-bidi .hc-badge { color: var(--bad); background: var(--bad-bg); }
+    :root[data-hiddenchars="on"] .hc-soft .hc-badge { opacity: .75; font-weight: 500; }
+    /* Invisible characters are replaced by their label; spaces, tabs and � stay and get a label beside them. */
+    :root[data-hiddenchars="on"] .hc-hide .hc-orig { display: none; }
+    /* Counts and the breakdown always measure the original text. */
+    .measuring .hc-badge { display: none !important; }
+    .measuring .hc-orig { display: inline !important; }
+    @media print { .hc-badge { display: none !important; } .hc-orig { display: inline !important; } }
+
+    /* ---- Encoding & characters inspector ---- */
+    :root { --warn-fg: #9a6700; --warn-bg2: #fff8c5; }
+    @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --warn-fg: #d29922; --warn-bg2: #2b2111; } }
+    :root[data-theme="dark"] { --warn-fg: #d29922; --warn-bg2: #2b2111; }
+    .breakdown-btn.neutral { color: var(--muted); background: var(--panel); }
+    .breakdown-btn.warn { color: var(--warn-fg); background: var(--warn-bg2); }
+    .bd-status.warn { color: var(--warn-fg); background: var(--warn-bg2); }
+    dialog#inspect {
+      width: min(820px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto;
+      border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem 1.5rem;
+      background: var(--bg); color: var(--fg);
+    }
+    dialog#inspect::backdrop { background: rgba(0, 0, 0, .45); }
+    dialog#inspect h2 { margin-top: 0; font-size: 1.2rem; }
+    dialog#inspect .note { color: var(--muted); font-size: .85rem; word-break: break-word; }
+    .ins-section h3 { font-size: 1rem; margin: 1.1rem 0 .35rem; padding-bottom: .2rem; border-bottom: 1px solid var(--border); }
+    .ins-section h4 { font-size: .85rem; margin: .8rem 0 .3rem; color: var(--muted); }
+    .ins-section p { font-size: .85rem; margin: .2rem 0; word-break: break-word; }
+    .ins-none { color: var(--ok); }
+    .ins-note { color: var(--muted); font-size: .8rem !important; }
+    .ins-table .find-btn { font-size: .75rem; padding: .1rem .45rem; }
+    .ins-dl { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; margin: 0; font-size: .85rem; }
+    .ins-dl dt { color: var(--muted); }
+    .ins-dl dd { margin: 0; }
+    .ins-dl dd.bad { color: var(--warn-fg); font-weight: 600; }
+    .ins-wrap { overflow-x: auto; }
+    .ins-table { border-collapse: collapse; width: 100%; font-size: .82rem; table-layout: auto; }
+    .ins-table th:first-child, .ins-table td:first-child { width: 7.5rem; }
+    .ins-table th:nth-child(3), .ins-table td:nth-child(3) { width: 4rem; }
+    .ins-table th:nth-child(4), .ins-table td:nth-child(4) { width: 9rem; }
+    .ins-table th, .ins-table td { padding: .28rem .55rem; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+    .ins-table .n { text-align: right; font-variant-numeric: tabular-nums; }
+    .ins-table td:last-child { word-break: break-word; color: var(--muted); }
+    .ins-table code { font-size: .8rem; background: var(--code-bg); padding: .1em .35em; border-radius: 4px; white-space: nowrap; }
+    @media (max-width: 520px) { .ins-dl { grid-template-columns: 1fr; } .ins-dl dd { margin-bottom: .4rem; } }
+
+    dialog#about {
+      width: min(860px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto;
+      border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem 1.5rem;
+      background: var(--bg); color: var(--fg);
+    }
+    dialog#about::backdrop { background: rgba(0, 0, 0, .45); }
+    dialog#about h2 { margin-top: 0; font-size: 1.2rem; }
+    dialog#about h3 { font-size: 1rem; margin: 1.2rem 0 .3rem; }
+    dialog#about .safe { background: var(--panel); border-left: 3px solid #1a7f37; padding: .6rem .8rem; border-radius: 4px; }
+    dialog#about .note { color: var(--muted); font-size: .85rem; margin-top: 0; }
+    dialog#about .lib { border: 1px solid var(--border); border-radius: 6px; padding: .55rem .75rem; margin-bottom: .5rem; font-size: .85rem; }
+    dialog#about .lib-head { display: flex; flex-wrap: wrap; gap: .25rem .75rem; align-items: baseline; }
+    dialog#about .lib-name { font-weight: 600; }
+    dialog#about .lib-use { color: var(--muted); flex: 1; }
+    dialog#about .tool-use { font-size: .8rem; color: var(--muted); margin-top: .15rem; }
+    dialog#about .lib-src.tool-items { font-family: inherit; font-size: .8rem; word-break: normal; }
+    dialog#about .tool-items li.bad { color: var(--bad); }
+    dialog#about .lib-src { margin: .35rem 0 0; padding-left: 1.1rem; font-family: ui-monospace, Consolas, monospace; font-size: .76rem; word-break: break-all; color: var(--muted); }
+    dialog#about .ok { color: #1a7f37; white-space: nowrap; }
+    dialog#about .bad { color: #cf222e; white-space: nowrap; }
+    dialog#about .actions { text-align: right; margin-top: 1rem; }
+    dialog#about dl { display: grid; grid-template-columns: max-content 1fr; gap: .25rem .9rem; margin: .3rem 0 0; font-size: .85rem; }
+    dialog#about dt { color: var(--muted); }
+    .rot-select { font: inherit; font-size: .85rem; padding: .15rem .35rem; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--fg); }
+    dialog#about dd { margin: 0; word-break: break-all; }
+    @media (max-width: 520px) { dialog#about dl { grid-template-columns: 1fr; } dialog#about dd { margin-bottom: .4rem; } }
+    dialog#about code { font-size: 85%; }
+
+    /* ---- PDF / print: only the rendered document, always light ---- */
+    @page { margin: 16mm 14mm; }
+    @media print {
+      :root, :root[data-theme], :root:not([data-theme="light"]) {
+        color-scheme: light;
+        --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --border: #d1d9e0;
+        --panel: #f6f8fa; --accent: #0969da; --code-bg: #f6f8fa;
+      }
+      header, aside, footer, #crumb, #drop, #toc, #lightbox, .measure-box { display: none !important; }
+      html, body, main, #content { display: block; height: auto; overflow: visible; background: #fff; }
+      .markdown-body { max-width: none; padding: 0; font-size: 11pt; }
+      .markdown-body pre, .markdown-body pre code { white-space: pre-wrap; word-break: break-word; }
+      .markdown-body .hljs { background: none !important; }
+      .markdown-body img, .markdown-body svg, .markdown-body pre, .markdown-body table,
+      .markdown-body .math-display, .markdown-body blockquote { break-inside: avoid; }
+      .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 { break-after: avoid; }
+      .markdown-body .math-display { overflow: visible; }
+      .markdown-body a { color: var(--accent); }
+      * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
+
+    /* Narrow windows: contents panel slides over the document instead of taking a column. */
+    @media (max-width: 1000px) {
+      #toc { position: fixed; right: 0; top: 0; bottom: 0; z-index: 40; width: min(300px, 85vw); box-shadow: -8px 0 24px rgba(0,0,0,.25); }
+      :root:not([data-toc-open]) #toc { display: none; }
+    }
+    @media (max-width: 760px) {
+      main { flex-direction: column; }
+      aside { width: auto; max-height: 30vh; border-right: 0; border-bottom: 1px solid var(--border); }
+      .markdown-body { padding: 1rem; }
+      #crumb { padding: .5rem 1rem 0; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <button id="sidebarBtn" class="btn secondary icon" disabled title="Show/hide the file list (Ctrl+B)" aria-label="Show or hide the file list">☰</button>
+    <h1>📁 Markdown Folder Viewer</h1>
+    <label for="picker" class="btn">📁 Choose Folder</label>
+    <input type="file" id="picker" webkitdirectory directory multiple />
+    <label for="filePicker" class="btn secondary">📄 Open Files</label>
+    <input type="file" id="filePicker" multiple />
+    <button id="pdfBtn" class="btn secondary" disabled title="Open a markdown file first">🖨️ Save as PDF</button>
+    <button id="findBtn" class="btn secondary" disabled title="Find in document (Ctrl+F)">🔎 Find</button>
+    <button id="tocBtn" class="btn secondary" disabled title="Show/hide the table of contents (Ctrl+Shift+O)">📑 Contents</button>
+    <div class="menu-wrap">
+      <button id="copyBtn" class="btn secondary" disabled aria-haspopup="menu" aria-expanded="false"
+              title="Save or copy the document without hidden characters">💾 Export ▾</button>
+      <div id="copyMenu" class="menu" role="menu" hidden>
+        <div class="menu-label">Without hidden characters</div>
+        <button role="menuitem" data-action="save" data-what="source"><b>💾 Save clean Markdown (.md)</b><span>The .md file, cleaned — choose where to save it</span></button>
+        <button role="menuitem" data-action="save" data-what="text"><b>💾 Save clean text (.txt)</b><span>The readable text, without Markdown symbols</span></button>
+        <hr>
+        <button role="menuitem" data-action="copy" data-what="source"><b>📋 Copy clean Markdown</b><span>To paste back into an editor</span></button>
+        <button role="menuitem" data-action="copy" data-what="text"><b>📋 Copy clean text</b><span>To paste into an email or document</span></button>
+      </div>
+    </div>
+    <button id="hiddenBtn" class="btn secondary" title="Show invisible characters in the document (Ctrl+Shift+H)">¶ Hidden</button>
+    <button id="themeBtn" class="btn secondary" title="Theme: follow Windows, light or dark">🖥️ Auto</button>
+    <button id="aboutBtn" class="btn secondary" title="Versions and sources of the libraries used">ℹ️ About</button>
+  </header>
+
+  <div id="standaloneNote" role="note" hidden>
+    <span>ℹ <strong>Opened directly in the browser</strong> — firewall status and connection protection are only
+      available in the Markdown Viewer app. Open <code>.md</code> files from Explorer (double-click) or
+      Start menu › <strong>Markdown Viewer</strong>.</span>
+    <button id="standaloneClose" type="button" title="Hide this note" aria-label="Hide this note">×</button>
+  </div>
+
+  <dialog id="about">
+    <h2>About Markdown Viewer</h2>
+    <p class="safe">🔒 <strong>Preview only.</strong> Markdown files are displayed, never executed:
+      scripts, <code>on…=</code> event handlers, <code>javascript:</code> links, frames, forms and plugins
+      in a document are removed before display and also blocked by the browser's security policy.</p>
+    <div id="appSection" hidden>
+      <h3>Windows application</h3>
+      <dl id="appInfo"></dl>
+    </div>
+    <div id="appSectionNote" hidden>
+      <h3>Windows application</h3>
+      <p class="note">Not in use: this page was opened directly in the browser, so the Markdown Viewer app's
+        firewall status, connection protection (changing connection &amp; access key) and its settings aren't
+        available here. Open <code>.md</code> files from Explorer (double-click) or Start menu › Markdown Viewer
+        to use them.</p>
+    </div>
+    <h3>Built with</h3>
+    <p class="note">The tools and technologies this viewer is made from.</p>
+    <div id="toolList"></div>
+    <h3>Libraries</h3>
+    <p class="note" id="libNote">Loaded from the internet when the viewer opens (except <em>marked</em>, which is bundled).
+      Without a connection, Markdown and images still work; math shows as raw TeX and diagrams as code.</p>
+    <div id="libList"></div>
+    <div class="actions"><button id="aboutClose" class="btn">Close</button></div>
+  </dialog>
+
+  <dialog id="breakdown" aria-labelledby="bdTitle">
+    <h2 id="bdTitle">Source → viewed breakdown</h2>
+    <p class="note"><span id="bdFile"></span><br>
+      Why the text on screen is shorter than the file: formatting symbols and layout lines are removed
+      (<b>−</b>), and a few things are added (<b>+</b>, e.g. a line break shown as a space).
+      Characters include spaces but not line breaks; viewed lines are non-empty lines; viewed words are
+      the readable text (code blocks, equations and diagram labels are shown but not counted as words).</p>
+    <div id="bdStatus" class="bd-status"></div>
+    <div class="table-wrap">
+      <table id="bdTable">
+        <thead><tr><th>Category</th><th class="n">Lines</th><th class="n">Chars</th><th class="n">Words</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="actions"><button id="bdClose" class="btn">Close</button></div>
+  </dialog>
+
+  <dialog id="inspect" aria-labelledby="insTitle">
+    <h2 id="insTitle">Encoding &amp; characters</h2>
+    <p class="note"><span id="insFile"></span><br>
+      How the file is stored, which escapes it uses, and any characters you can't see on screen
+      (zero-width characters, text-direction controls, control codes, unusual spaces…).</p>
+    <div id="insStatus" class="bd-status"></div>
+    <div id="insBody"></div>
+    <div class="actions">
+      <button id="insHighlight" class="btn secondary" title="Turn on ¶ Hidden: label every invisible character in the document">¶ Highlight in document</button>
+      <button id="insClose" class="btn">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="portDialog" aria-labelledby="portTitle">
+    <h2 id="portTitle">Previous connection is still open</h2>
+    <p id="portMsg">The viewer moved to a new connection, but the previous one did not close in time.
+      Force it closed, or refresh the window.</p>
+    <div class="actions">
+      <button id="portDismiss" class="btn secondary">Not now</button>
+      <button id="portRefresh" class="btn secondary">↻ Refresh</button>
+      <button id="portForce" class="btn">Force close</button>
+    </div>
+  </dialog>
+
+  <main>
+    <aside id="sidebar" hidden>
+      <input id="filter" type="search" placeholder="Filter markdown files…" />
+      <ul id="fileList"></ul>
+    </aside>
+    <section id="content">
+      <div id="findBar" role="search" hidden>
+        <input id="findInput" type="search" placeholder="Find in document…" aria-label="Find in document" autocomplete="off" spellcheck="false">
+        <span id="findCount" aria-live="polite"></span>
+        <button id="findPrev" class="find-btn" title="Previous match (Shift+Enter)" aria-label="Previous match">↑</button>
+        <button id="findNext" class="find-btn" title="Next match (Enter)" aria-label="Next match">↓</button>
+        <label class="find-opt" title="Match case"><input type="checkbox" id="findCase"> Aa</label>
+        <label class="find-opt" title="Whole words only"><input type="checkbox" id="findWord"> Word</label>
+        <label class="find-opt" title="Regular expression"><input type="checkbox" id="findRegex"> .*</label>
+        <button id="replaceToggle" class="find-btn" title="Find and replace (Ctrl+H)" aria-label="Show replace" aria-expanded="false">⇄ Replace</button>
+        <button id="findClose" class="find-btn" title="Close (Esc)" aria-label="Close find">✕</button>
+        <div id="replaceRow" hidden>
+          <input id="replaceInput" type="text" placeholder="Replace with…" aria-label="Replace with" autocomplete="off" spellcheck="false">
+          <button id="replaceOne" class="find-btn" title="Replace this match and go to the next (Enter in the replace box; Ctrl+Enter replaces all)">Replace</button>
+          <button id="replaceAll" class="find-btn" title="Replace every match in the document">Replace all</button>
+          <button id="replaceUndo" class="find-btn" disabled title="Undo the last replacement (Ctrl+Z)">↶ Undo</button>
+          <button id="replaceSave" class="find-btn primary" disabled title="Save the edited Markdown (you choose where)">💾 Save…</button>
+          <div id="replaceContext" aria-live="polite"></div>
+        </div>
+      </div>
+      <div id="crumb"><div id="docPath"></div><div id="stats"></div><div id="appStatus" hidden><button id="fwBadge" type="button" class="breakdown-btn neutral" hidden>🛡 Firewall …</button><span id="portStatus" aria-live="off"></span></div></div>
+      <div id="drop">
+        <p style="font-size:2.5rem;margin:0">📂</p>
+        <p><strong>Choose a folder</strong> or <strong>drag &amp; drop</strong> a folder here.</p>
+        <p style="font-size:.85rem">
+          Renders README / Markdown files with their images and figures
+          (Markdown <code>![]()</code>, HTML <code>&lt;img&gt;</code>, <code>&lt;picture&gt;</code>, SVG),
+          math equations (<code>$…$</code>, <code>$$…$$</code>, <code>\(…\)</code>, <code>\[…\]</code>, <code>```math</code>)
+          and <code>```mermaid</code> diagrams.
+        </p>
+      </div>
+      <article id="output" class="markdown-body"></article>
+    </section>
+    <nav id="toc" hidden aria-label="Table of contents">
+      <div class="toc-title">Contents</div>
+      <ol id="tocList"></ol>
+    </nav>
+  </main>
+
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+
+  <!-- Figure viewer: click an image or diagram to open it here -->
+  <div id="lightbox" hidden role="dialog" aria-modal="true" aria-label="Figure viewer">
+    <div class="lb-bar">
+      <span id="lbCaption"></span>
+      <button class="btn secondary" id="lbOut" title="Zoom out (−)">−</button>
+      <button class="btn secondary" id="lbLevel" title="Fit to window (0)">100%</button>
+      <button class="btn secondary" id="lbIn" title="Zoom in (+)">+</button>
+      <button class="btn secondary" id="lbClose" title="Close (Esc)">✕</button>
+    </div>
+    <div id="lbStage"><div id="lbItem"></div></div>
+  </div>
+
+  <footer>
+    Made using GPT5 · Markdown Viewer · <span id="year"></span>
+  </footer>
+
+<script src="./viewer.js"></script>
+</body>
+</html>

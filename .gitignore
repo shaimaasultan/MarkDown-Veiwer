@@ -1,0 +1,20 @@
+# This repository holds only the WebView2 edition.
+# Build output (recreate with: app\build.ps1 -WebView2)
+app/dist/
+app/dist-offline/
+app/dist-webview2/
+
+# Other editions (online / offline) - kept on disk, not tracked here
+app/Install.cmd
+app/Uninstall.cmd
+app/Install-Offline.cmd
+app/Uninstall-Offline.cmd
+app/Firewall-Add.cmd
+app/Firewall-Remove.cmd
+app/Firewall-Add-Offline.cmd
+app/Firewall-Remove-Offline.cmd
+app/firewall.ps1
+
+# Test documents and spare files
+BAD/
+favicon_readme0.png
