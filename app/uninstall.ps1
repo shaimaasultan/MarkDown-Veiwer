@@ -9,6 +9,13 @@ $classes = 'HKCU:\Software\Classes'
 
 Get-Process $key -ErrorAction SilentlyContinue | Stop-Process -Force
 
+# Block rules (if added with Firewall-Block.cmd) need administrator rights to remove.
+if (Get-NetFirewallRule -Group $name -ErrorAction SilentlyContinue) {
+    $fw = Join-Path $PSScriptRoot 'firewall.ps1'
+    if (Test-Path $fw) { & $fw -Remove -Exe (Join-Path $dest "$key.exe") }
+    else { Write-Host "The $name firewall rules remain; remove them with Firewall-Unblock.cmd." }
+}
+
 foreach ($ext in '.md', '.markdown', '.mdown', '.mkd') {
     $extKey = "$classes\$ext"
     if (Test-Path "$extKey\OpenWithProgids") {

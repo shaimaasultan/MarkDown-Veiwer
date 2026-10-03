@@ -68,6 +68,18 @@ if (Test-Path $libDst) { Remove-Item $libDst -Recurse -Force }
 Copy-Item (Join-Path $root 'lib') $libDst -Recurse -Force
 foreach ($f in $sdkFiles) { Copy-Item (Join-Path $wv2 $f) $dist -Force }
 
+# The bundled library files must be the versions viewer.js lists (both About windows show those).
+$js = [IO.File]::ReadAllText((Join-Path $root 'viewer.js'))
+$files = @{ 'marked' = 'marked.min.js'; 'KaTeX' = 'lib\katex\katex.min.js'; 'highlight.js' = 'lib\highlight\highlight.min.js'; 'Mermaid' = 'lib\mermaid\mermaid.min.js' }
+foreach ($lib in $files.Keys) {
+    $m = [regex]::Match($js, "name: '$([regex]::Escape($lib))', version: '([^']+)'")
+    if (-not $m.Success) { throw "viewer.js does not list a version for $lib." }
+    $text = [IO.File]::ReadAllText((Join-Path $root $files[$lib]))
+    if (-not $text.Contains('"' + $m.Groups[1].Value + '"') -and -not $text.Contains('v' + $m.Groups[1].Value)) {
+        throw "$($files[$lib]) is not $lib $($m.Groups[1].Value) as listed in viewer.js."
+    }
+}
+
 # Nothing the page loads may point to the internet.
 $page = [IO.File]::ReadAllText((Join-Path $dist 'ReadMe.html'))
 if ($page -match '(?:src|href)="https?:') { throw 'The page loads something from the internet; every library must come from lib\.' }

@@ -114,72 +114,92 @@ static class Program
 
     // ------------------------------------------------------------------ status for the page
 
-    // Firewall rules are not needed (nothing listens on the network); only Windows Firewall itself is reported.
-    static bool WindowsFirewallOn()
+    // Firewall (read-only). Nothing listens on the network, so no rules are needed. The optional block rules
+    // added by Firewall-Block.cmd make Windows refuse any traffic in or out of this program as well.
+    const string FirewallGroup = "Markdown Viewer (WebView2)";
+    const string FirewallDetail = "Nothing listens on the network. Optional block rules (Firewall-Block.cmd) make Windows refuse any traffic in or out of MarkdownViewerWebView2.exe itself. They do not cover the WebView2 engine (msedgewebview2.exe), which Windows shares with other apps.";
+
+    class FirewallStatus
     {
+        public bool FirewallOn = true, BlockIn, BlockOut;
+        public List<string> Rules = new List<string>();
+        public bool Blocked { get { return BlockIn && BlockOut; } }
+        public string Label { get { return Blocked ? "blocked in & out" : "no network port"; } }
+        public string Summary
+        {
+            get
+            {
+                if (Blocked) return "Blocked in and out for MarkdownViewerWebView2.exe - and no network port";
+                if (BlockIn || BlockOut) return "Partly blocked (" + (BlockIn ? "incoming" : "outgoing") + " only) - no network port";
+                return "Not needed - no network port (block rules not added)";
+            }
+        }
+    }
+
+    static FirewallStatus GetFirewallStatus()
+    {
+        FirewallStatus st = new FirewallStatus();
         try
         {
             dynamic fwPolicy = Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FwPolicy2"));
             int prof = fwPolicy.CurrentProfileTypes;
             foreach (int bit in new[] { 1, 2, 4 })
-                if ((prof & bit) != 0 && !(bool)fwPolicy.FirewallEnabled[bit]) return false;
+                if ((prof & bit) != 0 && !(bool)fwPolicy.FirewallEnabled[bit]) st.FirewallOn = false;
+            // Only enabled block rules in this app's group that point at this very program count.
+            string self = Path.GetFullPath(Application.ExecutablePath);
+            foreach (dynamic r in fwPolicy.Rules)
+            {
+                string group = r.Grouping as string, app = r.ApplicationName as string;
+                if (group != FirewallGroup || string.IsNullOrEmpty(app)) continue;
+                if (!string.Equals(Path.GetFullPath(Environment.ExpandEnvironmentVariables(app)), self, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!(bool)r.Enabled || (int)r.Action != 0) continue;          // 0 = block
+                if ((int)r.Direction == 1) st.BlockIn = true;                   // 1 = incoming
+                else if ((int)r.Direction == 2) st.BlockOut = true;             // 2 = outgoing
+                st.Rules.Add((string)r.Name);
+            }
         }
         catch { }
-        return true;
+        return st;
     }
-
-    const string FirewallSummary = "Not needed - no network port";
-    const string FirewallDetail = "This app shows documents inside its own window (WebView2); nothing listens on the network, so there is nothing for firewall rules to protect.";
 
     static string FirewallJson()
     {
-        return "{\"readable\":true,\"firewallOn\":" + (WindowsFirewallOn() ? "true" : "false") +
-               ",\"state\":\"nonetwork\",\"summary\":" + Json(FirewallSummary) +
-               ",\"detail\":" + Json(FirewallDetail) + ",\"rules\":[]}";
+        FirewallStatus st = GetFirewallStatus();
+        StringBuilder rules = new StringBuilder();
+        foreach (string r in st.Rules) { if (rules.Length > 0) rules.Append(','); rules.Append(Json(r)); }
+        return "{\"readable\":true,\"firewallOn\":" + (st.FirewallOn ? "true" : "false") +
+               ",\"state\":" + Json(st.Blocked ? "blocked" : "nonetwork") +
+               ",\"label\":" + Json(st.Label) + ",\"summary\":" + Json(st.Summary) +
+               ",\"detail\":" + Json(FirewallDetail) + ",\"rules\":[" + rules + "]}";
     }
 
     // ------------------------------------------------------------------ about
 
     class Library { public string Name, Use, Version, File; }
 
-    // Library versions, read from the installed viewer files so they always match what actually loads
-    // (same rule as the About window inside the viewer).
+    // Library versions come from the list in the installed viewer.js (LIBRARIES), so both About windows
+    // show the same thing; build.ps1 checks that each bundled file really is that version.
     static List<Library> Libraries()
     {
-        string html = "";
-        try { html = File.ReadAllText(Path.Combine(appDir, "ReadMe.html"), Encoding.UTF8); } catch { }
-        // Versions of the bundled copies, recorded by build.ps1.
+        string js = "";
+        try { js = File.ReadAllText(Path.Combine(appDir, "viewer.js"), Encoding.UTF8); } catch { }
         Dictionary<string, string> versions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        Match vm = Regex.Match(html, "name=\"mdv-lib-versions\" content=\"([^\"]*)\"");
-        if (vm.Success)
-            foreach (string pair in vm.Groups[1].Value.Split(';'))
-            {
-                string[] kv = pair.Split('=');
-                if (kv.Length == 2) versions[kv[0].Trim()] = kv[1].Trim();
-            }
-
-        string markedVersion = "?";
-        try
-        {
-            string head = File.ReadAllText(Path.Combine(appDir, "marked.min.js"));
-            Match mv = Regex.Match(head.Substring(0, Math.Min(400, head.Length)), @"marked v(\d+\.\d+\.\d+)");
-            if (mv.Success) markedVersion = mv.Groups[1].Value;
-        }
-        catch { }
+        foreach (Match m in Regex.Matches(js, @"name: '([^']+)', version: '([^']+)'"))
+            versions[m.Groups[1].Value] = m.Groups[2].Value;
 
         List<Library> libs = new List<Library>();
-        libs.Add(new Library { Name = "marked", Use = "Markdown to HTML", Version = markedVersion, File = "marked.min.js" });
         string[,] known =
         {
-            { "KaTeX", "Math equations", "katex", @"lib\katex" },
-            { "highlight.js", "Code colouring", "highlight.js", @"lib\highlight" },
-            { "Mermaid", "Diagrams", "mermaid", @"lib\mermaid" }
+            { "marked", "Markdown to HTML", "marked.min.js" },
+            { "KaTeX", "Math equations", @"lib\katex" },
+            { "highlight.js", "Code colouring", @"lib\highlight" },
+            { "Mermaid", "Diagrams", @"lib\mermaid" }
         };
         for (int i = 0; i < known.GetLength(0); i++)
         {
             string v;
-            if (!versions.TryGetValue(known[i, 2], out v)) v = "?";
-            libs.Add(new Library { Name = known[i, 0], Use = known[i, 1], Version = v, File = known[i, 3] });
+            if (!versions.TryGetValue(known[i, 0], out v)) v = "?";
+            libs.Add(new Library { Name = known[i, 0], Use = known[i, 1], Version = v, File = known[i, 2] });
         }
         return libs;
     }
@@ -217,7 +237,9 @@ static class Program
         sb.AppendLine("- Viewer: HTML, CSS and JavaScript, no frameworks");
         sb.AppendLine("- Made using: GPT-5 (original viewer); extended and tested with Claude Code (Anthropic)");
         sb.AppendLine();
-        sb.AppendLine("FIREWALL RULES: " + FirewallSummary + (WindowsFirewallOn() ? " (Windows Firewall is on)" : " (Windows Firewall is OFF)"));
+        FirewallStatus fw = GetFirewallStatus();
+        sb.AppendLine("FIREWALL: " + fw.Summary + (fw.FirewallOn ? " (Windows Firewall is on)" : " (Windows Firewall is OFF)"));
+        foreach (string r in fw.Rules) sb.AppendLine("     rule: " + r);
         sb.AppendLine("     " + FirewallDetail);
         sb.AppendLine();
         sb.Append("Installed in: " + appDir.TrimEnd('\\'));
@@ -235,7 +257,8 @@ static class Program
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     static extern bool SetProcessDPIAware();
 
-    // Native About window: a green "no network port" marker above the full About text.
+    // Native About window: a green firewall marker ("no network port", or "blocked in & out" with the
+    // optional block rules) above the full About text.
     static void ShowAboutWindow()
     {
         System.Drawing.Font ui = new System.Drawing.Font("Segoe UI", 9.5f);
@@ -260,7 +283,7 @@ static class Program
         title.Location = new System.Drawing.Point(16, 12);
 
         // The marker: a coloured bar with a dot, like the badge in the viewer window.
-        bool fwOn = WindowsFirewallOn();
+        FirewallStatus fw = GetFirewallStatus();
         Label marker = new Label();
         marker.AutoSize = false;
         marker.Location = new System.Drawing.Point(16, 50);
@@ -271,11 +294,11 @@ static class Program
         marker.ForeColor = System.Drawing.Color.FromArgb(0x1A, 0x7F, 0x37);
         marker.BackColor = System.Drawing.Color.FromArgb(0xDA, 0xFB, 0xE1);
         marker.BorderStyle = BorderStyle.FixedSingle;
-        marker.Text = "\u25CF  Firewall: no network port   \u2014   " + FirewallSummary +
-                      (fwOn ? " \u00B7 Windows Firewall on" : " \u00B7 Windows Firewall OFF");
+        marker.Text = "\u25CF  Firewall: " + fw.Label + "   \u2014   " + fw.Summary +
+                      (fw.FirewallOn ? " \u00B7 Windows Firewall on" : " \u00B7 Windows Firewall OFF");
         ToolTip tip = new ToolTip();
         tip.SetToolTip(marker, FirewallDetail);
-        marker.AccessibleName = "Firewall: no network port";
+        marker.AccessibleName = "Firewall: " + fw.Label;
 
         TextBox text = new TextBox();
         text.Multiline = true;

@@ -2459,10 +2459,10 @@ function renderConnStatus() {
 }
 
 // ---------------------------------------------------------------- firewall status
-// Nothing listens on the network, so no firewall rules are needed; the app reports that and whether
-// Windows Firewall itself is on.
+// Nothing listens on the network, so no firewall rules are needed; the app reports that, whether the
+// optional block rules for its program are in place, and whether Windows Firewall itself is on.
 let firewall = null;
-const firewallOk = () => !!(firewall && firewall.readable && firewall.state === 'nonetwork');
+const firewallOk = () => !!(firewall && firewall.readable && (firewall.state === 'nonetwork' || firewall.state === 'blocked'));
 
 async function fetchFirewall() {
   try { firewall = await (await fetch(apiBase + 'firewall')).json(); } catch { /* app closed */ }
@@ -2475,7 +2475,7 @@ function renderFirewall() {
   document.getElementById('appStatus').hidden = false;
   badge.hidden = false;
   badge.className = 'breakdown-btn ' + (firewallOk() ? 'ok' : 'bad');
-  badge.textContent = `🛡 Firewall: ${firewallOk() ? 'no network port' : 'status unknown'}`;
+  badge.textContent = `🛡 Firewall: ${firewallOk() ? firewall.label || 'no network port' : 'status unknown'}`;
   badge.title = `${firewall.summary}. ${firewall.detail} — click for details`;
   // Keep the About window's row current if it's open.
   const row = document.getElementById('fwRow');
@@ -2489,7 +2489,7 @@ function fillFirewallRow(dd) {
   dd.append(`${firewallOk() ? '✓' : '✗'} ${firewall.summary}` + (firewall.readable ? (firewall.firewallOn ? ' · Windows Firewall on' : ' · Windows Firewall OFF') : ''));
   const detail = document.createElement('span');
   detail.className = 'fw-detail';
-  detail.textContent = firewall.detail;
+  detail.textContent = firewall.detail + (firewall.rules && firewall.rules.length ? ` Rules: ${firewall.rules.join(', ')}.` : '');
   dd.append(detail);
 }
 document.getElementById('fwBadge').addEventListener('click', () => showAbout());

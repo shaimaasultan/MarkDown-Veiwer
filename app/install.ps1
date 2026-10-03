@@ -31,9 +31,9 @@ foreach ($f in $exeName, 'MarkdownViewer.ico', 'ReadMe.html', 'viewer.js', 'mark
 $libDest = Join-Path $dest 'lib'
 if (Test-Path $libDest) { Remove-Item $libDest -Recurse -Force }
 Copy-Item (Join-Path $dist 'lib') $libDest -Recurse -Force
-Copy-Item (Join-Path $here 'uninstall.ps1') $dest -Force
-# Files earlier versions of the installer left behind.
-foreach ($f in 'editions.ps1', 'firewall.ps1') { Remove-Item (Join-Path $dest $f) -Force -ErrorAction SilentlyContinue }
+foreach ($f in 'uninstall.ps1', 'firewall.ps1') { Copy-Item (Join-Path $here $f) $dest -Force }
+# File earlier versions of the installer left behind.
+Remove-Item (Join-Path $dest 'editions.ps1') -Force -ErrorAction SilentlyContinue
 
 # Create a registry key only if it's missing. (New-Item -Force would recreate an existing key and
 # wipe its values - e.g. other apps' entries under .md.)
@@ -130,4 +130,5 @@ if ($userChoice) {
 } else {
     Write-Host "If Windows asks which app to use the next time you open a .md file, pick $name and click Always."
 }
-Write-Host 'No firewall rules needed: this app uses no network port.'
+if (Get-NetFirewallRule -Group $name -ErrorAction SilentlyContinue) { Write-Host 'Firewall: the block rules for this app are in place.' }
+else { Write-Host 'Optional: run Firewall-Block.cmd (as administrator) to block all network traffic of the program.' }
