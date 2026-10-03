@@ -32,7 +32,6 @@ using Microsoft.Web.WebView2.WinForms;
 static class Program
 {
     const string AppName = "Markdown Viewer (WebView2)";
-    const string Edition = "webview2";
     const string DataFolder = "MarkdownViewerWebView2";     // %APPDATA% (settings) and %LOCALAPPDATA% (browser data)
     const string AppVersion = "1.4.0";
     // Exists only inside this program's windows. Not a .local name: Windows would first spend ~2 s
@@ -114,9 +113,6 @@ static class Program
     }
 
     // ------------------------------------------------------------------ status for the page
-
-    // The page polls this; it shows "Private in-app connection - no network port" and never rotates.
-    const string ConnectionJson = "{\"transport\":\"webview2\",\"rotate\":null,\"rotateMinutes\":\"off\",\"nextRotationSeconds\":-1,\"closeFailed\":false}";
 
     // Firewall rules are not needed (nothing listens on the network); only Windows Firewall itself is reported.
     static bool WindowsFirewallOn()
@@ -513,9 +509,7 @@ static class Program
         if (!path.StartsWith(prefix, StringComparison.Ordinal)) { NotFound(stream); return; }
         string rest = path.Substring(prefix.Length);
 
-        if (rest == "ping")
-            Send(stream, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(ConnectionJson), null, headOnly);
-        else if (rest == "firewall")
+        if (rest == "firewall")
             Send(stream, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(FirewallJson()), null, headOnly);
         else if (rest == "pref")
         {
@@ -623,7 +617,6 @@ static class Program
         WebView2Versions(out wvRuntime, out wvSdk);
         sb.Append("\"app\":{\"name\":").Append(Json(AppName))
           .Append(",\"version\":").Append(Json(AppVersion))
-          .Append(",\"edition\":").Append(Json(Edition))
           .Append(",\"runtime\":").Append(Json(".NET Framework CLR " + Environment.Version))
           .Append(",\"installDir\":").Append(Json(appDir.TrimEnd('\\')))
           .Append(",\"readableFolder\":").Append(Json(allowRoot))

@@ -20,8 +20,9 @@ const urlCache = new Map();  // lowercase path -> blob URL
 let mdPaths = [];
 let currentPath = null;
 
-// Desktop app mode: opened by MarkdownViewer.exe, which serves files from disk at <token>/fs/<path>.
-const APP = (location.hostname === '127.0.0.1' || location.hostname === 'mdviewer.example') && /\/app\/[^/]*$/.test(location.pathname);
+// App mode: shown by MarkdownViewerWebView2.exe at its private address, which hands out files from disk
+// at <token>/fs/<path>.
+const APP = location.hostname === 'mdviewer.example' && /\/app\/[^/]*$/.test(location.pathname);
 const apiBase = APP ? location.pathname.replace(/app\/[^/]*$/, '') : '';
 let source = 'local';        // 'local' = files picked/dropped in the page, 'app' = files on disk via the exe
 let repoRoot = '';           // app mode: folder that "/x" links resolve against
@@ -174,7 +175,7 @@ function renderMath(tex, display) {
       html = katex.renderToString(tex, { ...KATEX_OPTIONS, displayMode: display });
     } catch (e) { /* fall through to raw */ }
   }
-  if (!html) html = `<code class="math-raw" title="Math renderer unavailable (offline?)">${esc(display ? `$$${tex}$$` : `$${tex}$`)}</code>`;
+  if (!html) html = `<code class="math-raw" title="Math renderer unavailable">${esc(display ? `$$${tex}$$` : `$${tex}$`)}</code>`;
   return display ? `<div class="math-display">${html}</div>` : html;
 }
 
@@ -1915,11 +1916,9 @@ async function renderDiagrams(root, forceTheme) {
 }
 
 // ---------------------------------------------------------------- preferences
-// Remembered view settings. The Windows app stores them itself (each window has a new local
-// address, so browser storage would forget them) and puts them on <html data-…> before the page
-// is shown; the standalone page uses localStorage. The first value is the default.
-const PREFS = { theme: ['auto', 'light', 'dark'], sidebar: ['shown', 'hidden'], toc: ['shown', 'hidden'], hiddenchars: ['off', 'on'],
-                rotate: ['15', 'off', '5', '30', '60'] };
+// Remembered view settings. The app stores them itself (in its settings file) and puts them on
+// <html data-…> before the page is shown; the standalone page uses localStorage. The first value is the default.
+const PREFS = { theme: ['auto', 'light', 'dark'], sidebar: ['shown', 'hidden'], toc: ['shown', 'hidden'], hiddenchars: ['off', 'on'] };
 
 function loadPref(name) {
   const values = PREFS[name];
@@ -2292,80 +2291,43 @@ async function walk(entry, prefix, out) {
 }
 
 // ---------------------------------------------------------------- About
-// Versions and online addresses come from the <script>/<link> tags in ReadMe.html, so this list can't
-// drift from what is actually loaded. marked is bundled locally; its online copy is listed for reference.
+// Every library is bundled with the app (lib folder; marked next to the page). Versions are the bundled
+// copies' versions; the "running" version is read from the library itself where it reports one.
 const LIBRARIES = [
-  { name: 'marked', use: 'Markdown → HTML', match: /marked/i, version: '15.0.12',
-    bundled: 'https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js',
+  { name: 'marked', version: '15.0.12', use: 'Markdown → HTML', match: /marked/i,
     loaded: () => typeof window.marked?.Marked === 'function' },
-  { name: 'KaTeX', use: 'Math equations', match: /katex/i,
+  { name: 'KaTeX', version: '0.16.22', use: 'Math equations', match: /katex/i,
     loaded: () => typeof window.katex?.renderToString === 'function', actual: () => window.katex?.version },
-  { name: 'highlight.js', use: 'Code colouring', match: /highlight/i,
+  { name: 'highlight.js', version: '11.9.0', use: 'Code colouring', match: /highlight/i,
     loaded: () => typeof window.hljs?.highlightElement === 'function', actual: () => window.hljs?.versionString },
-  { name: 'Mermaid', use: 'Diagrams (```mermaid)', match: /mermaid/i,
+  { name: 'Mermaid', version: '11.4.1', use: 'Diagrams (```mermaid)', match: /mermaid/i,
     loaded: () => typeof window.mermaid?.render === 'function' }
 ];
 
-let appInfo = null;   // set by initApp() inside the Windows app
+const APP_EXE = 'MarkdownViewerWebView2.exe';
+let appInfo = null;   // set by initApp() inside the app
 
-// Edition: "online" (libraries from the internet) or "offline" (every library bundled in ./lib/).
-const metaContent = name => (document.querySelector(`meta[name="${name}"]`) || {}).content || '';
-const EDITION = ['offline', 'webview2'].includes(metaContent('mdv-edition')) ? metaContent('mdv-edition') : 'online';
-// Offline edition: versions of the bundled copies, recorded by build.ps1 ("KaTeX=0.16.22;…").
-const BUNDLED_VERSIONS = Object.fromEntries(metaContent('mdv-lib-versions').split(';').filter(Boolean).map(p => p.split('=')));
-const APP_EXE = { online: 'MarkdownViewer.exe', offline: 'MarkdownViewerOffline.exe', webview2: 'MarkdownViewerWebView2.exe' }[EDITION];
-const APP_TITLE = { online: 'Markdown Viewer', offline: 'Markdown Viewer (Offline)', webview2: 'Markdown Viewer (WebView2)' }[EDITION];
-
-// "Built with": what the app is made from, with live versions/availability where they can be detected.
-// Browsers report a shortened version by default ("154.0.0.0"); the full one has to be asked for.
-let fullEdgeVersion = null;
-if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
-  navigator.userAgentData.getHighEntropyValues(['fullVersionList']).then(v => {
-    const edge = (v.fullVersionList || []).find(b => b.brand === 'Microsoft Edge');
-    if (edge) fullEdgeVersion = edge.version;
-  }).catch(() => {});
-}
-
-function edgeVersion() {
-  if (fullEdgeVersion) return fullEdgeVersion;
-  const m = /Edg\/([\d.]+)/.exec(navigator.userAgent);
-  return m ? m[1] : null;
-}
-
-// The browser showing the page: "Microsoft Edge 1xx" in the Windows app, otherwise the real engine name.
+// The browser showing the page when it was opened directly (inside the app, the WebView2 Runtime version is used).
 function browserName() {
-  if (edgeVersion()) return `Microsoft Edge ${edgeVersion()}`;
   const brands = (navigator.userAgentData && navigator.userAgentData.brands) || [];
   const b = brands.find(x => !/not.?a.?brand/i.test(x.brand) && x.brand !== 'Chromium') || brands.find(x => x.brand === 'Chromium');
   if (b) return `${b.brand} ${b.version}`;
-  const m = /(Firefox|Chrome|Safari)\/([\d.]+)/.exec(navigator.userAgent);
-  return m ? `${m[1]} ${m[2]}` : 'Web browser';
+  const m = /(Edg|Firefox|Chrome|Safari)\/([\d.]+)/.exec(navigator.userAgent);
+  return m ? `${m[1] === 'Edg' ? 'Microsoft Edge' : m[1]} ${m[2]}` : 'Web browser';
 }
 
+// "Built with": what the app is made from, with live versions/availability where they can be detected.
 function builtWith() {
   const feature = (name, use, ok) => `${ok ? '✓' : '✗'} ${name} — ${use}`;
   return [
-    { name: 'Edition', detail: {
-        online: 'Online — math, code colouring and diagrams load from the internet',
-        offline: 'Offline — every library is bundled; no internet needed',
-        webview2: 'WebView2 — own window, every library bundled, no network port' }[EDITION],
-      use: {
-        online: 'Offline and WebView2 editions can be installed alongside this one',
-        offline: 'The window’s security policy allows no internet addresses at all',
-        webview2: 'Documents are handed to the page inside the program; nothing listens on the network' }[EDITION],
-      items: [] },
     { name: 'Windows app', detail: appInfo ? `${APP_EXE} ${appInfo.version}` : `${APP_EXE} (not used — page opened directly)`,
-      use: 'Opens .md files from Explorer and serves the document folder to the viewer window',
+      use: 'Opens .md files from Explorer and hands the document folder to the viewer window — no network port',
       items: ['C# 5, compiled with csc.exe from .NET Framework 4 (included with Windows)' + (appInfo && appInfo.runtime ? ` — runtime ${appInfo.runtime}` : ''),
-              EDITION === 'webview2'
-                ? 'WebView2 control (Microsoft.Web.WebView2 SDK) — requests are answered inside the program, no network port'
-                : 'Built-in local web server (System.Net.Sockets), bound to 127.0.0.1 only, with a random access token',
+              'WebView2 control (Microsoft.Web.WebView2 SDK) — every request is answered inside the program',
               'Windows Forms for the app window and native message boxes'] },
     { name: 'Window',
       detail: appInfo && appInfo.webview2Runtime ? `WebView2 Runtime ${appInfo.webview2Runtime}` : browserName(),
-      use: !appInfo ? 'The browser this page is open in'
-         : EDITION === 'webview2' ? 'The Edge engine embedded in the program’s own window (WebView2 Runtime)'
-         : 'Shows the viewer as an app window (Edge --app mode, Chromium engine)',
+      use: appInfo ? 'The Edge engine embedded in the program’s own window (WebView2 Runtime)' : 'The browser this page is open in',
       items: appInfo && appInfo.webview2Sdk ? [`WebView2 SDK ${appInfo.webview2Sdk} (Microsoft.Web.WebView2) — built into ${APP_EXE}`] : [] },
     { name: 'Installer', detail: 'PowerShell 5.1 scripts',
       use: 'Build, install and uninstall for the current user — no admin rights',
@@ -2380,7 +2342,7 @@ function builtWith() {
         feature('TextDecoder', 'reading UTF-8, UTF-16 and Windows-1252 files', typeof TextDecoder === 'function'),
         feature('Clipboard API', 'Copy clean', !!(navigator.clipboard && navigator.clipboard.writeText)),
         feature('DOMParser + Content-Security-Policy', 'preview-only safety: documents never run code', typeof DOMParser === 'function'),
-        feature('Fetch', 'loading documents from the Windows app', typeof fetch === 'function')
+        feature('Fetch', 'loading documents from the app', typeof fetch === 'function')
       ] },
     { name: 'Made using', detail: 'AI coding assistants',
       use: 'Who wrote the code',
@@ -2410,92 +2372,49 @@ function renderBuiltWith() {
   }
 }
 
-function rotationText() {
-  if (!rotation) return '…';
-  if (rotation.rotate) return 'Now — the window moves at the next quiet moment';
-  const s = secsLeft('nextRotationSeconds');
-  if (s < 0) return 'Never (changes are off)';
-  return `in ${clock(s)}`;
-}
-
 function showAbout() {
   renderBuiltWith();
-  if (EDITION !== 'online')
-    document.getElementById('libNote').textContent = 'All bundled with the app (in its lib folder) — nothing is loaded from the internet, so math, code colouring and diagrams work fully offline.';
-  const tags = [...document.querySelectorAll('script[src], link[rel="stylesheet"][href]')]
+  const files = [...document.querySelectorAll('script[src], link[rel="stylesheet"][href]')]
     .map(el => el.getAttribute('src') || el.getAttribute('href'));
   const list = document.getElementById('libList');
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
   list.replaceChildren();
   for (const lib of LIBRARIES) {
-    const urls = tags.filter(u => lib.match.test(u) && /^https?:/i.test(u));
-    const local = tags.filter(u => lib.match.test(u) && !/^https?:/i.test(u));
-    const wanted = lib.version || (urls.join(' ').match(/[@/](\d+\.\d+\.\d+)\//) || [])[1] || BUNDLED_VERSIONS[lib.name] || '?';
     const actual = lib.actual && lib.actual();
     const ok = lib.loaded();
-
     const card = el('div', 'lib');
     const head = el('div', 'lib-head');
     head.append(
-      el('span', 'lib-name', `${lib.name} ${actual && actual !== wanted ? `${wanted} (running ${actual})` : wanted}`),
+      el('span', 'lib-name', `${lib.name} ${actual && actual !== lib.version ? `${lib.version} (running ${actual})` : lib.version}`),
       el('span', 'lib-use', lib.use),
-      el('span', ok ? 'ok' : 'bad', ok ? '✓ loaded' : '✗ not loaded (offline?)'));
+      el('span', ok ? 'ok' : 'bad', ok ? '✓ loaded' : '✗ not loaded'));
     const src = el('ul', 'lib-src');
-    const original = EDITION === 'offline' && lib.name !== 'marked' && BUNDLED_VERSIONS[`${lib.name}-source`]
-      ? [`original download: ${BUNDLED_VERSIONS[`${lib.name}-source`]}`] : [];
-    for (const line of [...local.map(u => `${u} (bundled)`), ...urls, ...original, ...(lib.bundled ? [`online copy: ${lib.bundled}`] : [])])
-      src.appendChild(el('li', '', line));
+    for (const f of files.filter(u => lib.match.test(u))) src.appendChild(el('li', '', `${f} (bundled)`));
     card.append(head, src);
     list.appendChild(card);
   }
-  // Details of MarkdownViewer.exe, when the page runs inside the Windows app.
+  // Details of the app, when the page runs inside it.
   const appSection = document.getElementById('appSection');
   appSection.hidden = !appInfo;
   document.getElementById('appSectionNote').hidden = !!appInfo;
   if (appInfo) {
     const dl = document.getElementById('appInfo');
     dl.replaceChildren();
+    const wv = appInfo.webview2Runtime
+      ? `Runtime ${appInfo.webview2Runtime}` + (appInfo.webview2Sdk ? ` · SDK ${appInfo.webview2Sdk}` : '')
+      : 'Runtime version not reported';
     const rows = [
       ['Version', `${appInfo.name} ${appInfo.version}`],
       ['Installed in', appInfo.installDir],
       ['Can read files under', appInfo.readableFolder || '—'],
       ['File types it will read', appInfo.servedTypes],
-      ['Everything else', 'Refused (HTML, scripts, PDFs, programs, …)']
+      ['Everything else', 'Refused (HTML, scripts, PDFs, programs, …)'],
+      ['Connection', 'Private in-app address — every request is answered by the program itself; no network port'],
+      ['Developer tools', 'Off (no F12 / Inspect). Documents are refused if WebView2 debugging has been switched on'],
+      ['WebView2', wv]
     ];
     for (const [k, v] of rows) dl.append(el('dt', '', k), el('dd', '', v));
-
-    if (EDITION === 'webview2') {
-      // No network port in this edition, so there is no connection to rotate.
-      const wv = appInfo.webview2Runtime
-        ? `Runtime ${appInfo.webview2Runtime}` + (appInfo.webview2Sdk ? ` · SDK ${appInfo.webview2Sdk}` : '')
-        : 'Runtime version not reported';
-      for (const [k, v] of [
-        ['Connection', 'Private in-app address — every request is answered by the program itself; no network port, nothing to rotate'],
-        ['Developer tools', 'Off (no F12 / Inspect). Documents are refused if WebView2 debugging has been switched on'],
-        ['WebView2', wv]
-      ]) dl.append(el('dt', '', k), el('dd', '', v));
-    } else {
-    // Connection rotation: interval setting and a live countdown (port numbers are not shown).
-    const sel = el('select', 'rot-select');
-    const choice = loadPrefLive('rotate');
-    for (const [v, label] of [['off', 'Off'], ['5', '5 minutes'], ['15', '15 minutes'], ['30', '30 minutes'], ['60', '60 minutes']]) {
-      const o = el('option', '', label); o.value = v; o.selected = v === choice; sel.append(o);
-    }
-    const nextDd = el('dd', '', rotationText());
-    nextDd.id = 'rotNext';
-    sel.addEventListener('change', async () => {
-      setRootPref('rotate', sel.value);
-      savePref('rotate', sel.value);
-      await new Promise(r => setTimeout(r, 300));
-      await pingServer();
-      nextDd.textContent = rotationText();
-    });
-    const rotDd = el('dd');
-    rotDd.append(sel);
-    dl.append(el('dt', '', 'Change connection & access key every'), rotDd, el('dt', '', 'Next change'), nextDd);
-    }
-
-    // Firewall rules: shown from the last check, then refreshed.
+    // Firewall: shown from the last check, then refreshed.
     const fwDd = el('dd');
     fwDd.id = 'fwRow';
     fillFirewallRow(fwDd);
@@ -2507,7 +2426,7 @@ function showAbout() {
 document.getElementById('aboutBtn').addEventListener('click', showAbout);
 document.getElementById('aboutClose').addEventListener('click', () => document.getElementById('about').close());
 
-// ---------------------------------------------------------------- desktop app start-up
+// ---------------------------------------------------------------- app start-up
 async function initApp() {
   // Let the deferred diagram library finish loading first.
   if (document.readyState === 'loading') await new Promise(r => document.addEventListener('DOMContentLoaded', r));
@@ -2515,16 +2434,10 @@ async function initApp() {
   try { info = await (await fetch(apiBase + 'info')).json(); }
   catch { return; }
   appInfo = info.app || null;
-  // Tell MarkdownViewer.exe the window is still open (it exits a while after the pings stop),
-  // and hear about port rotations.
-  setInterval(pingServer, 10000);
+  renderConnStatus();
   fetchFirewall();
   setInterval(fetchFirewall, 60000);
-  setInterval(tryRotate, 5000);
-  document.addEventListener('visibilitychange', () => { if (document.hidden) tryRotate(); else pingServer(); });
-  pingServer();
 
-  const carried = readCarriedState();     // state brought over from the previous port, if any
   const file = new URLSearchParams(location.search).get('file') || info.file;
   if (!file) return;
   source = 'app';
@@ -2535,92 +2448,25 @@ async function initApp() {
   updateSidebarAvailability();
   buildList();
   await openDoc(file);
-  if (carried) restoreCarriedState(carried);
 }
 
-// ---------------------------------------------------------------- port rotation (Windows app)
-// The server periodically opens a new port with a new access token. Because a page's address
-// includes its port, the window moves to the new address — at a quiet moment, keeping the open
-// document, scroll position and Find search. It never moves with unsaved replacements or while
-// a dialog or the figure viewer is open; the old port stays open until it has moved.
-let rotation = null;                 // latest { port, rotate, rotateMinutes, nextRotationSeconds }
-let lastInput = Date.now();
-['keydown', 'pointerdown', 'wheel'].forEach(t => document.addEventListener(t, () => { lastInput = Date.now(); }, true));
-content.addEventListener('scroll', () => { lastInput = Date.now(); }, { passive: true });
-
-let rotationAt = 0;                  // when `rotation` was received (its countdowns start from here)
-
-async function pingServer() {
-  try {
-    const r = await fetch(apiBase + 'ping');
-    if (r.ok && (r.headers.get('content-type') || '').includes('json')) { rotation = await r.json(); rotationAt = Date.now(); }
-  } catch { /* the helper has closed */ }
-  renderPortStatus();
-  if (rotation && rotation.rotate) tryRotate();
-}
-
-// Seconds left on one of the server's countdowns, counted down locally between pings.
-function secsLeft(field) {
-  if (!rotation || rotation[field] < 0) return -1;
-  return Math.max(0, Math.round(rotation[field] - (Date.now() - rotationAt) / 1000));
-}
-const clock = s => s >= 3600 ? `${Math.floor(s / 3600)}:${String(Math.floor(s / 60) % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
-                             : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-
-// Status line under the document path (Windows app only). Port numbers are deliberately not shown.
-function renderPortStatus() {
-  const box = document.getElementById('portStatus');
-  if (!APP || !rotation) return;
+// Status line under the document path.
+function renderConnStatus() {
+  const box = document.getElementById('connStatus');
   document.getElementById('appStatus').hidden = false;
-  const parts = [];
-  if (rotation.transport === 'webview2') {
-    // WebView2 edition: the page talks to the program directly - no port, nothing to rotate or close.
-    box.replaceChildren('🔒 Private in-app connection — no network port');
-    box.title = 'This window shows documents through WebView2; nothing listens on the network';
-    return;
-  }
-  if (rotation.rotate) parts.push(['', '🔄 Connection change ready — moves at the next quiet moment']);
-  else if (secsLeft('nextRotationSeconds') >= 0) {
-    parts.push(['', `🔄 Connection changes in ${clock(secsLeft('nextRotationSeconds'))}`]);
-    if (secsLeft('nextRotationSeconds') === 0 && Date.now() - rotationAt > 2000) pingServer();   // learn the new connection now
-  }
-  else parts.push(['', '🔄 Connection changes: off']);
-  if (rotation.closingPort) {
-    if (rotation.closeFailed) parts.push(['failed', '⚠ previous connection did not close']);
-    else {
-      const left = secsLeft('closeSecondsLeft');
-      parts.push(['closing', left > 0 ? `· previous connection closes in ${left} s` : '· closing previous connection…']);
-      if (left <= 0 && Date.now() - rotationAt > 2000) pingServer();      // fetch the outcome of the close
-    }
-  } else if (rotation.closedPort) parts.push(['closed', '· previous connection closed ✓']);
-  box.replaceChildren(...parts.map(([cls, text]) => { const s = document.createElement('span'); if (cls) s.className = cls; s.textContent = text + ' '; return s; }));
-  box.title = 'For safety, the viewer regularly moves to a new private connection with a new access key';
-  const next = document.getElementById('rotNext');
-  if (next) next.textContent = rotationText();
-  if (rotation.closeFailed) showPortDialog();
+  box.replaceChildren('🔒 Private in-app connection — no network port');
+  box.title = 'This window shows documents through WebView2; nothing listens on the network';
 }
-setInterval(() => { if (APP && rotation) renderPortStatus(); }, 1000);
 
-// ---------------------------------------------------------------- firewall rules status (Windows app)
-// The helper reads its own "Markdown Viewer" firewall rules (read-only) and reports them here.
-// Green marker: all 4 rules present and enabled, and Windows Firewall is on. Red: anything less.
+// ---------------------------------------------------------------- firewall status
+// Nothing listens on the network, so no firewall rules are needed; the app reports that and whether
+// Windows Firewall itself is on.
 let firewall = null;
-const firewallOk = () => !!(firewall && firewall.readable && (firewall.state === 'active' && firewall.firewallOn || firewall.state === 'nonetwork'));
+const firewallOk = () => !!(firewall && firewall.readable && firewall.state === 'nonetwork');
 
 async function fetchFirewall() {
-  try { firewall = await (await fetch(apiBase + 'firewall')).json(); } catch { /* helper closed */ }
+  try { firewall = await (await fetch(apiBase + 'firewall')).json(); } catch { /* app closed */ }
   renderFirewall();
-}
-
-function firewallLabel() {
-  if (!firewall) return '…';
-  if (firewall.state === 'nonetwork') return 'no network port';
-  if (firewallOk()) return 'on';
-  if (!firewall.readable) return 'status unknown';
-  if (firewall.state === 'none') return 'rules not added';
-  if (firewall.state === 'othercopy') return 'not this copy';
-  if (!firewall.firewallOn) return 'Windows Firewall is off';
-  return 'rules incomplete';
 }
 
 function renderFirewall() {
@@ -2629,7 +2475,7 @@ function renderFirewall() {
   document.getElementById('appStatus').hidden = false;
   badge.hidden = false;
   badge.className = 'breakdown-btn ' + (firewallOk() ? 'ok' : 'bad');
-  badge.textContent = `🛡 Firewall: ${firewallLabel()}`;
+  badge.textContent = `🛡 Firewall: ${firewallOk() ? 'no network port' : 'status unknown'}`;
   badge.title = `${firewall.summary}. ${firewall.detail} — click for details`;
   // Keep the About window's row current if it's open.
   const row = document.getElementById('fwRow');
@@ -2643,92 +2489,25 @@ function fillFirewallRow(dd) {
   dd.append(`${firewallOk() ? '✓' : '✗'} ${firewall.summary}` + (firewall.readable ? (firewall.firewallOn ? ' · Windows Firewall on' : ' · Windows Firewall OFF') : ''));
   const detail = document.createElement('span');
   detail.className = 'fw-detail';
-  detail.textContent = firewall.detail + (firewall.rules.length ? ` Rules: ${firewall.rules.join(', ')}.` : '');
+  detail.textContent = firewall.detail;
   dd.append(detail);
 }
 document.getElementById('fwBadge').addEventListener('click', () => showAbout());
 
-// Pop-up when the previous connection didn't close in time: force it closed, or refresh.
-let portDialogDismissed = false;
-function showPortDialog() {
-  const d = document.getElementById('portDialog');
-  if (d.open || portDialogDismissed || document.querySelector('dialog[open]')) return;
-  document.getElementById('portMsg').textContent =
-    'The viewer moved to a new connection, but the previous one did not close in time. Force it closed, or refresh the window.';
-  d.showModal();
-}
-document.getElementById('portDismiss').addEventListener('click', () => { portDialogDismissed = true; document.getElementById('portDialog').close(); });
-document.getElementById('portRefresh').addEventListener('click', () => {
-  if (isEdited() && !confirm('Refreshing discards your unsaved replacements. Continue?')) return;
-  location.reload();
-});
-document.getElementById('portForce').addEventListener('click', async () => {
-  const msg = document.getElementById('portMsg');
-  msg.textContent = 'Closing the previous connection…';
-  try {
-    const r = await fetch(apiBase + 'forceclose');
-    rotation = await r.json(); rotationAt = Date.now();
-  } catch { msg.textContent = 'The viewer helper did not respond. Close this window and open the file again.'; return; }
-  if (!rotation.closingPort) {
-    document.getElementById('portDialog').close();
-    showToast('The previous connection is now closed.');
-  } else {
-    msg.textContent = 'The previous connection is still open. Refresh the window; if that does not help, close it and open the file again.';
-  }
-  renderPortStatus();
-});
-
-function tryRotate() {
-  if (!rotation || !rotation.rotate || !currentPath) return;
-  const busy = isEdited() || document.querySelector('dialog[open]') || !lightbox.hidden || !copyMenu.hidden;
-  const quiet = document.hidden || Date.now() - lastInput > 60000;
-  if (busy || !quiet) return;
-  const url = new URL(rotation.rotate);
-  url.search = '?file=' + encodeURIComponent(currentPath);
-  url.hash = 'mv=' + encodeURIComponent(JSON.stringify({
-    s: Math.round(content.scrollTop),
-    f: findBar.hidden ? null : { q: findInput.value, c: findOpts.case.checked, w: findOpts.word.checked, r: findOpts.regex.checked, rep: replaceMode }
-  }));
-  rotation = null;
-  location.replace(url.href);
-}
-
-function readCarriedState() {
-  const m = /^#mv=(.+)$/.exec(location.hash);
-  if (!m) return null;
-  try { return JSON.parse(decodeURIComponent(m[1])); } catch { return null; }
-}
-
-function restoreCarriedState(st) {
-  if (st.f) {
-    findBar.hidden = false;
-    findBtn.classList.add('on');
-    findInput.value = st.f.q || '';
-    findOpts.case.checked = !!st.f.c; findOpts.word.checked = !!st.f.w; findOpts.regex.checked = !!st.f.r;
-    if (st.f.rep) setReplaceMode(true); else runFind(true);
-  }
-  // Scroll after layout settles (diagrams and images can change heights).
-  const scroll = () => { content.scrollTop = st.s || 0; };
-  scroll();
-  setTimeout(scroll, 300);
-  setTimeout(scroll, 1200);
-}
 if (APP) initApp();
 
-// Offline / WebView2 edition: say so in the header, next to the app name.
-if (EDITION !== 'online') {
+// The app's name tag in the header.
+{
   const tag = document.createElement('span');
-  tag.className = 'edition-tag';
-  tag.textContent = EDITION === 'webview2' ? 'WebView2' : 'Offline';
-  tag.title = EDITION === 'webview2' ? 'WebView2 edition: own window, bundled libraries, no network port'
-                                     : 'Offline edition: every library is bundled, nothing is loaded from the internet';
+  tag.className = 'app-tag';
+  tag.textContent = 'WebView2';
+  tag.title = 'Own window, bundled libraries, no network port';
   document.querySelector('header h1').append(' ', tag);
 }
 
-// Opened directly in a browser (no Markdown Viewer app behind it): say what's missing and how to get it.
+// Opened directly in a browser (not inside the app): say what's missing and how to get it.
 if (!APP) {
   const note = document.getElementById('standaloneNote');
-  note.querySelectorAll('strong')[1].textContent = APP_TITLE;
   let dismissed = false;
   try { dismissed = localStorage.getItem('mdv-standalone-note') === 'hidden'; } catch {}
   note.hidden = dismissed;

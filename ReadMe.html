@@ -3,19 +3,18 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <!-- Edition: "online" here; build.ps1 -Offline writes an offline copy that loads every library from ./lib/. -->
-  <meta name="mdv-edition" content="online">
   <!--
     Preview only: no code from a Markdown file may ever run.
     Only the viewer's own script files below are allowed; inline <script>, onclick=/onerror=
     handlers, javascript: links, frames, plugins and forms are all blocked by the browser.
+    Every library is bundled in ./lib/ (marked next to this page); nothing is loaded from the internet.
     (The library list is also shown in the page's "About" window — keep viewer.js LIBRARIES in sync.)
   -->
   <meta http-equiv="Content-Security-Policy" content="
     default-src 'none';
-    script-src 'self' file: https://cdn.jsdelivr.net https://cdnjs.cloudflare.com;
-    style-src 'self' file: 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com;
-    font-src 'self' file: data: https://cdn.jsdelivr.net;
+    script-src 'self' file:;
+    style-src 'self' file: 'unsafe-inline';
+    font-src 'self' file: data:;
     img-src * data: blob: file:;
     media-src * data: blob: file:;
     connect-src 'self';
@@ -28,18 +27,18 @@
   <script src="./marked.min.js"></script>
 
   <!-- Math (KaTeX) -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css">
-  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/contrib/auto-render.min.js"></script>
+  <link rel="stylesheet" href="./lib/katex/katex.min.css">
+  <script src="./lib/katex/katex.min.js"></script>
+  <script src="./lib/katex/contrib/auto-render.min.js"></script>
 
   <!-- Code highlighting -->
   <!-- (media attributes are switched by the theme button in viewer.js) -->
-  <link id="hljsLight" rel="stylesheet" media="print, (prefers-color-scheme: light)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
-  <link id="hljsDark" rel="stylesheet" media="screen and (prefers-color-scheme: dark)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <link id="hljsLight" rel="stylesheet" media="print, (prefers-color-scheme: light)" href="./lib/highlight/styles/github.min.css">
+  <link id="hljsDark" rel="stylesheet" media="screen and (prefers-color-scheme: dark)" href="./lib/highlight/styles/github-dark.min.css">
+  <script src="./lib/highlight/highlight.min.js"></script>
 
   <!-- Diagrams (```mermaid blocks) -->
-  <script defer src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+  <script defer src="./lib/mermaid/mermaid.min.js"></script>
 
   <style>
     /* Theme: follows Windows unless <html data-theme="light|dark"> is set by the theme button. */
@@ -111,7 +110,7 @@
     #docPath { word-break: break-all; }
     #stats { display: flex; flex-wrap: wrap; gap: .1rem 1rem; margin-top: .15rem; }
     #stats .group { white-space: nowrap; }
-    .edition-tag {
+    .app-tag {
       font-size: .7rem; font-weight: 600; vertical-align: .2em; padding: .1rem .45rem; border-radius: 999px;
       color: var(--ok); background: var(--ok-bg); border: 1px solid currentColor;
     }
@@ -127,22 +126,10 @@
     @media print { #standaloneNote { display: none !important; } }
     #appStatus { margin-top: .2rem; display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
     #appStatus[hidden] { display: none; }
-    #portStatus { font-variant-numeric: tabular-nums; }
     #fwBadge.ok::before, #fwBadge.bad::before { content: ''; display: inline-block; width: .55em; height: .55em; border-radius: 50%; margin-right: .35em; background: currentColor; vertical-align: .05em; }
     dialog#about dd.fw-ok { color: var(--ok); font-weight: 600; }
     dialog#about dd.fw-bad { color: var(--bad); font-weight: 600; }
     dialog#about dd .fw-detail { display: block; font-weight: 400; color: var(--muted); font-size: .8rem; margin-top: .15rem; }
-    #portStatus .closing { color: var(--warn-fg); }
-    #portStatus .closed { color: var(--ok); }
-    #portStatus .failed { color: var(--bad); font-weight: 600; }
-    dialog#portDialog {
-      width: min(460px, calc(100vw - 32px)); border: 1px solid var(--border); border-radius: 10px;
-      padding: 1.25rem 1.5rem; background: var(--bg); color: var(--fg);
-    }
-    dialog#portDialog::backdrop { background: rgba(0, 0, 0, .45); }
-    dialog#portDialog h2 { margin-top: 0; font-size: 1.1rem; color: var(--bad); }
-    dialog#portDialog p { font-size: .9rem; }
-    dialog#portDialog .actions { display: flex; gap: .5rem; justify-content: flex-end; flex-wrap: wrap; }
     #stats b { color: var(--fg); font-weight: 600; }
 
     /* ---- Table of contents (right) ---- */
@@ -403,7 +390,6 @@
     dialog#about .actions { text-align: right; margin-top: 1rem; }
     dialog#about dl { display: grid; grid-template-columns: max-content 1fr; gap: .25rem .9rem; margin: .3rem 0 0; font-size: .85rem; }
     dialog#about dt { color: var(--muted); }
-    .rot-select { font: inherit; font-size: .85rem; padding: .15rem .35rem; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--fg); }
     dialog#about dd { margin: 0; word-break: break-all; }
     @media (max-width: 520px) { dialog#about dl { grid-template-columns: 1fr; } dialog#about dd { margin-bottom: .4rem; } }
     dialog#about code { font-size: 85%; }
@@ -471,9 +457,9 @@
   </header>
 
   <div id="standaloneNote" role="note" hidden>
-    <span>ℹ <strong>Opened directly in the browser</strong> — firewall status and connection protection are only
-      available in the Markdown Viewer app. Open <code>.md</code> files from Explorer (double-click) or
-      Start menu › <strong>Markdown Viewer</strong>.</span>
+    <span>ℹ <strong>Opened directly in the browser</strong> — opening documents from disk and the saved view
+      settings are only available in the app. Open <code>.md</code> files from Explorer (double-click) or
+      Start menu › <strong>Markdown Viewer (WebView2)</strong>.</span>
     <button id="standaloneClose" type="button" title="Hide this note" aria-label="Hide this note">×</button>
   </div>
 
@@ -488,17 +474,16 @@
     </div>
     <div id="appSectionNote" hidden>
       <h3>Windows application</h3>
-      <p class="note">Not in use: this page was opened directly in the browser, so the Markdown Viewer app's
-        firewall status, connection protection (changing connection &amp; access key) and its settings aren't
-        available here. Open <code>.md</code> files from Explorer (double-click) or Start menu › Markdown Viewer
-        to use them.</p>
+      <p class="note">Not in use: this page was opened directly in the browser, so the app's details and
+        settings aren't available here. Open <code>.md</code> files from Explorer (double-click) or
+        Start menu › Markdown Viewer (WebView2) to use them.</p>
     </div>
     <h3>Built with</h3>
     <p class="note">The tools and technologies this viewer is made from.</p>
     <div id="toolList"></div>
     <h3>Libraries</h3>
-    <p class="note" id="libNote">Loaded from the internet when the viewer opens (except <em>marked</em>, which is bundled).
-      Without a connection, Markdown and images still work; math shows as raw TeX and diagrams as code.</p>
+    <p class="note" id="libNote">All bundled with the app (in its lib folder) — nothing is loaded from the internet,
+      so math, code colouring and diagrams always work.</p>
     <div id="libList"></div>
     <div class="actions"><button id="aboutClose" class="btn">Close</button></div>
   </dialog>
@@ -533,17 +518,6 @@
     </div>
   </dialog>
 
-  <dialog id="portDialog" aria-labelledby="portTitle">
-    <h2 id="portTitle">Previous connection is still open</h2>
-    <p id="portMsg">The viewer moved to a new connection, but the previous one did not close in time.
-      Force it closed, or refresh the window.</p>
-    <div class="actions">
-      <button id="portDismiss" class="btn secondary">Not now</button>
-      <button id="portRefresh" class="btn secondary">↻ Refresh</button>
-      <button id="portForce" class="btn">Force close</button>
-    </div>
-  </dialog>
-
   <main>
     <aside id="sidebar" hidden>
       <input id="filter" type="search" placeholder="Filter markdown files…" />
@@ -569,7 +543,7 @@
           <div id="replaceContext" aria-live="polite"></div>
         </div>
       </div>
-      <div id="crumb"><div id="docPath"></div><div id="stats"></div><div id="appStatus" hidden><button id="fwBadge" type="button" class="breakdown-btn neutral" hidden>🛡 Firewall …</button><span id="portStatus" aria-live="off"></span></div></div>
+      <div id="crumb"><div id="docPath"></div><div id="stats"></div><div id="appStatus" hidden><button id="fwBadge" type="button" class="breakdown-btn neutral" hidden>🛡 Firewall …</button><span id="connStatus" aria-live="off"></span></div></div>
       <div id="drop">
         <p style="font-size:2.5rem;margin:0">📂</p>
         <p><strong>Choose a folder</strong> or <strong>drag &amp; drop</strong> a folder here.</p>
