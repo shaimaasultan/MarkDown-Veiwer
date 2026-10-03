@@ -369,6 +369,34 @@
     .ins-table code { font-size: .8rem; background: var(--code-bg); padding: .1em .35em; border-radius: 4px; white-space: nowrap; }
     @media (max-width: 520px) { .ins-dl { grid-template-columns: 1fr; } .ins-dl dd { margin-bottom: .4rem; } }
 
+    /* ---- Safety report ---- */
+    dialog#safety {
+      width: min(860px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto;
+      border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem 1.5rem;
+      background: var(--bg); color: var(--fg);
+    }
+    dialog#safety::backdrop { background: rgba(0, 0, 0, .45); }
+    dialog#safety h2 { margin-top: 0; font-size: 1.2rem; }
+    dialog#safety .note { color: var(--muted); font-size: .85rem; word-break: break-word; }
+    dialog#safety .actions { text-align: right; margin-top: 1rem; }
+    .sf-finding { border-left: 3px solid var(--border); padding: .1rem 0 .1rem .8rem; margin: .7rem 0; }
+    .sf-finding.risk { border-left-color: var(--bad); }
+    .sf-finding.caution { border-left-color: var(--warn-fg); }
+    .sf-finding h4 { margin: .2rem 0; font-size: .92rem; color: var(--fg); }
+    .sf-finding.risk h4 { color: var(--bad); }
+    .sf-finding.caution h4 { color: var(--warn-fg); }
+    .sf-why { color: var(--muted); }
+    .sf-tag { font-size: .72rem; font-weight: 600; margin-left: .5rem; padding: .05rem .4rem; border-radius: 10px;
+              background: var(--ok-bg); color: var(--ok); vertical-align: .1em; }
+    .sf-table td:first-child { width: 5.5rem; white-space: nowrap; }
+    .sf-table code { white-space: pre-wrap !important; word-break: break-all; }
+    .sf-checks { list-style: none; padding: 0; margin: .3rem 0; columns: 2 18rem; font-size: .85rem; }
+    .sf-checks li { margin: .12rem 0; break-inside: avoid; }
+    .sf-checks li.ok { color: var(--ok); }
+    .sf-checks li.risk { color: var(--bad); font-weight: 600; }
+    .sf-checks li.caution { color: var(--warn-fg); font-weight: 600; }
+    .sf-checks li.note { color: var(--muted); }
+
     dialog#about {
       width: min(860px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto;
       border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem 1.5rem;
@@ -518,6 +546,16 @@
       <button id="insHighlight" class="btn secondary" title="Turn on ¶ Hidden: label every invisible character in the document">¶ Highlight in document</button>
       <button id="insClose" class="btn">Close</button>
     </div>
+  </dialog>
+
+  <dialog id="safety" aria-labelledby="sfTitle">
+    <h2 id="sfTitle">Is this file safe?</h2>
+    <p class="note"><span id="sfFile"></span><br>
+      Tricks a Markdown file can play on you, on AI assistants that read it, or in other apps that open it
+      (GitHub, VS Code, browsers). Scripts and other active content are already removed here before display.</p>
+    <div id="sfStatus" class="bd-status"></div>
+    <div id="sfBody"></div>
+    <div class="actions"><button id="sfClose" class="btn">Close</button></div>
   </dialog>
 
   <main>

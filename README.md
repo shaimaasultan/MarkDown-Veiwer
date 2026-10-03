@@ -13,6 +13,7 @@ and never goes online.
 - **Folder sidebar** with every Markdown file next to the opened one, a table of contents, and a picture/diagram viewer
 - **Counts**: lines, characters, words, sentences, paragraphs, reading time, images, links, tables, code blocks, equations
 - **Breakdown** that reconciles the source file with what is shown, and a **Characters** inspector (encoding, escapes, zero-width and hidden characters, leftover placeholders)
+- **Safety check**: a ✓ Safe / ⚠ / ✗ Unsafe badge for every document, with a report of tricks aimed at you, at AI assistants or at other apps. It looks for scripts and active content, links whose text shows another address, look-alike addresses and letters, links to programs, network-share links, tracking pixels, hidden text and copy-paste traps, hidden instructions for AI tools, commands that download and run code, and Trojan Source text-direction tricks
 - **¶ Hidden** highlighting, **Find & Replace**, **Export** (save or copy without hidden characters), **Save as PDF**
 - Light / dark / automatic theme; view settings are remembered
 
@@ -24,6 +25,7 @@ and never goes online.
 - **Links ask first.** Web and mail links open outside the app only after a question that shows the real address.
 - **Private.** The window runs InPrivate, so no history of the documents you view is kept. Camera, microphone, location, notifications and clipboard reading are refused; downloads come only from the viewer itself; the right-click menu has no Share, web capture or other browser extras.
 - **Stays in the document's folder.** Folder links (junctions, symbolic links) cannot lead outside it, and very large files (over 50 MB of text or 200 MB of media) are not opened. A document cannot draw over the viewer's own controls, and a diagram cannot add CSS of its own.
+- **No copy-paste traps.** Text inside code examples cannot be hidden or restyled, so what you copy is what you see.
 - **Signed, no loose script files.** The page and every library are packed into `MarkdownViewerWebView2.Content.dll`. It and the program are signed with the same Authenticode certificate. At every start the program checks both signatures, plus Microsoft's signature on the WebView2 files, without going online. If any of these files is changed, swapped or missing, the app does not start.
 - **No developer access.** Developer tools are off; the app refuses to show documents if WebView2 remote debugging has been switched on, or if it cannot check.
 - **Optional firewall rules.** `Firewall-Block.cmd` blocks all traffic in and out of `MarkdownViewerWebView2.exe` (needs administrator rights); `Firewall-Unblock.cmd` removes the rules.

@@ -157,7 +157,10 @@ function cleanAttributes(el, tag, diagram) {
     } else if (ok && name === 'srcset') {
       ok = value.split(',').every(part => safeSrc(part.trim().split(/\s+/)[0] || ''));
     } else if (ok && name === 'style') {
-      ok = !/expression\s*\(|javascript:|vbscript:|-moz-binding|behavior\s*:/i.test(value);
+      ok = !/expression\s*\(|javascript:|vbscript:|-moz-binding|behavior\s*:/i.test(value) &&
+           !el.closest('pre, code');          // nothing hidden inside code: what you copy is what you see
+    } else if (ok && name === 'hidden') {
+      ok = !el.closest('pre, code');
     } else if (ok && (name === 'id' || name === 'name') && !diagram) {
       // Like GitHub: keep document ids from clashing with the viewer's own.
       el.setAttribute(attr.name, 'user-content-' + value);
@@ -604,7 +607,7 @@ function updateStats() {
           `reading time at ${READING_WPM} words per minute`,
       `Viewed: <b>${fmt(shownLines)}</b> lines · <b>${fmt(charCount(shown))}</b> chars · <b>${fmt(words)}</b> words · ` +
       `<b>${fmt(sentences)}</b> sentences · <b>${fmt(paragraphs)}</b> paragraphs · ${readingTime(words)}`),
-    btn, insBtn);
+    safetyButton(), btn, insBtn);
 }
 
 let lastBreakdown = null;
@@ -1004,6 +1007,420 @@ document.getElementById('insHighlight').addEventListener('click', () => {
   if (loadPrefLive('hiddenchars') !== 'on') toggleHidden();
   document.getElementById('inspect').close();
 });
+
+// ---------------------------------------------------------------- safety check
+// Is this Markdown file safe? Looks for tricks aimed at the reader, at AI assistants, or at other apps
+// that may open the file next (GitHub, VS Code, browsers). Active content is already removed here before
+// display; the check says that it was there. Nothing in the file is run: it is parsed into an inert
+// document (scripts never execute, pictures never load) only to be looked at.
+
+// What is checked, in the order the report lists it.
+const SAFETY_CHECKS = [
+  'Scripts and other active content',
+  'Links and addresses that run code or open Windows features',
+  'Links whose text shows a different address',
+  'Look-alike web addresses',
+  'Links to programs and scripts',
+  'Shortened, numeric or unencrypted links',
+  'Windows network-share links',
+  'Web pictures and tracking pixels',
+  'Hidden text',
+  'Instructions aimed at AI assistants',
+  'Commands that download and run code',
+  'Text-direction tricks (Trojan Source)',
+  'Look-alike letters',
+  'Math and diagram commands',
+  'Size and nesting'
+];
+
+const RISKY_FILE = /\.(exe|msi|msix|appx|appxbundle|bat|cmd|com|scr|pif|ps1|psm1|psd1|vbs|vbe|js|jse|wsf|wsh|hta|lnk|url|dll|cpl|ocx|sys|jar|reg|inf|iso|img|vhd|vhdx|docm|xlsm|pptm|dotm|xlam|apk|dmg|pkg|deb|rpm|sh|run|application|appref-ms|library-ms|search-ms|searchconnector-ms|settingcontent-ms|diagcab|msc|chm)$/i;
+// Endings that make link text look like a web address (not file names such as highlight.js or README.md).
+const WEB_TLDS = /\.(com|net|org|gov|edu|mil|int|info|biz|io|co|ai|app|dev|me|us|uk|ca|au|de|fr|nl|it|es|ru|cn|jp|kr|in|br|sa|ae|eg|qa|kw|xyz|online|site|shop|store|tech|cloud|ly|gl|gg|tv|cc|ws|mobi|pro|name|link|live|bank|pay|support|help|login|secure|account)$/i;
+const SHORTENERS = /^(bit\.ly|tinyurl\.com|t\.co|goo\.gl|is\.gd|ow\.ly|rb\.gy|cutt\.ly|shorturl\.at|tiny\.cc|buff\.ly|rebrand\.ly|s\.id|t\.ly|lnkd\.in|v\.gd|qr\.ae|bl\.ink|shorte\.st|adf\.ly)$/i;
+
+// [pattern, what it does, level]
+const RISKY_COMMANDS = [
+  [/\b(curl|wget)\b[^\n|]*\|\s*(sudo\s+)?(ba|z|da|k)?sh\b/i, 'downloads a script and runs it straight away (… | sh)', 'caution'],
+  [/\b(iwr|irm|invoke-webrequest|invoke-restmethod|new-object\s+(system\.)?net\.webclient)\b[^\n]*\|\s*(iex|invoke-expression)\b/i, 'downloads a PowerShell script and runs it straight away (… | iex)', 'caution'],
+  [/\b(iex|invoke-expression)\s*[(\s]\s*[(\s]*(new-object|\[|irm|iwr|invoke-)/i, 'runs downloaded or built-up text as PowerShell code (Invoke-Expression)', 'caution'],
+  [/\s-(e|ec|enc|encodedcommand)\s+[A-Za-z0-9+/=]{24,}/i, 'runs a hidden, base64-encoded PowerShell command', 'risk'],
+  [/\bbase64\s+(-d|--decode|-D)\b[^\n]*\|\s*(sudo\s+)?(ba|z)?sh\b/i, 'decodes hidden text and runs it as a script', 'risk'],
+  [/\bmshta(\.exe)?\s+["']?(https?:|vbscript:|javascript:)/i, 'runs a web page as a program (mshta)', 'risk'],
+  [/\bcertutil(\.exe)?\b[^\n]*-urlcache/i, 'downloads a file with certutil (a common malware trick)', 'risk'],
+  [/\bbitsadmin(\.exe)?\b[^\n]*\/transfer/i, 'downloads a file in the background with bitsadmin', 'caution'],
+  [/\b(regsvr32|rundll32)(\.exe)?\b[^\n]*(https?:|\\\\)/i, 'loads code from the network with regsvr32 / rundll32', 'risk'],
+  [/\bSet-MpPreference\b[^\n]*-Disable/i, 'turns off Microsoft Defender protection', 'risk'],
+  [/\bAdd-MpPreference\b[^\n]*-Exclusion/i, 'hides files or programs from Microsoft Defender', 'risk'],
+  [/\bSet-ExecutionPolicy\s+(Unrestricted|Bypass)\b/i, 'lets every PowerShell script run, signed or not', 'caution'],
+  [/\brm\s+-(?:[a-z]*r[a-z]*f|[a-z]*f[a-z]*r)[a-z]*\s+(--no-preserve-root\s+)?\/(\s|\*|$)/i, 'deletes everything on the disk (rm -rf /)', 'risk'],
+  [/\b(Remove-Item|del|rd|rmdir)\b[^\n]*\s[A-Za-z]:\\(\s|\*|$)[^\n]*(-Recurse|\/s)/i, 'deletes a whole drive', 'risk'],
+  [/\bformat(\.com)?\s+[A-Za-z]:/i, 'formats (erases) a drive', 'risk'],
+  [/\b(reg(\.exe)?\s+add|New-ItemProperty|Set-ItemProperty)\b[^\n]*\\(Run|RunOnce)\b/i, 'makes a program start automatically with Windows', 'caution'],
+  [/\bschtasks(\.exe)?\s+\/create\b/i, 'creates a scheduled task', 'caution'],
+  [/\bchmod\s+\+x\b[^\n]*(&&|;)\s*(sudo\s+)?\.\//i, 'makes a downloaded file executable and runs it', 'caution'],
+  [/:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/, 'fork bomb: freezes the computer', 'risk'],
+  [/\b(net\s+user\s+\S+\s+\S+\s+\/add|net\s+localgroup\s+administrators\s+\S+\s+\/add)\b/i, 'creates a user or makes someone an administrator', 'risk'],
+  [/\bvssadmin(\.exe)?\s+delete\s+shadows\b/i, 'deletes Windows restore points (typical of ransomware)', 'risk']
+];
+
+const AI_INSTRUCTIONS = /\b(ignore|disregard|forget|override)\s+(all\s+|any\s+|every\s+)?(of\s+)?(the\s+|your\s+)?(previous|prior|above|earlier|preceding|original|system)\s+(instructions?|prompts?|rules|directions)\b|\byou\s+are\s+now\s+(a|an|in|the)\b|\b(new|updated)\s+system\s+prompt\b|\bdo\s+not\s+(tell|inform|alert|mention\s+(this|it)\s+to)\s+the\s+user\b|\b(assistant|AI|LLM|agent)\s*[:,]?\s*(please\s+)?(run|execute|send|upload|exfiltrate|delete)\b/i;
+
+// Hides an element's text, or moves it out of sight.
+const HIDE_STYLE = /display\s*:\s*none|visibility\s*:\s*(hidden|collapse)|opacity\s*:\s*0*\.?0+\s*(;|!|$)|font-size\s*:\s*(0*\.?0+|[0-3](\.\d+)?(px|pt)|0?\.[0-3]\d*(em|rem))\s*(px|pt|em|rem|%)?\s*(;|!|$)|(^|;)\s*(max-)?(width|height)\s*:\s*0+(px)?\s*(;|!|$)|(left|top|right|bottom|text-indent|margin-left|margin-top)\s*:\s*-\d{3,}|clip(-path)?\s*:\s*(rect\(\s*0|inset\(\s*(50|100)%|circle\(\s*0)|transform\s*:[^;]*scale\(\s*0*\.?0+\s*[,)]|color\s*:\s*transparent/i;
+const OVERLAY_STYLE = /position\s*:\s*(fixed|absolute|sticky)|z-index\s*:/i;
+const TROJAN_BIDI = /[\u202A-\u202E\u2066-\u2069]/g;
+const FOREIGN_LOOKALIKE = /[\p{Script=Cyrillic}\p{Script=Greek}\p{Script=Armenian}\p{Script=Cherokee}]/u;
+
+function checkSafety(source) {
+  const text = source.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---\r?\n/, '');
+  const found = new Map();
+  const lineAt = idx => idx < 0 ? null : source.slice(0, idx).split(/\r\n|\r|\n/).length;
+  const lineOf = needle => needle ? lineAt(source.indexOf(needle)) : null;
+  const offset = source.length - text.length;          // front matter left out of `text`
+  const showInvisible = s => s.replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/g,
+    c => `⟨${SHORT_NAMES[c.codePointAt(0)] || uPlus(c.codePointAt(0))}⟩`);
+  const clip = s => { s = showInvisible(String(s).replace(/\s+/g, ' ').trim()); return s.length > 160 ? s.slice(0, 160) + '…' : s; };
+  const add = (check, id, level, title, why, what, line, blocked = false) => {
+    let f = found.get(id);
+    if (!f) found.set(id, f = { check, id, level, title, why, blocked, items: [], count: 0 });
+    f.count++;
+    if (f.items.length < 25) f.items.push({ what: clip(what), line });
+  };
+  const readable = s => { try { return decodeURI(s); } catch { return s; } };
+  const host = h => h.toLowerCase().replace(/^www\./, '').replace(/\.$/, '');
+  const site = h => {
+    const parts = host(h).split('.');
+    return parts.slice(parts.length > 2 && parts.at(-1).length === 2 && parts.at(-2).length <= 3 ? -3 : -2).join('.');
+  };
+
+  let doc = null;
+  try { doc = new DOMParser().parseFromString(`<!DOCTYPE html><body>${md.parse(text)}`, 'text/html'); } catch (e) { console.warn('Safety:', e); }
+
+  if (doc) {
+    const ACTIVE = {
+      script: 'script', noscript: 'script', iframe: 'embedded page (iframe)', frame: 'embedded page (frame)',
+      frameset: 'embedded page (frameset)', object: 'embedded object / plugin', embed: 'embedded object / plugin',
+      applet: 'Java applet', form: 'form (can send what you type to a server)', meta: 'meta tag (can redirect the page)',
+      base: 'base address (silently changes where every link goes)', link: 'linked style sheet or resource',
+      portal: 'embedded page (portal)', handler: 'SVG script handler', listener: 'SVG script listener',
+      foreignobject: 'HTML hidden inside a picture (SVG foreignObject)', animate: 'SVG animation (can change links)',
+      set: 'SVG animation (can change links)', animatemotion: 'SVG animation', animatetransform: 'SVG animation',
+      textarea: 'text box', select: 'drop-down list', button: 'button', template: 'template'
+    };
+    const flagged = new Set();
+    let maxDepth = 0;
+
+    for (const el of doc.body.querySelectorAll('*')) {
+      if (el.closest('.katex, .katex-display')) continue;
+      const tag = el.localName.toLowerCase();
+      const outer = () => el.outerHTML.slice(0, 160);
+      const where = () => lineOf(`<${el.localName}`);
+
+      if (ACTIVE[tag] || (tag === 'input' && (el.getAttribute('type') || '').toLowerCase() !== 'checkbox') || tag === 'style') {
+        if (tag === 'style') add(SAFETY_CHECKS[0], 'stylesheet', 'caution', 'Style sheet',
+          'A <style> block can restyle the whole page in other viewers — hide text, fake buttons or cover the real content. Removed here.', outer(), where(), true);
+        else add(SAFETY_CHECKS[0], 'active', 'risk', 'Scripts or other active content',
+          'Code, embedded pages, plugins or forms. They are removed here before display, but a browser or another Markdown viewer may run them.',
+          `${ACTIVE[tag] || 'form field'}: ${outer()}`, where(), true);
+      }
+
+      for (const attr of el.attributes) {
+        const name = attr.name.toLowerCase(), value = attr.value;
+        if (name.startsWith('on')) {
+          add(SAFETY_CHECKS[0], 'handlers', 'risk', 'Event handlers (code that runs on click, hover or load)',
+            'Attributes such as onclick or onerror run code. Removed here; other viewers may run them.', `${name}="${value}"`, lineOf(attr.name + '=') || where(), true);
+          continue;
+        }
+        if (name === 'srcdoc') {
+          add(SAFETY_CHECKS[0], 'active', 'risk', 'Scripts or other active content', '', `srcdoc on <${tag}>`, where(), true);
+          continue;
+        }
+        if (!['href', 'src', 'xlink:href', 'action', 'formaction', 'poster', 'data', 'background', 'srcset', 'ping', 'cite', 'longdesc'].includes(name)) continue;
+        const urls = name === 'srcset' ? value.split(',').map(p => p.trim().split(/\s+/)[0]) : [value];
+        for (const u of urls) {
+          const s = scheme(u);
+          if (['javascript', 'vbscript', 'livescript'].includes(s) || (s === 'data' && !SAFE_IMG_DATA.test(u.trim()))) {
+            add(SAFETY_CHECKS[1], 'codelink', 'risk', 'Links or addresses that run code (javascript:, data:)',
+              'Clicking such a link runs code in a browser or another viewer. Removed here.', u, lineOf(u.slice(0, 40)), true);
+          } else if (s && !['http', 'https', 'mailto', 'data'].includes(s)) {
+            add(SAFETY_CHECKS[1], 'scheme', 'risk', 'Links that open Windows features, programs or local files',
+              'Addresses such as file:, ms-…:, search-ms: or other app protocols can open programs, search remote folders or run Windows tools without a browser. Removed here.',
+              u, lineOf(u.slice(0, 40)), true);
+          }
+          if (/^\\\\[^\\]/.test(u.trim()) || /^file:\/\/[^/]/i.test(u.trim()))
+            add(SAFETY_CHECKS[6], 'unc', 'risk', 'Links or pictures on Windows network shares',
+              'Opening a \\\\server\\share address can make Windows send your sign-in (NTLM) to that server — even just showing a picture from it in some apps. Not opened here.',
+              u, lineOf(u.slice(0, 40)));
+          if (/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/.test(u))
+            add(SAFETY_CHECKS[3], 'zwlink', 'risk', 'Invisible characters inside a link address',
+              'The address contains characters you cannot see, so it is not what it looks like.', u, lineOf(u.slice(0, 20)));
+        }
+      }
+
+      // Hidden text: hidden from the reader but still read by AI tools, search, copy & paste…
+      const style = el.getAttribute('style') || '';
+      const hides = el.hasAttribute('hidden') || HIDE_STYLE.test(style);
+      const styleLine = () => (el.textContent.trim() && lineOf(el.textContent.trim().slice(0, 30))) || (style && lineOf(style)) || where();
+      if (hides && ![...flagged].some(f => f.contains(el))) {
+        const hiddenText = el.textContent.trim();
+        if (hiddenText || el.querySelector('a, img')) {
+          flagged.add(el);
+          const what = `${el.hasAttribute('hidden') ? 'hidden' : `style="${style}"`}: ${hiddenText || '(link or picture)'}`;
+          if (el.closest('pre, code')) {
+            add(SAFETY_CHECKS[8], 'copytrap', 'risk', 'Hidden text inside code (copy-paste trap)',
+              'Text you cannot see sits inside a code example: what you copy and paste is not what you read. Shown openly here.', what, styleLine());
+          } else if (AI_INSTRUCTIONS.test(hiddenText)) {
+            add(SAFETY_CHECKS[9], 'aihidden', 'risk', 'Hidden instructions for AI assistants',
+              'Invisible text that tries to give orders to an AI tool that reads this file (prompt injection).', what, styleLine());
+          } else {
+            add(SAFETY_CHECKS[8], 'hidden', 'caution', 'Hidden text',
+              'Text that is in the file but made invisible. It is still read by AI tools and search, and may be copied with the visible text.', what, styleLine());
+          }
+        }
+      }
+      if (OVERLAY_STYLE.test(style))
+        add(SAFETY_CHECKS[8], 'overlay', 'caution', 'Content placed over other content',
+          'position or z-index can lay fake buttons or text over the real content in other viewers. Here it stays inside the document area.', `style="${style}"`, styleLine());
+      const cssUrl = /url\(\s*["']?\s*((?:https?:)?\/\/[^"')\s]+)/i.exec(style);
+      if (cssUrl) add(SAFETY_CHECKS[7], 'webmedia', 'note', 'Web pictures (not loaded here)',
+        'Other viewers load these from the internet, which tells the server that the file was opened. This viewer never loads them.', cssUrl[1], lineOf(cssUrl[1]));
+
+      // Web pictures and tracking pixels.
+      if (['img', 'video', 'audio', 'source', 'image', 'input'].includes(tag)) {
+        const srcs = [el.getAttribute('src'), el.getAttribute('poster'), el.getAttribute('href'), el.getAttribute('xlink:href'),
+                      ...(el.getAttribute('srcset') || '').split(',').map(p => p.trim().split(/\s+/)[0])].filter(Boolean);
+        for (const src of srcs.filter(isWeb)) {
+          const w = parseFloat(el.getAttribute('width')), h = parseFloat(el.getAttribute('height'));
+          if ((w <= 2 || h <= 2) || /(width|height)\s*:\s*[0-2](px)?\s*(;|$)/i.test(style))
+            add(SAFETY_CHECKS[7], 'pixel', 'caution', 'Tracking pixels',
+              'Tiny web pictures that exist only to report when, where and how often the file is opened. Not loaded here.', src, lineOf(src));
+          else add(SAFETY_CHECKS[7], 'webmedia', 'note', 'Web pictures (not loaded here)',
+            'Other viewers load these from the internet, which tells the server that the file was opened. This viewer never loads them.', src, lineOf(src));
+        }
+      }
+
+      let depth = 0;
+      for (let p = el; p && p !== doc.body; p = p.parentElement) depth++;
+      if (depth > maxDepth) maxDepth = depth;
+    }
+
+    // Links.
+    for (const a of doc.body.querySelectorAll('a[href], area[href]')) {
+      const href = a.getAttribute('href').trim();
+      const shown = a.textContent.trim();
+      const line = lineOf(href) || lineOf(shown);
+      let u = null;
+      try { if (/^(https?:)?\/\//i.test(href)) u = new URL(href, 'https://document.invalid/'); } catch { }
+      if (u) {
+        const h = host(u.hostname);
+        // Text that looks like an address, but the link goes somewhere else.
+        const t = /^(?:https?:\/\/)?((?:[\p{L}\p{N}-]+\.)+\p{L}{2,})(?::\d+)?(?:[/?#]\S*)?$/u.exec(shown);
+        if (t && (/^(https?:\/\/|www\.)/i.test(shown) || WEB_TLDS.test(t[1]))) {
+          let th = '';
+          try { th = host(new URL('https://' + t[1]).hostname); } catch { }
+          if (th && site(th) !== site(h))
+            add(SAFETY_CHECKS[2], 'mismatch', 'risk', 'Links whose text shows a different address',
+              'The link shows one web address but takes you to another — a classic phishing trick. This viewer always shows the real address before opening a link.',
+              `shows “${shown}” but goes to ${u.href}`, line);
+        }
+        if (u.hostname.includes('xn--') || /[^\x00-\x7F]/.test(href.split(/[/?#]/)[2] || ''))
+          add(SAFETY_CHECKS[3], 'idn', 'risk', 'Look-alike web addresses',
+            'The address uses letters from other alphabets that look like ordinary letters (e.g. Cyrillic “а” in “pаypal.com”).',
+            `${readable(href)} → really ${u.hostname}`, line);
+        if (u.username || u.password)
+          add(SAFETY_CHECKS[3], 'userinfo', 'risk', 'Addresses with a hidden real site after “@”',
+            'In https://trusted.com@other.site the part before “@” is only a user name; the link really goes to the site after it.',
+            `${href} → really ${u.hostname}`, line);
+        if (RISKY_FILE.test(decodeURIComponent(u.pathname)))
+          add(SAFETY_CHECKS[4], 'program', 'risk', 'Links that download programs or scripts',
+            'The link points at a file that can run code on your computer (.exe, .ps1, .bat, .msi, .lnk, Office files with macros…).', href, line);
+        if (/^\d{1,3}(\.\d{1,3}){3}$/.test(u.hostname) || u.hostname.startsWith('['))
+          add(SAFETY_CHECKS[5], 'ip', 'caution', 'Links to a numeric (IP) address',
+            'Real sites rarely use a bare number as their address; it hides who runs the server.', href, line);
+        if (SHORTENERS.test(h))
+          add(SAFETY_CHECKS[5], 'short', 'caution', 'Shortened links',
+            'A link shortener hides where the link really goes until you open it.', href, line);
+        if (u.protocol === 'http:')
+          add(SAFETY_CHECKS[5], 'http', 'note', 'Unencrypted (http:) links',
+            'The connection is not encrypted, so the page can be read or changed on the way.', href, line);
+      } else if (!href.startsWith('#') && !scheme(href) && RISKY_FILE.test(href.split(/[?#]/)[0])) {
+        add(SAFETY_CHECKS[4], 'localprogram', 'caution', 'Links to programs or scripts next to the document',
+          'The link points at a file that can run code. This viewer never opens it; other apps may.', href, line);
+      }
+      if (/^mailto:/i.test(href)) {
+        const to = decodeURIComponent(href.slice(7).split('?')[0]).toLowerCase();
+        if (/^\S+@\S+\.\S+$/.test(shown) && shown.toLowerCase() !== to)
+          add(SAFETY_CHECKS[2], 'mismatch', 'risk', 'Links whose text shows a different address',
+            'The link shows one address but goes to another.', `shows “${shown}” but writes to ${to}`, line);
+      }
+    }
+
+    // Comments: invisible in every viewer.
+    const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_COMMENT);
+    for (let c = walker.nextNode(); c; c = walker.nextNode()) {
+      const body = c.data.trim();
+      if (body.length < 3 || /^(markdownlint|prettier|toc|end ?toc|vale|lint|cspell|textlint|omit in toc|no ?toc)\b/i.test(body)) continue;
+      const line = lineOf(c.data.slice(0, 40));
+      if (AI_INSTRUCTIONS.test(body))
+        add(SAFETY_CHECKS[9], 'aihidden', 'risk', 'Hidden instructions for AI assistants',
+          'Invisible text that tries to give orders to an AI tool that reads this file (prompt injection).', `<!-- ${body} -->`, line);
+      else add(SAFETY_CHECKS[8], 'comment', 'note', 'Hidden comments',
+        'HTML comments are not shown by any viewer, but AI tools and anyone reading the raw file see them.', `<!-- ${body} -->`, line);
+    }
+
+    // Visible text addressed to AI tools.
+    const visible = doc.body.textContent;
+    const ai = AI_INSTRUCTIONS.exec(visible);
+    if (ai && !found.has('aihidden'))
+      add(SAFETY_CHECKS[9], 'aivisible', 'caution', 'Text addressed to AI assistants',
+        'Sentences that try to give orders to an AI tool reading the file (prompt injection).', visible.slice(Math.max(0, ai.index - 40), ai.index + 120), lineOf(ai[0]));
+
+    // Commands people are invited to copy and run.
+    for (const el of doc.body.querySelectorAll('pre, code')) {
+      if (el.localName === 'code' && el.closest('pre')) continue;
+      if (el.closest('pre.mermaid, .katex')) continue;
+      const code = el.textContent;
+      for (const [re, does, level] of RISKY_COMMANDS) {
+        const m = re.exec(code);
+        if (!m) continue;
+        const lineText = code.slice(code.lastIndexOf('\n', m.index) + 1, (code.indexOf('\n', m.index) + 1 || code.length + 1) - 1);
+        add(SAFETY_CHECKS[10], 'cmd-' + level, level,
+          level === 'risk' ? 'Commands that can harm your computer' : 'Commands that download or change things — check before running',
+          level === 'risk' ? 'Code examples that are typical of malware: running hidden code, turning off protection, or deleting data.'
+                           : 'Code examples that run something from the internet or change Windows settings. Only run them if you trust the source.',
+          `${does}: ${lineText}`, lineOf(m[0].slice(0, 30)));
+      }
+    }
+
+    if (maxDepth > 100)
+      add(SAFETY_CHECKS[14], 'deep', 'caution', 'Very deep nesting',
+        `Elements nested ${fmt(maxDepth)} levels deep can make other viewers freeze or crash.`, `${fmt(maxDepth)} levels`, null);
+  }
+
+  // Text-direction tricks: the order you see is not the order of the characters.
+  const srcLines = source.split(/\r\n|\r|\n/);
+  srcLines.forEach((l, i) => {
+    if (TROJAN_BIDI.test(l))
+      add(SAFETY_CHECKS[11], 'bidi', 'risk', 'Text-direction tricks (Trojan Source)',
+        'Direction-override characters make text show in a different order than it really is — e.g. “invoice⟨RLO⟩fdp.exe” is shown as “invoiceexe.pdf”. Turn on ¶ Hidden to see them.', l, i + 1);
+    TROJAN_BIDI.lastIndex = 0;
+  });
+
+  // Look-alike letters: a word mixing Latin with Cyrillic/Greek letters that look the same.
+  const seenWords = new Set();
+  for (const m of text.matchAll(/[\p{L}\p{M}]{2,}/gu)) {
+    const w = m[0];
+    if (seenWords.has(w) || !/\p{Script=Latin}/u.test(w) || !FOREIGN_LOOKALIKE.test(w)) continue;
+    seenWords.add(w);
+    const odd = [...w].filter(ch => FOREIGN_LOOKALIKE.test(ch))
+      .map(ch => `“${ch}” ${uPlus(ch.codePointAt(0))} ${/\p{Script=Cyrillic}/u.test(ch) ? 'Cyrillic' : /\p{Script=Greek}/u.test(ch) ? 'Greek' : 'other alphabet'}`);
+    add(SAFETY_CHECKS[12], 'mixed', 'caution', 'Words mixing look-alike letters from other alphabets',
+      'A word that looks ordinary but contains letters from another alphabet — used to dodge searches and filters or to fake names.',
+      `${w} — ${[...new Set(odd)].join(', ')}`, lineOf(w));
+  }
+
+  // Math and diagram commands that would make links or load things (switched off here).
+  for (const m of text.matchAll(/\\(href|url|includegraphics|htmlClass|htmlId|htmlStyle|htmlData)\s*\{[^}\n]{0,120}\}?/g))
+    add(SAFETY_CHECKS[13], 'mathcmd', 'note', 'Math commands that make links or load pictures',
+      'KaTeX commands such as \\href and \\includegraphics. Switched off in this viewer.', m[0], lineAt(m.index + offset), true);
+  for (const m of text.matchAll(/^(`{3,}|~{3,})\s*mermaid[^\n]*\n([\s\S]*?)^\1/gm)) {
+    const block = m[2];
+    const start = lineAt(m.index + offset) + 1;
+    block.split('\n').forEach((l, i) => {
+      if (/^\s*(click|callback)\s/i.test(l) || /%%\{\s*init/i.test(l) || /javascript:/i.test(l))
+        add(SAFETY_CHECKS[13], 'diagramcmd', /javascript:/i.test(l) ? 'risk' : 'note', 'Diagram links, actions or settings',
+          'Mermaid click actions, links and %%{init}%% settings. Switched off in this viewer (strict mode).', l, start + i, true);
+    });
+  }
+
+  if (source.length > 5e6)
+    add(SAFETY_CHECKS[14], 'size', 'note', 'Very large file', 'Big files can make other viewers slow.', `${fmt(source.length)} characters`, null);
+
+  const order = { risk: 0, caution: 1, note: 2 };
+  const findings = [...found.values()].sort((a, b) => order[a.level] - order[b.level]);
+  const count = level => findings.filter(f => f.level === level).reduce((s, f) => s + f.count, 0);
+  const counts = { risk: count('risk'), caution: count('caution'), note: count('note') };
+  return { findings, counts, level: counts.risk ? 'risk' : counts.caution ? 'caution' : 'safe' };
+}
+
+let lastSafety = null;
+
+function safetyButton() {
+  if (!lastSafety || lastSafety.source !== currentSource) lastSafety = { source: currentSource, ...checkSafety(currentSource) };
+  const r = lastSafety;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'breakdown-btn ' + (r.level === 'risk' ? 'bad' : r.level === 'caution' ? 'warn' : 'ok');
+  btn.textContent = r.level === 'risk' ? `✗ Unsafe (${fmt(r.counts.risk)})`
+                  : r.level === 'caution' ? `⚠ Safety (${fmt(r.counts.caution)})` : '✓ Safe';
+  btn.title = (r.level === 'risk' ? 'This file contains tricks that can harm you or other apps'
+             : r.level === 'caution' ? 'This file contains things to check before you trust it'
+             : 'No tricks found in this file') + ' — click for the safety report';
+  btn.addEventListener('click', showSafety);
+  return btn;
+}
+
+function showSafety() {
+  const r = lastSafety;
+  if (!r) return;
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  const status = document.getElementById('sfStatus');
+  const blockedRisks = r.findings.filter(f => f.level === 'risk' && f.blocked).length;
+  status.className = 'bd-status ' + (r.level === 'risk' ? 'bad' : r.level === 'caution' ? 'warn' : 'ok');
+  status.textContent = r.level === 'risk'
+    ? `✗ Not safe — ${plural(r.counts.risk, 'risk')}` + (r.counts.caution ? ` and ${plural(r.counts.caution, 'caution')}` : '') +
+      (blockedRisks ? '. Active content is removed in this viewer, but the file is dangerous in other apps.' : '. Read the items below before you trust this file.')
+    : r.level === 'caution'
+      ? `⚠ Use caution — ${plural(r.counts.caution, 'thing')} to check before you trust this file.`
+      : '✓ Safe — no tricks found.' + (r.counts.note ? ` ${plural(r.counts.note, 'note')} below, for your information.` : '');
+
+  const finding = f => {
+    const box = el('div', `sf-finding ${f.level}`);
+    const h = el('h4', '', `${f.title} (${fmt(f.count)})`);
+    if (f.blocked) h.append(el('span', 'sf-tag', 'removed here'));
+    box.append(h, el('p', 'sf-why', f.why));
+    const t = el('table', 'ins-table sf-table');
+    for (const it of f.items) {
+      const tr = el('tr');
+      tr.append(el('td', 'n', it.line ? `line ${fmt(it.line)}` : ''));
+      const td = el('td');
+      td.append(el('code', '', it.what));
+      tr.append(td);
+      t.append(tr);
+    }
+    const wrap = el('div', 'ins-wrap');
+    wrap.append(t);
+    box.append(wrap);
+    if (f.count > f.items.length) box.append(el('p', 'ins-note', `… and ${fmt(f.count - f.items.length)} more`));
+    return box;
+  };
+  const section = (title, list) => {
+    if (!list.length) return null;
+    const s = el('section', 'ins-section');
+    s.append(el('h3', '', title), ...list.map(finding));
+    return s;
+  };
+  const checked = el('section', 'ins-section');
+  const ul = el('ul', 'sf-checks');
+  for (const c of SAFETY_CHECKS) {
+    const fs = r.findings.filter(f => f.check === c);
+    const worst = fs.find(f => f.level === 'risk') ? 'risk' : fs.find(f => f.level === 'caution') ? 'caution' : fs.length ? 'note' : 'ok';
+    ul.append(el('li', worst, `${{ risk: '✗', caution: '⚠', note: 'ℹ', ok: '✓' }[worst]} ${c}`));
+  }
+  checked.append(el('h3', '', 'What was checked'), ul,
+    el('p', 'ins-note', 'Line numbers point into the Markdown file. Nothing in the file was run to check it.'));
+
+  document.getElementById('sfBody').replaceChildren(...[
+    section('Risks', r.findings.filter(f => f.level === 'risk')),
+    section('Check before you trust it', r.findings.filter(f => f.level === 'caution')),
+    section('For your information', r.findings.filter(f => f.level === 'note')),
+    checked].filter(Boolean));
+  document.getElementById('sfFile').textContent = currentPath;
+  const dlg = document.getElementById('safety');
+  dlg.showModal();
+  dlg.scrollTop = 0;          // start at the verdict, not at the focused Close button
+}
+document.getElementById('sfClose').addEventListener('click', () => document.getElementById('safety').close());
 
 // ---------------------------------------------------------------- ¶ Hidden: show invisible characters in place
 const SHORT_NAMES = {
