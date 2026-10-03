@@ -367,8 +367,14 @@ static class Program
                     CoreWebView2EnvironmentOptions options = new CoreWebView2EnvironmentOptions();
                     // No background traffic from the engine itself: no component updates, field trials,
                     // reliability reports, hyperlink pings or other background requests.
+                    // msOneAuthWAM off: the engine otherwise signs in to the Windows/Microsoft account through
+                    // Windows' account manager at start-up and contacts Microsoft 365 servers.
+                    // NetworkServiceInProcess2: no separate "Network Service" process; the engine's network
+                    // part runs inside its manager process instead.
                     options.AdditionalBrowserArguments = "--disable-background-networking --disable-component-update" +
-                                                         " --disable-domain-reliability --no-pings";
+                                                         " --disable-domain-reliability --no-pings" +
+                                                         " --disable-features=msOneAuthWAM" +
+                                                         " --enable-features=NetworkServiceInProcess2";
                     options.IsCustomCrashReportingEnabled = true;           // crash reports stay on this PC
                     options.AllowSingleSignOnUsingOSPrimaryAccount = false; // never signs in with the Windows account
                     env = await CoreWebView2Environment.CreateAsync(null, data, options);
