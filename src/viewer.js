@@ -387,6 +387,7 @@ function renderDoc({ anchor = null, keepScroll = false } = {}) {
   markHiddenChars(output);
   markZoomable(output);
   buildToc();
+  buildImageList();
 
   document.getElementById('docPath').textContent = currentPath + (isEdited() ? '  •  edited (unsaved)' : '');
   updateStats();
@@ -418,6 +419,7 @@ const OPENABLE = /\.(png|jpe?g|gif|webp|avif|bmp|ico|mp4|webm|mp3|wav|ogg|txt)$/
 function fixResources(root, baseDir) {
   root.querySelectorAll('img[src], video[src], audio[src], source[src]').forEach(el => {
     const src = el.getAttribute('src');
+    el.dataset.origSrc = src;
     const entry = localEntry(baseDir, src);
     const isImg = el.tagName === 'IMG';
     if (entry) {
@@ -2480,13 +2482,18 @@ content.addEventListener('scroll', () => {
 });
 
 function updateTocButton() {
-  const open = narrowScreen.matches ? 'tocOpen' in document.documentElement.dataset : loadPrefLive('toc') === 'shown';
+  const open = !('imgsOpen' in document.documentElement.dataset) &&
+    (narrowScreen.matches ? 'tocOpen' in document.documentElement.dataset : loadPrefLive('toc') === 'shown');
   tocBtn.classList.toggle('on', open && !tocBtn.disabled);
 }
 
 function toggleToc() {
   if (tocBtn.disabled) return;
   const root = document.documentElement;
+  if ('imgsOpen' in root.dataset) {            // the images list takes the same place: switch back to Contents
+    closeImages();
+    if (narrowScreen.matches ? 'tocOpen' in root.dataset : loadPrefLive('toc') === 'shown') { updateTocButton(); updateTocActive(); return; }
+  }
   if (narrowScreen.matches) {
     // Narrow windows: the panel slides over the document and isn't remembered.
     if ('tocOpen' in root.dataset) delete root.dataset.tocOpen; else root.dataset.tocOpen = '';
@@ -2502,10 +2509,126 @@ tocBtn.addEventListener('click', toggleToc);
 narrowScreen.addEventListener('change', () => { delete document.documentElement.dataset.tocOpen; updateTocButton(); });
 content.addEventListener('click', () => {
   if ('tocOpen' in document.documentElement.dataset) { delete document.documentElement.dataset.tocOpen; updateTocButton(); }
+  if (narrowScreen.matches && 'imgsOpen' in document.documentElement.dataset) closeImages();
 });
 setRootPref('toc', loadPref('toc'));
 setRootPref('hiddenchars', loadPref('hiddenchars'));
 updateHiddenButton();
+
+// ---------------------------------------------------------------- images list (right)
+// Every picture in the document, in order: click one to go to it, double-click to enlarge it.
+const imgPanel = document.getElementById('imgPanel');
+const imgList = document.getElementById('imgList');
+const imgBtn = document.getElementById('imgBtn');
+let imgEntries = [];   // { img, button }
+
+const imageFile = img => {
+  const src = img.dataset.webSrc || img.dataset.origSrc || '';
+  try { return decodeURIComponent(src.split(/[?#]/)[0].split(/[\\/]/).pop() || ''); } catch { return src; }
+};
+const imageLabel = img => {
+  const alt = (img.getAttribute('alt') || '').replace(/^🌐 Web picture not loaded.*$/s, '').trim();
+  return alt || imageFile(img) || 'Picture';
+};
+
+function buildImageList() {
+  const imgs = [...output.querySelectorAll('img')].filter(img => !img.closest('.katex'));
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  imgList.replaceChildren();
+  imgEntries = [];
+  imgBtn.disabled = !imgs.length;
+  imgBtn.textContent = imgs.length ? `🖼️ Images (${fmt(imgs.length)})` : '🖼️ Images';
+  document.getElementById('imgTitle').textContent = `Images (${fmt(imgs.length)})`;
+  if (!imgs.length) closeImages();
+
+  imgs.forEach((img, i) => {
+    const button = el('button');
+    button.type = 'button';
+    const thumb = el('span', 'img-thumb');
+    const web = img.classList.contains('web'), missing = img.classList.contains('missing');
+    if (web) thumb.textContent = '🌐';
+    else if (missing) thumb.textContent = '⚠';
+    else {
+      const t = new Image();
+      t.alt = '';
+      t.addEventListener('error', () => {     // found missing only once it fails to load
+        thumb.textContent = '⚠';
+        if (!label.querySelector('.img-note')) label.append(el('span', 'img-note', 'not found'));
+      }, { once: true });
+      t.src = img.currentSrc || img.src;
+      thumb.append(t);
+    }
+    const label = el('span', 'img-label');
+    label.append(el('span', 'img-num', `${i + 1}. `), document.createTextNode(imageLabel(img)));
+    const note = web ? 'web picture — not loaded' : missing ? 'not found' : img.closest('a') ? 'inside a link' : '';
+    if (note) label.append(el('span', 'img-note', note));
+    button.title = (imageFile(img) || imageLabel(img)) +
+      (img.classList.contains('zoomable') ? ' — click to go to it, double-click to enlarge' : ' — click to go to it');
+    button.append(thumb, label);
+    button.addEventListener('click', () => goToImage(img));
+    button.addEventListener('dblclick', () => { if (img.classList.contains('zoomable')) openImage(img); });
+    const li = el('li');
+    li.append(button);
+    imgList.append(li);
+    imgEntries.push({ img, button });
+  });
+  updateImgButton();
+  updateImagesActive();
+}
+
+function goToImage(img) {
+  const details = img.closest('details');
+  if (details && !details.open) details.open = true;
+  img.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  img.classList.remove('img-flash');
+  void img.offsetWidth;
+  img.classList.add('img-flash');
+  setTimeout(() => img.classList.remove('img-flash'), 1600);
+  if (narrowScreen.matches) closeImages();
+}
+
+// Highlight the picture being looked at: the last one above the middle of the view.
+function updateImagesActive() {
+  if (!imgEntries.length || !('imgsOpen' in document.documentElement.dataset)) return;
+  const mid = content.getBoundingClientRect().top + content.clientHeight / 2;
+  let current = imgEntries[0];
+  for (const e of imgEntries) {
+    const r = e.img.getBoundingClientRect();
+    if (r.height && r.top <= mid) current = e;
+  }
+  for (const e of imgEntries) e.button.classList.toggle('active', e === current);
+  const r = current.button.getBoundingClientRect(), t = imgPanel.getBoundingClientRect();
+  if (r.top < t.top || r.bottom > t.bottom) imgPanel.scrollTop += r.top - t.top - t.height / 3;
+}
+
+let imgFrame = 0;
+content.addEventListener('scroll', () => {
+  if (!imgFrame) imgFrame = requestAnimationFrame(() => { imgFrame = 0; updateImagesActive(); });
+});
+
+function updateImgButton() {
+  imgBtn.classList.toggle('on', 'imgsOpen' in document.documentElement.dataset && !imgBtn.disabled);
+}
+
+function closeImages() {
+  delete document.documentElement.dataset.imgsOpen;
+  updateImgButton();
+  updateTocButton();
+}
+
+function toggleImages() {
+  if (imgBtn.disabled) return;
+  const root = document.documentElement;
+  if ('imgsOpen' in root.dataset) closeImages();
+  else {
+    root.dataset.imgsOpen = '';
+    delete root.dataset.tocOpen;
+    updateImgButton();
+    updateTocButton();
+    updateImagesActive();
+  }
+}
+imgBtn.addEventListener('click', toggleImages);
 
 // ---------------------------------------------------------------- figure viewer (zoom & pan)
 const lightbox = document.getElementById('lightbox');
@@ -2515,20 +2638,54 @@ const lbLevel = document.getElementById('lbLevel');
 const lb = { scale: 1, x: 0, y: 0, w: 0, h: 0, fit: 1, returnFocus: null };
 
 function openLightbox(node, width, height, caption, isDiagram) {
+  const wasHidden = lightbox.hidden;
   lbItem.replaceChildren(node);
   lbItem.classList.toggle('diagram', isDiagram);
   document.getElementById('lbCaption').textContent = caption;
   lb.w = Math.max(1, width);
   lb.h = Math.max(1, height);
-  lb.returnFocus = document.activeElement;
+  if (wasHidden) lb.returnFocus = document.activeElement;
   lightbox.hidden = false;
   fitLightbox();
-  document.getElementById('lbClose').focus();
+  if (wasHidden) document.getElementById('lbClose').focus();
 }
+
+// Pictures open in the viewer one after another: ‹ › buttons and the ← → keys.
+const lbPos = document.getElementById('lbPos');
+let lbImages = [], lbIndex = -1;
+
+function openImage(img) {
+  lbImages = [...output.querySelectorAll('img.zoomable')];
+  lbIndex = Math.max(0, lbImages.indexOf(img));
+  showLightboxImage();
+}
+
+function showLightboxImage() {
+  const img = lbImages[lbIndex];
+  if (!img) return;
+  const copy = new Image();
+  copy.src = img.currentSrc || img.src;
+  copy.alt = img.alt;
+  const many = lbImages.length > 1;
+  document.getElementById('lbPrev').hidden = document.getElementById('lbNext').hidden = !many;
+  lbPos.textContent = many ? `${lbIndex + 1} / ${lbImages.length}` : '';
+  openLightbox(copy, img.naturalWidth || img.width, img.naturalHeight || img.height, imageLabel(img), false);
+}
+
+function stepLightbox(dir) {
+  if (lbIndex < 0 || lbImages.length < 2) return;
+  lbIndex = (lbIndex + dir + lbImages.length) % lbImages.length;
+  showLightboxImage();
+}
+document.getElementById('lbPrev').addEventListener('click', () => stepLightbox(-1));
+document.getElementById('lbNext').addEventListener('click', () => stepLightbox(1));
 
 function closeLightbox() {
   lightbox.hidden = true;
   lbItem.replaceChildren();
+  const last = lbIndex >= 0 ? lbImages[lbIndex] : null;
+  if (last && last.isConnected) last.scrollIntoView({ block: 'center' });
+  lbIndex = -1;
   if (lb.returnFocus && lb.returnFocus.focus) lb.returnFocus.focus();
 }
 
@@ -2602,11 +2759,7 @@ function markZoomable(root) {
 output.addEventListener('click', ev => {
   const img = ev.target.closest('img.zoomable');
   if (img) {
-    const copy = new Image();
-    copy.src = img.currentSrc || img.src;
-    copy.alt = img.alt;
-    const name = decodeURIComponent((img.getAttribute('src') || '').split(/[?#]/)[0].split('/').pop() || '');
-    openLightbox(copy, img.naturalWidth || img.width, img.naturalHeight || img.height, img.alt || name || 'Figure', false);
+    openImage(img);
     return;
   }
   const pre = ev.target.closest('pre.mermaid.zoomable');
@@ -2619,6 +2772,10 @@ output.addEventListener('click', ev => {
     copy.removeAttribute('style');
     copy.setAttribute('width', w);
     copy.setAttribute('height', h);
+    lbImages = [];
+    lbIndex = -1;
+    document.getElementById('lbPrev').hidden = document.getElementById('lbNext').hidden = true;
+    lbPos.textContent = '';
     openLightbox(copy, w, h, 'Diagram', true);
   }
 });
@@ -2630,6 +2787,8 @@ document.addEventListener('keydown', ev => {
     else if (ev.key === '+' || ev.key === '=') zoomLightbox(1.25);
     else if (ev.key === '-' || ev.key === '_') zoomLightbox(0.8);
     else if (ev.key === '0') fitLightbox();
+    else if (ev.key === 'ArrowLeft' || ev.key === 'PageUp') stepLightbox(-1);
+    else if (ev.key === 'ArrowRight' || ev.key === 'PageDown' || ev.key === ' ') stepLightbox(1);
     else return;
     ev.preventDefault();
     return;
@@ -2645,11 +2804,13 @@ document.addEventListener('keydown', ev => {
   else if (ev.key === 'Escape' && !findBar.hidden && !document.querySelector('dialog[open]')) closeFind();
   else if (mod && !ev.shiftKey && ev.key.toLowerCase() === 'b') { ev.preventDefault(); toggleSidebar(); }
   else if (mod && ev.shiftKey && ev.key.toLowerCase() === 'o') { ev.preventDefault(); toggleToc(); }
+  else if (mod && ev.shiftKey && ev.key.toLowerCase() === 'g') { ev.preventDefault(); toggleImages(); }
   else if (mod && ev.shiftKey && ev.key.toLowerCase() === 'h') { ev.preventDefault(); toggleHidden(); }
   else if (ev.key === 'Escape' && 'tocOpen' in document.documentElement.dataset) {
     delete document.documentElement.dataset.tocOpen;
     updateTocButton();
   }
+  else if (ev.key === 'Escape' && 'imgsOpen' in document.documentElement.dataset && !document.querySelector('dialog[open]')) closeImages();
 });
 
 // ---------------------------------------------------------------- PDF

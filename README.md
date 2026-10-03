@@ -11,6 +11,7 @@ and never goes online.
 - **Code colouring** with [highlight.js](https://highlightjs.org)
 - **Diagrams** with [Mermaid](https://mermaid.js.org) (```` ```mermaid ````)
 - **Folder sidebar** with every Markdown file next to the opened one, a table of contents, and a picture/diagram viewer
+- **Images list** (🖼️ Images, Ctrl+Shift+G): every picture in the document as a thumbnail; click to go to it, double-click to enlarge, and step through them in the viewer with ‹ › or the arrow keys
 - **Counts**: lines, characters, words, sentences, paragraphs, reading time, images, links, tables, code blocks, equations
 - **Breakdown** that reconciles the source file with what is shown, and a **Characters** inspector (encoding, escapes, zero-width and hidden characters, leftover placeholders)
 - **Safety check**: a ✓ Safe / ⚠ / ✗ Unsafe badge for every document, with a report of tricks aimed at you, at AI assistants or at other apps. It looks for scripts and active content, links whose text shows another address, look-alike addresses and letters, links to programs, network-share links, tracking pixels, hidden text and copy-paste traps, hidden instructions for AI tools, commands that download and run code, and Trojan Source text-direction tricks
