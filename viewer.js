@@ -111,7 +111,7 @@ const DROP_TAGS = new Set((
 
 const DROP_ATTRS = new Set(['srcdoc', 'action', 'formaction', 'ping', 'background', 'dynsrc', 'lowsrc',
   'longdesc', 'target', 'is', 'contenteditable', 'autofocus', 'autoplay', 'data', 'codebase', 'attributename',
-  'http-equiv', 'xmlns:xlink', 'popover', 'popovertarget', 'popovertargetaction', 'nonce']);
+  'http-equiv', 'xmlns:xlink', 'popover', 'popovertarget', 'popovertargetaction', 'nonce', 'download']);
 
 const scheme = v => {
   const m = /^([a-z][a-z0-9+.-]*):/i.exec(v.replace(/[\u0000- \u007f-\u009f]/g, ''));
@@ -310,6 +310,7 @@ async function readDoc(path) {
     catch { throw new Error('The Markdown Viewer helper has closed. Open the file again from Explorer.'); }
     if (!res.ok) throw new Error(res.status === 403
       ? `Can't open files outside the document's folder: ${path}`
+      : res.status === 413 ? `File is too large to show: ${path}`
       : `File not found: ${path}`);
     return { path, ...decodeBytes(await res.arrayBuffer()) };
   }
@@ -1907,6 +1908,9 @@ async function renderDiagrams(root, forceTheme) {
     mermaid.initialize({
       startOnLoad: false,
       securityLevel: 'strict',   // no click handlers / links that run code inside diagrams
+      // A diagram's %%{init}%% line may not change these (no CSS of its own for the page).
+      secure: ['secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'suppressErrorRendering', 'maxEdges',
+               'themeCSS', 'themeVariables', 'fontFamily', 'altFontFamily'],
       theme: forceTheme || (isDark() ? 'dark' : 'default')
     });
   } catch (e) { console.warn('Mermaid:', e); return; }

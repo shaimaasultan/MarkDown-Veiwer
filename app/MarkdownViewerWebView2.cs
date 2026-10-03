@@ -13,6 +13,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -20,20 +21,21 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
+using Microsoft.Win32.SafeHandles;
 
 [assembly: AssemblyTitle("Markdown Viewer (WebView2, preview only)")]
 [assembly: AssemblyProduct("Markdown Viewer (WebView2)")]
 [assembly: AssemblyDescription("Previews Markdown files with figures, math and diagrams. Never runs code from a document.")]
 [assembly: AssemblyCopyright("Markdown Viewer")]
-[assembly: AssemblyVersion("1.4.0.0")]
-[assembly: AssemblyFileVersion("1.4.0.0")]
-[assembly: AssemblyInformationalVersion("1.4.0")]
+[assembly: AssemblyVersion("1.5.0.0")]
+[assembly: AssemblyFileVersion("1.5.0.0")]
+[assembly: AssemblyInformationalVersion("1.5.0")]
 
 static class Program
 {
     const string AppName = "Markdown Viewer (WebView2)";
     const string DataFolder = "MarkdownViewerWebView2";     // %APPDATA% (settings) and %LOCALAPPDATA% (browser data)
-    const string AppVersion = "1.4.0";
+    const string AppVersion = "1.5.0";
     // Exists only inside this program's windows. Not a .local name: Windows would first spend ~2 s
     // looking for a device called "mdviewer" on the local network before the page could load.
     const string PrivateHost = "https://mdviewer.example";
@@ -50,6 +52,11 @@ static class Program
     };
     static readonly HashSet<string> SkipDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         { "node_modules", ".git", ".venv", "venv", "__pycache__", "bin", "obj" };
+
+    // Largest file handed out from disk (it is read into memory whole): text and SVG, and media.
+    static readonly HashSet<string> TextTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        { ".md", ".markdown", ".mdown", ".mkd", ".txt", ".svg" };
+    const long MaxTextBytes = 50L << 20, MaxMediaBytes = 200L << 20;
 
     // Bundled libraries: only these file types, and only from inside the lib folder.
     static readonly HashSet<string> LibTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".js", ".css", ".woff2", ".woff", ".ttf" };
@@ -220,6 +227,11 @@ static class Program
         sb.AppendLine();
         sb.AppendLine("NEVER GOES ONLINE: the WebView2 engine cannot look up internet addresses, and the window");
         sb.AppendLine("loads nothing from the web - pictures or media a document links to online are not shown.");
+        sb.AppendLine("Web and mail links open outside this window only after you have seen the real address.");
+        sb.AppendLine();
+        sb.AppendLine("PRIVATE: the window runs InPrivate - no history of the documents you view is kept. No camera,");
+        sb.AppendLine("microphone, location, notification or clipboard-reading access; downloads only from the viewer.");
+        sb.AppendLine("Folder links (junctions, symbolic links) cannot lead outside the document's folder.");
         sb.AppendLine();
         sb.AppendLine("LIBRARIES (all bundled - this app never needs the internet):");
         foreach (Library lib in Libraries())
@@ -363,6 +375,7 @@ static class Program
                 {
                     // Browser data (cache, page storage) stays in this app's own folder.
                     string data = Path.Combine(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), DataFolder), "WebView2");
+                    ForgetHistory(data);
                     // Developer access stays off: WebView2 would otherwise accept extra browser switches
                     // (e.g. --remote-debugging-port) or another browser/data folder from WEBVIEW2_* variables.
                     foreach (string name in new System.Collections.ArrayList(Environment.GetEnvironmentVariables().Keys))
@@ -383,7 +396,10 @@ static class Program
                     options.AllowSingleSignOnUsingOSPrimaryAccount = false; // never signs in with the Windows account
                     env = await CoreWebView2Environment.CreateAsync(null, data, options);
                 }
-                await web.EnsureCoreWebView2Async(env);
+                // InPrivate: nothing about the documents viewed (history, cache, page data) is written to disk.
+                CoreWebView2ControllerOptions controller = env.CreateCoreWebView2ControllerOptions();
+                controller.IsInPrivateModeEnabled = true;
+                await web.EnsureCoreWebView2Async(env, controller);
             }
             catch (Exception ex)
             {
@@ -399,7 +415,7 @@ static class Program
             // do not show any document in this window.
             if (DebuggingSwitchedOn((int)core.BrowserProcessId))
             {
-                MessageBox.Show("Developer debugging is switched on for WebView2 on this computer, so " + AppName +
+                MessageBox.Show("Developer debugging is switched on for WebView2 on this computer (or the app could not check it), so " + AppName +
                                 " will not open documents.\n\nRemove the WebView2 debugging setting (WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS or an\n" +
                                 "AdditionalBrowserArguments policy) and start it again.", AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 Close();
@@ -415,6 +431,23 @@ static class Program
             core.Settings.IsGeneralAutofillEnabled = false;
             core.Settings.IsPasswordAutosaveEnabled = false;
 
+            // No camera, microphone, location, notifications, clipboard reading etc. Writing to a file the user
+            // picked in the Save As dialog (Export / Save) is left to WebView2's own question.
+            core.PermissionRequested += (s, e) =>
+            {
+                e.State = e.PermissionKind == CoreWebView2PermissionKind.FileReadWrite && IsPrivate(e.Uri)
+                    ? CoreWebView2PermissionState.Default : CoreWebView2PermissionState.Deny;
+            };
+            // Downloads only from the viewer itself (Export / Save, "Save image as" on a picture it shows).
+            core.DownloadStarting += (s, e) =>
+            {
+                string uri = e.DownloadOperation.Uri;
+                if (!IsPrivate(uri) && !uri.StartsWith("blob:" + PrivateHost + "/", StringComparison.OrdinalIgnoreCase)) e.Cancel = true;
+            };
+            // Right-click menu: copying, saving pictures, opening links and printing only (no Share, web
+            // capture, QR codes or other browser extras).
+            core.ContextMenuRequested += (s, e) => TrimMenu(e.MenuItems);
+
             core.AddWebResourceRequestedFilter(PrivateHost + "/*", CoreWebView2WebResourceContext.All);
             core.WebResourceRequested += OnRequest;
 
@@ -422,33 +455,64 @@ static class Program
             // anything else (file:, other schemes) is simply blocked.
             core.NavigationStarting += (s, e) =>
             {
-                if (!IsPrivate(e.Uri)) { e.Cancel = true; OpenOutside(e.Uri); }
+                if (!IsPrivate(e.Uri)) { e.Cancel = true; AskOpenOutside(e.Uri); }
             };
             core.NewWindowRequested += (s, e) =>
             {
                 e.Handled = true;
                 if (IsPrivate(e.Uri)) new ViewerForm(e.Uri).Show();   // e.g. a linked image from the document's folder
-                else OpenOutside(e.Uri);
+                else AskOpenOutside(e.Uri);
             };
             core.DocumentTitleChanged += (s, e) => { Text = core.DocumentTitle; };
             core.Navigate(startUrl);
         }
 
+        // If the engine's command line cannot be read, debugging counts as switched on.
         static bool DebuggingSwitchedOn(int browserPid)
         {
+            bool found = false;
             try
             {
                 using (System.Management.ManagementObjectSearcher q = new System.Management.ManagementObjectSearcher(
                     "SELECT CommandLine FROM Win32_Process WHERE ProcessId = " + browserPid))
                     foreach (System.Management.ManagementObject o in q.Get())
                     {
-                        string cmd = (o["CommandLine"] as string) ?? "";
+                        string cmd = o["CommandLine"] as string;
+                        if (cmd == null) return true;
+                        found = true;
                         if (cmd.IndexOf("--remote-debugging", StringComparison.OrdinalIgnoreCase) >= 0 ||
                             cmd.IndexOf("--auto-open-devtools", StringComparison.OrdinalIgnoreCase) >= 0) return true;
                     }
             }
-            catch { }
-            return false;
+            catch { return true; }
+            return !found;
+        }
+
+        // Earlier versions kept a normal browser history: the addresses - and so the file paths - of the
+        // documents opened. Remove it; the window now runs InPrivate and writes none.
+        static void ForgetHistory(string data)
+        {
+            string profile = Path.Combine(Path.Combine(data, "EBWebView"), "Default");
+            foreach (string name in new[] { "History", "Top Sites", "Favicons", "Visited Links", "Network Action Predictor", "Shortcuts" })
+                foreach (string f in new[] { name, name + "-journal" })
+                    try { File.Delete(Path.Combine(profile, f)); } catch { }
+        }
+
+        static readonly HashSet<string> MenuKeep = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "copy", "selectAll", "openLinkInNewWindow", "copyLinkLocation", "copyImage", "copyImageLocation",
+            "saveImageAs", "saveMediaAs", "copyVideoFrame", "loop", "showAllControls", "back", "forward", "reload", "print"
+        };
+
+        static void TrimMenu(IList<CoreWebView2ContextMenuItem> items)
+        {
+            for (int i = items.Count - 1; i >= 0; i--)
+                if (items[i].Kind != CoreWebView2ContextMenuItemKind.Separator &&
+                    (items[i].Kind == CoreWebView2ContextMenuItemKind.Submenu || !MenuKeep.Contains(items[i].Name))) items.RemoveAt(i);
+            // No separators at the ends or next to each other.
+            for (int i = items.Count - 1; i >= 0; i--)
+                if (items[i].Kind == CoreWebView2ContextMenuItemKind.Separator &&
+                    (i == 0 || i == items.Count - 1 || items[i - 1].Kind == CoreWebView2ContextMenuItemKind.Separator)) items.RemoveAt(i);
         }
 
         static bool IsPrivate(string uri)
@@ -456,12 +520,22 @@ static class Program
             return uri.StartsWith(PrivateHost + "/", StringComparison.OrdinalIgnoreCase);
         }
 
-        static void OpenOutside(string uri)
+        // Web and mail links open outside this window, and only after the user has seen the real address
+        // (a link's text can show one address and point to another).
+        void AskOpenOutside(string uri)
         {
-            if (!(uri.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-                  uri.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
-                  uri.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase))) return;
-            try { Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true }); } catch { }
+            bool mail = uri.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase);
+            if (!(mail || uri.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                  uri.StartsWith("https://", StringComparison.OrdinalIgnoreCase))) return;
+            BeginInvoke((Action)(() =>
+            {
+                string shown = uri.Length > 600 ? uri.Substring(0, 600) + "..." : uri;
+                string question = (mail ? "Write an e-mail with your mail app?" : "Open this web address in your browser?") +
+                                  "\n\n" + shown + "\n\nThis window never goes online; the link opens outside it.";
+                if (MessageBox.Show(this, question, AppName, MessageBoxButtons.YesNo, MessageBoxIcon.Question,
+                                    MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+                try { Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true }); } catch { }
+            }));
         }
 
         void OnRequest(object sender, CoreWebView2WebResourceRequestedEventArgs e)
@@ -595,11 +669,12 @@ static class Program
             StringBuilder attrs = new StringBuilder();
             foreach (KeyValuePair<string, string> p in LoadPrefs())
                 attrs.Append(" data-").Append(p.Key).Append("=\"").Append(p.Value).Append('"');
-            if (attrs.Length > 0)
-            {
-                string html = Encoding.UTF8.GetString(body);
-                body = Encoding.UTF8.GetBytes(html.Replace("<html lang=\"en\">", "<html lang=\"en\"" + attrs + ">"));
-            }
+            string html = Encoding.UTF8.GetString(body);
+            if (attrs.Length > 0) html = html.Replace("<html lang=\"en\">", "<html lang=\"en\"" + attrs + ">");
+            // The page's own policy allows file: for opening viewer.html straight from disk; not in the app.
+            html = Regex.Replace(html, "<meta http-equiv=\"Content-Security-Policy\" content=\"[^\"]*\"",
+                                 m => m.Value.Replace(" file:", ""));
+            body = Encoding.UTF8.GetBytes(html);
             // Only the viewer's own script files and the bundled libraries may run; no inline code, and
             // nothing at all (scripts, styles, fonts, pictures, media) from an internet address.
             csp =
@@ -625,6 +700,19 @@ static class Program
             return;
         }
         if (!File.Exists(full)) { NotFound(s); return; }
+        // A folder link (junction, symbolic link) inside the allowed folder could lead anywhere: the file's
+        // real location must be inside the allowed folder too.
+        string real = RealPath(full), realRoot = RealPath(allowRoot);
+        if (real == null || realRoot == null || !IsUnder(real, realRoot))
+        {
+            Send(s, 403, "text/plain", Encoding.UTF8.GetBytes("Forbidden"), null, headOnly);
+            return;
+        }
+        if (new FileInfo(full).Length > (TextTypes.Contains(Path.GetExtension(full)) ? MaxTextBytes : MaxMediaBytes))
+        {
+            Send(s, 413, "text/plain", Encoding.UTF8.GetBytes("File too large"), null, headOnly);
+            return;
+        }
 
         // Every file from disk is sandboxed with no script permission, so even an SVG opened
         // on its own (not as an <img>) can never run code.
@@ -691,7 +779,8 @@ static class Program
     static void Send(Stream s, int status, string mime, byte[] body, string csp, bool headOnly)
     {
         string reason = status == 200 ? "OK" : status == 204 ? "No Content" : status == 403 ? "Forbidden"
-                      : status == 404 ? "Not Found" : status == 405 ? "Method Not Allowed" : "Bad Request";
+                      : status == 404 ? "Not Found" : status == 405 ? "Method Not Allowed"
+                      : status == 413 ? "Payload Too Large" : "Bad Request";
         StringBuilder h = new StringBuilder();
         h.Append("HTTP/1.1 ").Append(status).Append(' ').Append(reason).Append("\r\n");
         h.Append("Content-Type: ").Append(mime).Append("\r\n");
@@ -781,6 +870,28 @@ static class Program
     {
         string r = root.TrimEnd('\\') + "\\";
         return full.StartsWith(r, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern uint GetFinalPathNameByHandleW(SafeFileHandle file, StringBuilder path, uint size, uint flags);
+
+    // Where a file or folder really is, after following junctions, symbolic links and short names
+    // (null if it cannot be opened). Opening without read access does not download cloud files.
+    static string RealPath(string path)
+    {
+        using (SafeFileHandle h = CreateFileW(path, 0, 7, IntPtr.Zero, 3 /* OPEN_EXISTING */, 0x02000000 /* BACKUP_SEMANTICS: folders too */, IntPtr.Zero))
+        {
+            if (h.IsInvalid) return null;
+            StringBuilder sb = new StringBuilder(1024);
+            uint n = GetFinalPathNameByHandleW(h, sb, (uint)sb.Capacity, 0);
+            if (n == 0 || n >= sb.Capacity) return null;
+            string p = sb.ToString();
+            if (p.StartsWith(@"\\?\UNC\", StringComparison.Ordinal)) return @"\\" + p.Substring(8);
+            if (p.StartsWith(@"\\?\", StringComparison.Ordinal)) return p.Substring(4);
+            return p;
+        }
     }
 
     static string ToWeb(string p) { return p.Replace('\\', '/').TrimEnd('/'); }
