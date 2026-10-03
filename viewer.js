@@ -2361,11 +2361,12 @@ function builtWith() {
                 ? 'WebView2 control (Microsoft.Web.WebView2 SDK) — requests are answered inside the program, no network port'
                 : 'Built-in local web server (System.Net.Sockets), bound to 127.0.0.1 only, with a random access token',
               'Windows Forms for the app window and native message boxes'] },
-    { name: 'Window', detail: browserName(),
+    { name: 'Window',
+      detail: appInfo && appInfo.webview2Runtime ? `WebView2 Runtime ${appInfo.webview2Runtime}` : browserName(),
       use: !appInfo ? 'The browser this page is open in'
          : EDITION === 'webview2' ? 'The Edge engine embedded in the program’s own window (WebView2 Runtime)'
          : 'Shows the viewer as an app window (Edge --app mode, Chromium engine)',
-      items: [] },
+      items: appInfo && appInfo.webview2Sdk ? [`WebView2 SDK ${appInfo.webview2Sdk} (Microsoft.Web.WebView2) — built into ${APP_EXE}`] : [] },
     { name: 'Installer', detail: 'PowerShell 5.1 scripts',
       use: 'Build, install and uninstall for the current user — no admin rights',
       items: ['build.ps1 — compiles the app and makes the icon (System.Drawing)',
@@ -2465,7 +2466,14 @@ function showAbout() {
 
     if (EDITION === 'webview2') {
       // No network port in this edition, so there is no connection to rotate.
-      dl.append(el('dt', '', 'Connection'), el('dd', '', 'Inside the app window (WebView2) — no network port, nothing to rotate'));
+      const wv = appInfo.webview2Runtime
+        ? `Runtime ${appInfo.webview2Runtime}` + (appInfo.webview2Sdk ? ` · SDK ${appInfo.webview2Sdk}` : '')
+        : 'Runtime version not reported';
+      for (const [k, v] of [
+        ['Connection', 'Private in-app address — every request is answered by the program itself; no network port, nothing to rotate'],
+        ['Developer tools', 'Off (no F12 / Inspect). Documents are refused if WebView2 debugging has been switched on'],
+        ['WebView2', wv]
+      ]) dl.append(el('dt', '', k), el('dd', '', v));
     } else {
     // Connection rotation: interval setting and a live countdown (port numbers are not shown).
     const sel = el('select', 'rot-select');

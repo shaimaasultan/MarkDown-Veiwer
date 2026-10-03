@@ -211,9 +211,8 @@ static class Program
         sb.AppendLine("BUILT WITH:");
         sb.AppendLine("- Windows app: C# 5, compiled with csc.exe from .NET Framework 4 (included with Windows);");
         sb.AppendLine("     running on .NET Framework CLR " + Environment.Version);
-        string wvRuntime = null, wvSdk = null;
-        try { wvRuntime = CoreWebView2Environment.GetAvailableBrowserVersionString(); } catch { }
-        try { wvSdk = FileVersionInfo.GetVersionInfo(typeof(CoreWebView2Environment).Assembly.Location).FileVersion; } catch { }
+        string wvRuntime, wvSdk;
+        WebView2Versions(out wvRuntime, out wvSdk);
         sb.AppendLine("- Window: own window with the WebView2 control - WebView2 Runtime " + (wvRuntime ?? "(not found)") +
                       ", WebView2 SDK " + (wvSdk ?? "?") + " (Microsoft.Web.WebView2)");
         sb.AppendLine("- Installer: PowerShell scripts (build, install, uninstall); per-user file association, no admin rights");
@@ -225,6 +224,14 @@ static class Program
         sb.AppendLine();
         sb.Append("Installed in: " + appDir.TrimEnd('\\'));
         return sb.ToString();
+    }
+
+    // Installed WebView2 Runtime (updates with Windows/Edge) and the SDK this program was built with.
+    static void WebView2Versions(out string runtime, out string sdk)
+    {
+        runtime = null; sdk = null;
+        try { runtime = CoreWebView2Environment.GetAvailableBrowserVersionString(); } catch { }
+        try { sdk = FileVersionInfo.GetVersionInfo(typeof(CoreWebView2Environment).Assembly.Location).FileVersion; } catch { }
     }
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
@@ -600,6 +607,8 @@ static class Program
         sb.Append("],");
         List<string> served = new List<string>(ServedTypes);
         served.Sort(StringComparer.OrdinalIgnoreCase);
+        string wvRuntime, wvSdk;
+        WebView2Versions(out wvRuntime, out wvSdk);
         sb.Append("\"app\":{\"name\":").Append(Json(AppName))
           .Append(",\"version\":").Append(Json(AppVersion))
           .Append(",\"edition\":").Append(Json(Edition))
@@ -607,6 +616,8 @@ static class Program
           .Append(",\"installDir\":").Append(Json(appDir.TrimEnd('\\')))
           .Append(",\"readableFolder\":").Append(Json(allowRoot))
           .Append(",\"servedTypes\":").Append(Json(string.Join(" ", served.ToArray())))
+          .Append(",\"webview2Runtime\":").Append(Json(wvRuntime))
+          .Append(",\"webview2Sdk\":").Append(Json(wvSdk))
           .Append("}}");
         Send(s, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(sb.ToString()), null, headOnly);
     }
