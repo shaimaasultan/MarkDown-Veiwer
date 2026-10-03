@@ -69,10 +69,18 @@ function blobURL(entry) {
   return urlCache.get(k);
 }
 
-// github.com/.../blob/... image links don't render as images; use the raw file instead.
-function fixRemote(href) {
-  const m = /^https?:\/\/github\.com\/([^/]+\/[^/]+)\/blob\/(.+)$/i.exec(href || '');
-  return m ? `https://raw.githubusercontent.com/${m[1]}/${m[2].split('?')[0]}` : null;
+// This app never goes online: pictures and media a document links to on the web are not loaded.
+const isWeb = href => /^(?:https?:)?\/\//i.test((href || '').trim());
+
+function markWeb(el, src) {
+  el.removeAttribute('src');
+  el.dataset.webSrc = src;
+  if (el.tagName === 'IMG') {
+    el.classList.remove('zoomable');
+    el.classList.add('web');
+    el.alt = `🌐 Web picture not loaded (this app never goes online): ${src}`;
+  }
+  el.title = `Not loaded — this app never goes online: ${src}`;
 }
 
 // ---------------------------------------------------------------- sanitizer
@@ -413,16 +421,15 @@ function fixResources(root, baseDir) {
       el.src = blobURL(entry);
       return;
     }
-    const raw = fixRemote(src);
-    if (raw && isImg) { el.src = raw; return; }
+    if (isWeb(src)) { markWeb(el, src); return; }
     if (!isExternal(src) && isImg) markMissing(el, src, baseDir);
   });
   root.querySelectorAll('img[srcset], source[srcset]').forEach(el => {
     el.srcset = el.getAttribute('srcset').split(',').map(part => {
       const [url, ...rest] = part.trim().split(/\s+/);
       const entry = localEntry(baseDir, url);
-      return [entry ? blobURL(entry) : url, ...rest].join(' ');
-    }).join(', ');
+      return isWeb(url) ? '' : [entry ? blobURL(entry) : url, ...rest].join(' ');
+    }).filter(Boolean).join(', ');
   });
   root.querySelectorAll('a[href]').forEach(a => {
     const href = a.getAttribute('href');
@@ -530,6 +537,7 @@ function updateStats() {
 
   const images = output.querySelectorAll('img').length;
   const missing = output.querySelectorAll('img.missing').length;
+  const web = output.querySelectorAll('img.web').length;
   const tables = output.querySelectorAll('table').length;
   const codeBlocks = output.querySelectorAll('pre > code').length;   // diagrams and ```math aren't code blocks
   const equations = output.querySelectorAll('.katex').length;
@@ -580,7 +588,7 @@ function updateStats() {
 
   stats.replaceChildren(
     group('Content in this document: pictures, links, tables, code blocks, equations and diagrams',
-      [plural(images, 'image') + (missing ? ` (${fmt(missing)} missing)` : ''),
+      [plural(images, 'image') + (missing ? ` (${fmt(missing)} missing)` : '') + (web ? ` (${fmt(web)} from the web, not loaded)` : ''),
        plural(linkEls.length, 'link') + (disabledLinks ? ` (${fmt(disabledLinks)} disabled)` : ''),
        plural(tables, 'table'), plural(codeBlocks, 'code block'), plural(equations, 'equation'),
        diagrams ? plural(diagrams, 'diagram') : '']
@@ -2162,7 +2170,7 @@ window.addEventListener('resize', () => { if (!lightbox.hidden) fitLightbox(); }
 // Images (not inside links, so badges still work as links) and diagrams open in the viewer.
 function markZoomable(root) {
   root.querySelectorAll('img').forEach(img => {
-    if (!img.closest('a') && !img.classList.contains('missing')) {
+    if (!img.closest('a') && !img.classList.contains('missing') && !img.classList.contains('web')) {
       img.classList.add('zoomable');
       img.title = img.title || 'Click to enlarge';
     }

@@ -15,8 +15,8 @@
     script-src 'self' file:;
     style-src 'self' file: 'unsafe-inline';
     font-src 'self' file: data:;
-    img-src * data: blob: file:;
-    media-src * data: blob: file:;
+    img-src 'self' data: blob: file:;
+    media-src 'self' data: blob: file:;
     connect-src 'self';
     object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none';
     base-uri 'none'; form-action 'none'">
@@ -186,7 +186,7 @@
     .markdown-body a:hover { text-decoration: underline; }
     .markdown-body img { max-width: 100%; height: auto; }
     .markdown-body p > img:only-child, .markdown-body p > a:only-child > img { display: block; margin: 1rem auto; }
-    .markdown-body img.missing {
+    .markdown-body img.missing, .markdown-body img.web {
       display: inline-block; min-width: 180px; padding: .5rem .75rem; border: 1px dashed var(--warn);
       background: var(--warn-bg); color: var(--warn); font-size: .8rem;
     }

@@ -218,6 +218,9 @@ static class Program
         sb.AppendLine("request is answered by the program itself. Developer tools are off, and the app will not");
         sb.AppendLine("show documents if WebView2 debugging has been switched on.");
         sb.AppendLine();
+        sb.AppendLine("NEVER GOES ONLINE: the WebView2 engine cannot look up internet addresses, and the window");
+        sb.AppendLine("loads nothing from the web - pictures or media a document links to online are not shown.");
+        sb.AppendLine();
         sb.AppendLine("LIBRARIES (all bundled - this app never needs the internet):");
         foreach (Library lib in Libraries())
         {
@@ -369,12 +372,12 @@ static class Program
                     // reliability reports, hyperlink pings or other background requests.
                     // msOneAuthWAM off: the engine otherwise signs in to the Windows/Microsoft account through
                     // Windows' account manager at start-up and contacts Microsoft 365 servers.
-                    // NetworkServiceInProcess2: no separate "Network Service" process; the engine's network
-                    // part runs inside its manager process instead.
+                    // host-resolver-rules: the engine cannot look up any internet name, so it cannot connect
+                    // anywhere (the page's own address is answered in-process and never looked up).
                     options.AdditionalBrowserArguments = "--disable-background-networking --disable-component-update" +
                                                          " --disable-domain-reliability --no-pings" +
                                                          " --disable-features=msOneAuthWAM" +
-                                                         " --enable-features=NetworkServiceInProcess2";
+                                                         " \"--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE mdviewer.example\"";
                     options.IsCustomCrashReportingEnabled = true;           // crash reports stay on this PC
                     options.AllowSingleSignOnUsingOSPrimaryAccount = false; // never signs in with the Windows account
                     env = await CoreWebView2Environment.CreateAsync(null, data, options);
@@ -596,14 +599,14 @@ static class Program
                 string html = Encoding.UTF8.GetString(body);
                 body = Encoding.UTF8.GetBytes(html.Replace("<html lang=\"en\">", "<html lang=\"en\"" + attrs + ">"));
             }
-            // Only the viewer's own script files and the bundled libraries may run; no inline code and
-            // no internet address at all.
+            // Only the viewer's own script files and the bundled libraries may run; no inline code, and
+            // nothing at all (scripts, styles, fonts, pictures, media) from an internet address.
             csp =
                 "default-src 'none'; " +
                 "script-src " + AppBase + "; " +
                 "style-src 'self' 'unsafe-inline'; " +
                 "font-src 'self' data:; " +
-                "img-src * data: blob:; media-src * data: blob:; connect-src 'self'; " +
+                "img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self'; " +
                 "object-src 'none'; frame-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'";
         }
         Send(s, 200, Mime(full), body, csp, headOnly);
@@ -624,7 +627,7 @@ static class Program
 
         // Every file from disk is sandboxed with no script permission, so even an SVG opened
         // on its own (not as an <img>) can never run code.
-        const string csp = "sandbox; default-src 'none'; img-src * data:; media-src *; style-src 'unsafe-inline' *; font-src *";
+        const string csp = "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; font-src 'self'";
         Send(s, 200, Mime(full), File.ReadAllBytes(full), csp, headOnly);
     }
 
