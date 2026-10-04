@@ -526,9 +526,15 @@ function fixResources(root, baseDir) {
     for (const a of ['width', 'height']) if (img.getAttribute(a)) media.setAttribute(a, img.getAttribute(a));
     img.replaceWith(media);
   });
+  // Pictures switched off: no picture in a document is loaded (a picture opened on its own still shows).
+  const block = picturesBlocked() && !(currentPath && MEDIA_FILE.test(currentPath) && !MD_RE.test(currentPath));
   root.querySelectorAll('img[src], video[src], audio[src], source[src]').forEach(el => {
     const src = el.getAttribute('src');
     el.dataset.origSrc = src;
+    if (block && (el.tagName === 'IMG' || (el.tagName === 'SOURCE' && el.parentElement?.tagName === 'PICTURE')) && !isWeb(src)) {
+      markBlocked(el, src);
+      return;
+    }
     const entry = localEntry(baseDir, src);
     const isImg = el.tagName === 'IMG';
     if (entry) {
@@ -540,6 +546,7 @@ function fixResources(root, baseDir) {
     if (!isExternal(src) && isImg) markMissing(el, src, baseDir);
   });
   root.querySelectorAll('img[srcset], source[srcset]').forEach(el => {
+    if (block && (el.tagName === 'IMG' || el.parentElement?.tagName === 'PICTURE')) { el.removeAttribute('srcset'); return; }
     el.srcset = el.getAttribute('srcset').split(',').map(part => {
       const [url, ...rest] = part.trim().split(/\s+/);
       const entry = localEntry(baseDir, url);
@@ -704,6 +711,7 @@ function updateStats() {
   const images = output.querySelectorAll('img').length;
   const missing = output.querySelectorAll('img.missing').length;
   const web = output.querySelectorAll('img.web').length;
+  const blocked = output.querySelectorAll('img.blocked').length;
   const tables = output.querySelectorAll('table').length;
   const codeBlocks = output.querySelectorAll('pre > code').length;   // diagrams and ```math aren't code blocks
   const equations = output.querySelectorAll('.katex').length;
@@ -754,7 +762,8 @@ function updateStats() {
 
   stats.replaceChildren(
     group('Content in this document: pictures, links, tables, code blocks, equations and diagrams',
-      [plural(images, 'image') + (missing ? ` (${fmt(missing)} missing)` : '') + (web ? ` (${fmt(web)} from the web, not loaded)` : ''),
+      [plural(images, 'image') + (missing ? ` (${fmt(missing)} missing)` : '') + (web ? ` (${fmt(web)} from the web, not loaded)` : '') +
+         (blocked ? ` (${fmt(blocked)} not loaded — pictures are off)` : ''),
        plural(linkEls.length, 'link') + (disabledLinks ? ` (${fmt(disabledLinks)} disabled)` : ''),
        plural(tables, 'table'), plural(codeBlocks, 'code block'), plural(equations, 'equation'),
        diagrams ? plural(diagrams, 'diagram') : '']
@@ -2509,6 +2518,21 @@ function analyzeDocument(source) {
 }
 
 let statsTimer = 0;
+const picturesBlocked = () => loadPrefLive('pictures') === 'blocked';
+
+function markBlocked(el, src) {
+  el.removeAttribute('src');
+  el.removeAttribute('srcset');
+  if (el.tagName !== 'IMG') return;
+  el.classList.remove('zoomable');
+  el.classList.add('blocked');
+  let file = src;
+  try { file = decodeURIComponent(src.split(/[?#]/)[0].split('/').pop()); } catch { }
+  el.dataset.origAlt = el.getAttribute('alt') || '';
+  el.alt = `🖼 ${el.dataset.origAlt || file} — picture not loaded (pictures are off)`;
+  el.title = `Pictures are off — right-click › Load picture to show it (${src})`;
+}
+
 function markMissing(img, src, baseDir) {
   img.classList.remove('zoomable');
   img.classList.add('missing');
@@ -2587,7 +2611,8 @@ async function renderDiagrams(root, forceTheme) {
 // ---------------------------------------------------------------- preferences
 // Remembered view settings. The app stores them itself (in its settings file) and puts them on
 // <html data-…> before the page is shown; the standalone page uses localStorage. The first value is the default.
-const PREFS = { theme: ['auto', 'light', 'dark'], sidebar: ['shown', 'hidden'], toc: ['shown', 'hidden'], hiddenchars: ['off', 'on'] };
+const PREFS = { theme: ['auto', 'light', 'dark'], sidebar: ['shown', 'hidden'], toc: ['shown', 'hidden'], hiddenchars: ['off', 'on'],
+                pictures: ['shown', 'blocked'] };
 
 function loadPref(name) {
   const values = PREFS[name];
@@ -2757,6 +2782,82 @@ setRootPref('toc', loadPref('toc'));
 setRootPref('hiddenchars', loadPref('hiddenchars'));
 updateHiddenButton();
 
+// ---------------------------------------------------------------- pictures on / off
+// Off: documents open without loading any picture; each shows its text (or file name) instead. Remembered.
+const picBtn = document.getElementById('picBtn');
+function updatePicButton() {
+  const off = picturesBlocked();
+  picBtn.textContent = off ? '🚫 Pictures off' : '🖼️ Pictures on';
+  picBtn.classList.toggle('pic-off', off);
+  picBtn.setAttribute('aria-pressed', String(!off));
+  picBtn.title = off ? 'Pictures are off: documents open without loading pictures — click to show them (Ctrl+Shift+B)'
+                     : 'Pictures are on — click to open documents without loading pictures (Ctrl+Shift+B)';
+}
+function togglePictures() {
+  const next = picturesBlocked() ? 'shown' : 'blocked';
+  setRootPref('pictures', next);
+  savePref('pictures', next);
+  updatePicButton();
+  if (currentPath) renderDoc({ keepScroll: true });
+  showToast(next === 'blocked' ? 'Pictures are off — documents open without loading pictures.' : 'Pictures are on.');
+}
+picBtn.addEventListener('click', togglePictures);
+setRootPref('pictures', loadPref('pictures'));
+updatePicButton();
+
+// With pictures off, a picture loads only when asked: right-click its placeholder › "Load picture".
+function loadBlocked(img) {
+  const src = img.dataset.origSrc;
+  if (!src || !img.classList.contains('blocked')) return;
+  img.classList.remove('blocked');
+  img.alt = img.dataset.origAlt || '';
+  img.removeAttribute('title');
+  const entry = localEntry(dirOf(currentPath || ''), src);
+  if (entry) {
+    if (source === 'app') img.addEventListener('error', () => markMissing(img, src, dirOf(currentPath || '')), { once: true });
+    img.src = blobURL(entry);
+  } else if (/^data:image\//i.test(src)) img.src = src;
+  else markMissing(img, src, dirOf(currentPath || ''));
+}
+
+const picMenu = document.createElement('div');
+picMenu.className = 'menu pic-menu';
+picMenu.setAttribute('role', 'menu');
+picMenu.hidden = true;
+picMenu.innerHTML =
+  '<button role="menuitem" data-pic="one"><b>🖼️ Load picture</b><span>Show this picture</span></button>' +
+  '<button role="menuitem" data-pic="all"><b>🖼️ Load all pictures</b><span>Show every picture in this document (pictures stay off for other documents)</span></button>';
+document.body.append(picMenu);
+let picMenuTarget = null;
+
+function closePicMenu() { picMenu.hidden = true; picMenuTarget = null; }
+
+output.addEventListener('contextmenu', ev => {
+  const img = ev.target.closest('img.blocked');
+  if (!img) return;
+  ev.preventDefault();
+  picMenuTarget = img;
+  picMenu.hidden = false;
+  const w = picMenu.offsetWidth, h = picMenu.offsetHeight;
+  picMenu.style.left = Math.max(8, Math.min(ev.clientX, innerWidth - w - 8)) + 'px';
+  picMenu.style.top = Math.max(8, Math.min(ev.clientY, innerHeight - h - 8)) + 'px';
+  picMenu.querySelector('button').focus();
+});
+picMenu.addEventListener('click', ev => {
+  const item = ev.target.closest('[data-pic]');
+  if (!item) return;
+  const targets = item.dataset.pic === 'all' ? [...output.querySelectorAll('img.blocked')] : [picMenuTarget].filter(Boolean);
+  closePicMenu();
+  targets.forEach(loadBlocked);
+  markZoomable(output);
+  buildImageList();
+  clearTimeout(statsTimer);
+  statsTimer = setTimeout(updateStats, 200);
+});
+document.addEventListener('click', ev => { if (!picMenu.hidden && !picMenu.contains(ev.target)) closePicMenu(); });
+document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && !picMenu.hidden) closePicMenu(); }, true);
+content.addEventListener('scroll', () => { if (!picMenu.hidden) closePicMenu(); });
+
 // ---------------------------------------------------------------- images list (right)
 // Every picture in the document, in order: click one to go to it, double-click to enlarge it.
 const imgPanel = document.getElementById('imgPanel');
@@ -2787,8 +2888,9 @@ function buildImageList() {
     const button = el('button');
     button.type = 'button';
     const thumb = el('span', 'img-thumb');
-    const web = img.classList.contains('web'), missing = img.classList.contains('missing');
-    if (web) thumb.textContent = '🌐';
+    const web = img.classList.contains('web'), missing = img.classList.contains('missing'), off = img.classList.contains('blocked');
+    if (off) thumb.textContent = '🚫';
+    else if (web) thumb.textContent = '🌐';
     else if (missing) thumb.textContent = '⚠';
     else {
       const t = new Image();
@@ -2802,7 +2904,7 @@ function buildImageList() {
     }
     const label = el('span', 'img-label');
     label.append(el('span', 'img-num', `${i + 1}. `), document.createTextNode(imageLabel(img)));
-    const note = web ? 'web picture — not loaded' : missing ? 'not found' : img.closest('a') ? 'inside a link' : '';
+    const note = off ? 'not loaded — pictures are off' : web ? 'web picture — not loaded' : missing ? 'not found' : img.closest('a') ? 'inside a link' : '';
     if (note) label.append(el('span', 'img-note', note));
     button.title = (imageFile(img) || imageLabel(img)) +
       (img.classList.contains('zoomable') ? ' — click to go to it, double-click to enlarge' : ' — click to go to it');
@@ -3326,7 +3428,7 @@ document.getElementById('lbPng').addEventListener('click', saveDiagramPng);
 const TEXT_PICTURE = /\.svg$/i;
 const PICTURE_TEXT_MAX = 2 << 20;      // a large photo: only its first 2 MB, so the window stays responsive
 const isTextPicture = img => !!img && TEXT_PICTURE.test((img.dataset.origSrc || '').split(/[?#]/)[0]);
-const hasPictureFile = img => !!img && !!img.dataset.origSrc && !img.classList.contains('web') && !img.classList.contains('missing');
+const hasPictureFile = img => !!img && !!img.dataset.origSrc && !['web', 'missing', 'blocked'].some(c => img.classList.contains(c));
 let pictureText = '';
 
 // Bytes → text the way Notepad reads a file it is given.
@@ -3517,7 +3619,7 @@ window.addEventListener('resize', () => { if (!lightbox.hidden) fitLightbox(); }
 // Images (not inside links, so badges still work as links) and diagrams open in the viewer.
 function markZoomable(root) {
   root.querySelectorAll('img').forEach(img => {
-    if (!img.closest('a') && !img.classList.contains('missing') && !img.classList.contains('web')) {
+    if (!img.closest('a') && !img.classList.contains('missing') && !img.classList.contains('web') && !img.classList.contains('blocked')) {
       img.classList.add('zoomable');
       img.title = img.title || 'Click to enlarge';
     }
@@ -3591,6 +3693,7 @@ document.addEventListener('keydown', ev => {
   else if (mod && ev.shiftKey && ev.key.toLowerCase() === 'l') { ev.preventDefault(); toggleLinks(); }
   else if (mod && ev.shiftKey && ev.key.toLowerCase() === 'u') { ev.preventDefault(); toggleSource(); }
   else if (mod && ev.shiftKey && ev.key.toLowerCase() === 'h') { ev.preventDefault(); toggleHidden(); }
+  else if (mod && ev.shiftKey && ev.key.toLowerCase() === 'b') { ev.preventDefault(); togglePictures(); }
   else if (ev.key === 'Escape' && 'tocOpen' in document.documentElement.dataset) {
     delete document.documentElement.dataset.tocOpen;
     updateTocButton();

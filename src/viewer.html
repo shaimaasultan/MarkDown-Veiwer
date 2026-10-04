@@ -232,6 +232,14 @@
     .markdown-body a:hover { text-decoration: underline; }
     .markdown-body img { max-width: 100%; height: auto; }
     .markdown-body p > img:only-child, .markdown-body p > a:only-child > img { display: block; margin: 1rem auto; }
+    /* Pictures switched off: the picture's text in a quiet box, nothing loaded. */
+    .markdown-body img.blocked {
+      display: inline-block; min-width: 180px; padding: .5rem .75rem; border: 1px dashed var(--border);
+      background: var(--panel); color: var(--muted); font-size: .85rem;
+    }
+    .btn.pic-off { color: var(--warn-fg); background: var(--warn-bg2); border-color: var(--warn-fg); }
+    .markdown-body img.blocked { cursor: context-menu; }
+    .menu.pic-menu { position: fixed; right: auto; top: 0; left: 0; min-width: 240px; max-width: 320px; }
     .markdown-body img.missing, .markdown-body img.web {
       display: inline-block; min-width: 180px; padding: .5rem .75rem; border: 1px dashed var(--warn);
       background: var(--warn-bg); color: var(--warn); font-size: .8rem;
@@ -634,6 +642,7 @@
       </div>
     </div>
     <button id="hiddenBtn" class="btn secondary" title="Show invisible characters in the document (Ctrl+Shift+H)">¶ Hidden</button>
+    <button id="picBtn" class="btn secondary" aria-pressed="true">🖼️ Pictures on</button>
     <button id="themeBtn" class="btn secondary" title="Theme: follow Windows, light or dark">🖥️ Auto</button>
     <button id="aboutBtn" class="btn secondary" title="Versions and sources of the libraries used">ℹ️ About</button>
   </header>
