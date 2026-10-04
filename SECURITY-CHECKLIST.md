@@ -1,0 +1,118 @@
+# Security checklist — Markdown Viewer (WebView2)
+
+Every hardening point added to this app, where it lives and how it was checked. `[x]` = done and tested;
+`[ ]` = done, but still to be confirmed on a real run (these steps need a Windows administrator or signing
+prompt, which the automated tests cannot click). Version numbers show when each point was added.
+
+**How to re-check:** `app\Check-Source.cmd` (project files unchanged since the last install) and the
+tamper tests described under each section.
+
+---
+
+## 1. Documents never run code (preview only)
+
+- [x] Scripts, event handlers, `javascript:` links, frames, forms and plugins are removed before display (sanitizer allowlist) — `src\viewer.js`
+- [x] The window's Content-Security-Policy blocks them as well; `file:` removed from the policy — `src\viewer.html` (1.5.0)
+- [x] Only Markdown, text, images, audio and video are read from disk; HTML, scripts, PDFs and programs are refused (403) — `ServedTypes` in `app\MarkdownViewerWebView2.cs`
+- [x] Size limits: 50 MB of text, 200 MB of media (media streamed in 4 MB ranges) (1.5.0)
+- [x] Folder links (junctions, symbolic links) cannot lead outside the document's folder (`RealPath`) (1.5.0)
+- [x] A document cannot draw over the viewer's controls; a diagram cannot add its own CSS (CSS containment) (1.5.0)
+- [x] Blocked-code alert: a popup says when a file contained code that was removed
+- [x] Safety check badge and report: phishing links, look-alike addresses and letters, hidden text, AI-aimed instructions, download-and-run commands, Trojan Source (1.7.0)
+- [x] Code examples cannot be hidden or restyled (no copy-paste traps)
+
+## 2. Never online, private
+
+- [x] No network port: the page lives at a private in-app address; every request is answered by the program
+- [x] All libraries bundled; the engine cannot resolve any internet name; no background networking, component updates, pings, SmartScreen or account sign-in
+- [x] Web and mail links open outside only after a question showing the real address (1.5.0)
+- [x] InPrivate window; camera, microphone, location, notifications, clipboard reading refused; downloads only from the viewer; trimmed right-click menu (1.5.0)
+- [x] Developer tools off; documents refused if WebView2 remote debugging is on or cannot be checked (fail closed) (1.5.0)
+- [x] `WEBVIEW2_*` environment variables cleared before the engine starts
+- [x] **Fresh browser data:** a new, empty WebView2 data folder at every start; ended runs' folders (and the old shared folder) deleted (1.8.3) — tested with two windows open and after a restart
+
+## 3. Signed program, no loose script files
+
+- [x] The page and every library packed into `MarkdownViewerWebView2.Content.dll`; program and DLL Authenticode-signed with the same certificate (1.6.0)
+- [x] Both signatures checked at every start, offline, before anything is loaded (1.6.0)
+- [x] WebView2 files must carry Microsoft's valid signature (1.6.0)
+- [x] **Exact WebView2 files:** their SHA-256 is compiled into the signed program; an older or other Microsoft-signed file is refused (1.8.0) — tested: junk `Core.dll`, other Microsoft DLL as `Core.dll`
+- [x] Microsoft's name matched exactly (`O=Microsoft Corporation,`)
+
+## 4. Start-up checks (before any DLL from the app folder is used)
+
+- [x] **No `.config` file** next to the program (it could redirect .NET to unchecked copies) — reproduced the bypass first, then fixed
+- [x] Custom AppDomain manager refused
+- [x] `Run` kept out of `Main` (`NoInlining`), so nothing from WebView2 loads before the checks
+- [x] **Folder allow-list:** anything not part of the app in its folder (planted DLL, `.config`, `.manifest`, `.local` folder) stops the start (1.8.1) — tested with junk `version.dll`, `.exe.local`, `.exe.config`, `.exe.manifest`
+- [x] **Checked files stay locked** (read sharing only) until the app closes; the folder cannot be renamed (1.8.1) — tested: write and rename refused while running
+- [x] **Safe DLL loading:** System32 first, no network-share or low-integrity images, no current folder/PATH (`SetProcessMitigationPolicy`, `SetDefaultDllDirectories`) (1.8.1) — confirmed ON with `Get-ProcessMitigation`
+- [x] The app's own calls into Windows DLLs load from System32 only (`DefaultDllImportSearchPaths`) (1.8.3)
+- [x] **No startup hooks:** `COR_ENABLE_PROFILING`, `COR_PROFILER*`, `APPDOMAIN_MANAGER_*` refuse the start (`DOTNET_STARTUP_HOOKS` does not apply to .NET Framework) (1.8.2) — tested with profiler variables set
+- [x] **Not as administrator by accident:** started elevated while a normal start is possible, the app refuses (1.8.2)
+  - [ ] Confirm on a real run: open a `.md` from an administrator prompt → refusal message
+- [x] **Genuine engine:** the started `msedgewebview2.exe` must be Microsoft-signed and under Program Files (1.8.1) — tested with the real engine and with `powershell.exe` as a stand-in
+- [x] DLL planting checked for 28 DLL names: 25 caught by the folder check; `cryptbase`, `cryptsp`, `profapi` are loaded by .NET before any app code → only the Program Files install fully protects (documented)
+
+## 5. Windows entries (file types, Open with)
+
+- [x] **Self-repair:** an installed copy re-points the `.md` / Open with / media entries when they point to a deleted copy; the Program Files copy also when they point to any other copy; development builds never touch them (1.8.4) — 9 decision cases + end-to-end repair tested
+- [x] The installer reads the entries back and warns if a change did not stick (1.8.4)
+- [x] Uninstall entry runs PowerShell by full path (1.8.4)
+- [x] Real registry confirmed pointing to Program Files (read from outside the test session)
+
+## 6. Signing key and builds
+
+- [x] **Protected signing key:** a new certificate whose key needs your confirmation for every signing (`-KeyProtection Protect`); unprotected certificates are no longer used (1.8.3) — new key confirmed at `ForceHighProtection`
+  - [ ] Delete the old unprotected certificate `56EB660C…D72F` in certmgr.msc › Personal › Certificates
+- [x] **Only fresh files are signed:** the build signs just the program and Content DLL it has compiled; WebView2 files are never signed by the build (1.8.4)
+- [x] **Tampered SDK stops the build** before anything is compiled or signed: Microsoft signature + pinned SHA-256 in `build.ps1` (1.8.4) — tested: one byte changed in `WebView2Loader.dll`, other Microsoft DLL as `Core.dll`
+- [x] Compiler found via Windows' own folder (not `WINDIR`) and must be Microsoft-signed (1.8.4)
+- [x] Generated source written next to the build, not into the shared Temp folder (1.8.4)
+- [x] **Trust-Certificate adds Trusted Roots only**, not Trusted Publishers (Office macros / AllSigned scripts) (1.8.3)
+
+## 7. Install in Program Files (one installer)
+
+- [x] `Install.cmd` always installs to `C:\Program Files\MarkdownViewerWebView2`; the per-user copy of earlier versions is removed (1.8.2 → single installer in 1.8.4)
+- [x] Build, signing and registrations run as you; **only the copy** (`place.ps1`) runs as administrator
+- [x] `Install.cmd` refuses to be started as administrator (1.8.2)
+- [x] **Updates keep the certificate:** a build signed by another certificate is refused unless you confirm both thumbprints with Y (1.8.3) — tested exit 3 / accept
+- [x] The admin step works out the Program Files folder itself (not `$env:ProgramFiles`) and accepts no target from outside (1.8.4)
+- [x] **Staging folder:** files copied into an admin-only staging folder, checked there, then swapped in; a copy in use is never half replaced (1.8.4) — tested all exit codes 0/2/3/4/6, no leftovers
+- [x] Source files that are links are refused (1.8.4)
+- [x] No log files from administrator steps in your folders (exit codes instead) (1.8.4)
+- [x] After the copy, the installer checks as you that Program Files holds exactly the built files (1.8.4)
+- [x] Firewall block rules moved to the new path on update
+- [ ] Confirm on a real run: `app\Install.cmd` → signing confirmation → UAC prompt → "Copied to … and checked"
+
+## 8. Admin-step hygiene (all scripts)
+
+- [x] **Only Windows PowerShell's own modules** (`PSModulePath` = `$PSHOME\Modules`, set before any command) in every script — reproduced the look-alike module attack first, then fixed (1.8.2+)
+- [x] PowerShell and cmd started by full path in scripts, all `.cmd` launchers and the uninstall entry (1.8.2–1.8.4)
+- [x] Program Files from `GetFolderPath`, never from an environment variable — also for the elevated folder delete in uninstall (1.8.4)
+- [x] Firewall script: results in its own window, no log file (1.8.4)
+  - [ ] Confirm on a real run: `Firewall-Block.cmd` / `Firewall-Unblock.cmd`
+- [x] Uninstall removes the Program Files copy, per-user leftovers, entries, settings, browser data, firewall rules and certificate trust; restores the previous `.md` default
+  - [ ] Confirm on a real run (only when you want to uninstall)
+
+## 9. Checking the project folder
+
+- [x] **Install record:** every install records the SHA-256 of every project file (except `.git\`, `app\dist\`; links not followed) in Program Files, where only an administrator can change it (1.8.5)
+- [x] `app\Check-Source.cmd` lists files changed, added or removed since the last install (1.8.5) — tested unchanged / changed / added / removed
+- [x] Line endings fixed per file type (`.gitattributes`), so a checkout or pull never rewrites a file and causes false alarms — fresh clone compared byte for byte
+  - [ ] After the next install, run `Check-Source.cmd` → "No changes"
+
+## 10. Clean-up after testing
+
+- [x] No test DLLs, look-alike modules, test folders or profiler variables left anywhere (searched scratchpad, Temp, project, install folders, Documents modules)
+- [x] All installed WebView2 DLLs carry Microsoft's signature and the pinned hashes
+
+---
+
+## Known limits (by design)
+
+- Windows' administrator prompt is not a security boundary against programs already running as you: they
+  could change this repository's scripts or sources before you install. Use `Check-Source.cmd` and
+  `git status` before installing, and confirm a signing request only while a build you started is running.
+- `app\dist\` is for testing only; full protection applies to the installed copy in Program Files.
+- The optional firewall rules cover `MarkdownViewerWebView2.exe`, not the shared WebView2 engine.
