@@ -3,6 +3,7 @@
 Every hardening point added to this app, where it lives and how it was checked. `[x]` = done and tested;
 `[ ]` = done, but still to be confirmed on a real run (these steps need a Windows administrator or signing
 prompt, which the automated tests cannot click). Version numbers show when each point was added.
+`[ ] To do:` = not done yet — found by comparing with the CloClo widget's hardening history.
 
 **How to re-check:** `app\Check-Source.cmd` (project files unchanged since the last install) and the
 tamper tests described under each section.
@@ -26,6 +27,8 @@ tamper tests described under each section.
 - [x] No network port: the page lives at a private in-app address; every request is answered by the program
 - [x] All libraries bundled; the engine cannot resolve any internet name; no background networking, component updates, pings, SmartScreen or account sign-in
 - [x] Web and mail links open outside only after a question showing the real address (1.5.0)
+- [x] Only `http:`, `https:` and `mailto:` addresses are ever handed to Windows; any other scheme is ignored (`AskOpenOutside`)
+- [ ] To do: Save settings through a temporary file and an atomic replace, so a crash while saving cannot corrupt `settings.ini` and silently reset choices such as Pictures off
 - [x] InPrivate window; camera, microphone, location, notifications, clipboard reading refused; downloads only from the viewer; trimmed right-click menu (1.5.0)
 - [x] Developer tools off; documents refused if WebView2 remote debugging is on or cannot be checked (fail closed) (1.5.0)
 - [x] `WEBVIEW2_*` environment variables cleared before the engine starts
@@ -38,6 +41,8 @@ tamper tests described under each section.
 - [x] WebView2 files must carry Microsoft's valid signature (1.6.0)
 - [x] **Exact WebView2 files:** their SHA-256 is compiled into the signed program; an older or other Microsoft-signed file is refused (1.8.0) — tested: junk `Core.dll`, other Microsoft DLL as `Core.dll`
 - [x] Microsoft's name matched exactly (`O=Microsoft Corporation,`)
+- [x] The Microsoft root itself is not pinned, but each WebView2 file's exact SHA-256 is - so only the very files the app was built with pass
+- [x] Not a single-file build: no runtime DLLs are unpacked to `%TEMP%`; every DLL ships beside the program and is checked there (CloClo's extraction-folder issue does not apply)
 
 ## 4. Start-up checks (before any DLL from the app folder is used)
 
@@ -49,9 +54,11 @@ tamper tests described under each section.
 - [x] **Safe DLL loading:** System32 first, no network-share or low-integrity images, no current folder/PATH (`SetProcessMitigationPolicy`, `SetDefaultDllDirectories`) (1.8.1) — confirmed ON with `Get-ProcessMitigation`
 - [x] The app's own calls into Windows DLLs load from System32 only (`DefaultDllImportSearchPaths`) (1.8.3)
 - [x] **No startup hooks:** `COR_ENABLE_PROFILING`, `COR_PROFILER*`, `APPDOMAIN_MANAGER_*` refuse the start (`DOTNET_STARTUP_HOOKS` does not apply to .NET Framework) (1.8.2) — tested with profiler variables set
+  - Note: .NET has already loaded a profiler when this check runs, so it limits the damage rather than preventing it
 - [x] **Not as administrator by accident:** started elevated while a normal start is possible, the app refuses (1.8.2)
   - [ ] Confirm on a real run: open a `.md` from an administrator prompt → refusal message
 - [x] **Genuine engine:** the started `msedgewebview2.exe` must be Microsoft-signed and under Program Files (1.8.1) — tested with the real engine and with `powershell.exe` as a stand-in
+- [ ] To do: Catch unexpected errors on the window thread and in background tasks (log type and stack only, never document text) instead of crashing - a crash hands Windows Error Reporting a memory dump that can hold the open document
 - [x] DLL planting checked for 28 DLL names: 25 caught by the folder check; `cryptbase`, `cryptsp`, `profapi` are loaded by .NET before any app code → only the Program Files install fully protects (documented)
 
 ## 5. Windows entries (file types, Open with)
@@ -69,6 +76,7 @@ tamper tests described under each section.
 - [x] **Tampered SDK stops the build** before anything is compiled or signed: Microsoft signature + pinned SHA-256 in `build.ps1` (1.8.4) — tested: one byte changed in `WebView2Loader.dll`, other Microsoft DLL as `Core.dll`
 - [x] Compiler found via Windows' own folder (not `WINDIR`) and must be Microsoft-signed (1.8.4)
 - [x] Generated source written next to the build, not into the shared Temp folder (1.8.4)
+- [ ] To do: `build.ps1` run on its own refuses an administrator window (as `Install.cmd` already does), so the compiler never runs elevated
 - [x] **Trust-Certificate adds Trusted Roots only**, not Trusted Publishers (Office macros / AllSigned scripts) (1.8.3)
 
 ## 7. Install in Program Files (one installer)
@@ -76,6 +84,10 @@ tamper tests described under each section.
 - [x] `Install.cmd` always installs to `C:\Program Files\MarkdownViewerWebView2`; the per-user copy of earlier versions is removed (1.8.2 → single installer in 1.8.4)
 - [x] Build, signing and registrations run as you; **only the copy** (`place.ps1`) runs as administrator
 - [x] `Install.cmd` refuses to be started as administrator (1.8.2)
+- [x] The installer never starts the app, so it can never leave a copy running with administrator rights
+- [ ] To do: Pass the administrator step to the elevated PowerShell inline (`-EncodedCommand`) instead of running `place.ps1` from the project folder, so no file can be swapped between the UAC prompt and its start
+- [ ] To do: When the after-copy check finds a file that differs from the build, remove it and stop the install (today it warns)
+- [ ] To do: Stop with a message instead of waiting forever when the installer cannot read the keyboard for the certificate question (e.g. run from PowerShell ISE)
 - [x] **Updates keep the certificate:** a build signed by another certificate is refused unless you confirm both thumbprints with Y (1.8.3) — tested exit 3 / accept
 - [x] The admin step works out the Program Files folder itself (not `$env:ProgramFiles`) and accepts no target from outside (1.8.4)
 - [x] **Staging folder:** files copied into an admin-only staging folder, checked there, then swapped in; a copy in use is never half replaced (1.8.4) — tested all exit codes 0/2/3/4/6, no leftovers
@@ -101,6 +113,8 @@ tamper tests described under each section.
 - [x] `app\Check-Source.cmd` lists files changed, added or removed since the last install (1.8.5) — tested unchanged / changed / added / removed
 - [x] Line endings fixed per file type (`.gitattributes`), so a checkout or pull never rewrites a file and causes false alarms — fresh clone compared byte for byte
   - [ ] After the next install, run `Check-Source.cmd` → "No changes"
+- [ ] To do: Install `check-source.ps1` in Program Files with the record and have `Check-Source.cmd` run that copy - today it runs the copy in the project folder, which a program running as you could change to always report "No changes"
+- [ ] To do: Take the record before the build and compare again after it; refuse to install if the sources changed while building (today the record is taken after the build)
 
 ## 10. Clean-up after testing
 
@@ -116,3 +130,9 @@ tamper tests described under each section.
   `git status` before installing, and confirm a signing request only while a build you started is running.
 - `app\dist\` is for testing only; full protection applies to the installed copy in Program Files.
 - The optional firewall rules cover `MarkdownViewerWebView2.exe`, not the shared WebView2 engine.
+- Signatures carry no timestamp (builds never go online). The signing certificate is valid until October
+  2036; after that the start-up check refuses the program, so install a build signed with a new
+  certificate before then.
+- Not applicable from the CloClo comparison (this app has no such feature): weather and network requests,
+  clipboard and selection reading, screen-capture exclusion, dictation, colour picker, HTTP limits,
+  notification logos, `.pfx` signing.
