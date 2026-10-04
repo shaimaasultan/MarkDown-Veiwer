@@ -45,6 +45,10 @@ if ($running.Count) {
 
 # Always rebuild so the installed copy matches the current sources.
 & (Join-Path $here 'build.ps1')
+# Record the SHA-256 of every project file; it is installed in Program Files with the program, where only an
+# administrator can change it, and Check-Source.cmd compares the project folder with it later.
+& (Join-Path $here 'check-source.ps1') -Write (Join-Path $dist 'source-manifest.txt')
+if ($LASTEXITCODE -ne 0) { Write-Host 'The project files could not be recorded; nothing was installed.'; exit 1 }
 # An update must be signed by the same certificate as the installed copy. If it is not (e.g. after a new
 # signing certificate was made), you decide: a build you did not make yourself should not be installed.
 $accept = ''
@@ -87,7 +91,8 @@ if ($p.ExitCode -ne 0) {
 }
 # Check, as you, that Program Files now holds exactly what was built.
 $keep = $exeName, "$key.Content.dll", 'MarkdownViewer.ico', 'Microsoft.Web.WebView2.Core.dll',
-        'Microsoft.Web.WebView2.WinForms.dll', 'WebView2Loader.dll', 'uninstall.ps1', 'firewall.ps1', 'trust.ps1'
+        'Microsoft.Web.WebView2.WinForms.dll', 'WebView2Loader.dll', 'uninstall.ps1', 'firewall.ps1', 'trust.ps1',
+        'source-manifest.txt'
 $present = @(Get-ChildItem -LiteralPath $dest -Force | ForEach-Object Name)
 $differs = @($keep | Where-Object {
     $src = if ($_ -like '*.ps1') { Join-Path $here $_ } else { Join-Path $dist $_ }

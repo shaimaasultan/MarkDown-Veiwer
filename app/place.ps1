@@ -32,7 +32,8 @@ function Clear-Dir($path) { if (Test-Path -LiteralPath $path) { Remove-Item -Lit
 try {
     Clear-Dir $stage; Clear-Dir $old
     New-Item -ItemType Directory $stage | Out-Null
-    $copies = @(@($exeName, $contentName, 'MarkdownViewer.ico') + $msFiles | ForEach-Object { Join-Path $Source $_ }) +
+    # source-manifest.txt: the project files' SHA-256 at install time (made by install.ps1, read by Check-Source.cmd).
+    $copies = @(@($exeName, $contentName, 'MarkdownViewer.ico', 'source-manifest.txt') + $msFiles | ForEach-Object { Join-Path $Source $_ }) +
               @($scriptFiles | ForEach-Object { Join-Path $Scripts $_ })
     foreach ($f in $copies) {
         # Plain files only: a link could make this administrator copy read a file the user cannot.

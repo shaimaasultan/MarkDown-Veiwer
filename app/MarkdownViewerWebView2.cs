@@ -35,15 +35,15 @@ using Microsoft.Win32.SafeHandles;
 // The program's own calls into Windows DLLs (user32, kernel32, advapi32, wintrust) load them from System32
 // only, never from the program's folder or anywhere else on the search path.
 [assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
-[assembly: AssemblyVersion("1.8.4.0")]
-[assembly: AssemblyFileVersion("1.8.4.0")]
-[assembly: AssemblyInformationalVersion("1.8.4")]
+[assembly: AssemblyVersion("1.8.5.0")]
+[assembly: AssemblyFileVersion("1.8.5.0")]
+[assembly: AssemblyInformationalVersion("1.8.5")]
 
 static class Program
 {
     const string AppName = "Markdown Viewer (WebView2)";
     const string DataFolder = "MarkdownViewerWebView2";     // %APPDATA% (settings) and %LOCALAPPDATA% (browser data)
-    const string AppVersion = "1.8.4";
+    const string AppVersion = "1.8.5";
     // Exists only inside this program's windows. Not a .local name: Windows would first spend ~2 s
     // looking for a device called "mdviewer" on the local network before the page could load.
     const string PrivateHost = "https://mdviewer.example";
@@ -238,7 +238,8 @@ static class Program
 
     // Only the program's own files may be in its folder. Windows looks there first for many DLLs, and .NET
     // for configuration; an extra file or folder (a planted DLL, a ".local" redirection folder) stops the start.
-    static readonly string[] FolderFiles = { "MarkdownViewer.ico", "uninstall.ps1", "firewall.ps1", "trust.ps1" };
+    // source-manifest.txt: the project files' SHA-256 at install time (a text file, never loaded as code).
+    static readonly string[] FolderFiles = { "MarkdownViewer.ico", "uninstall.ps1", "firewall.ps1", "trust.ps1", "source-manifest.txt" };
 
     static string CheckFolder()
     {

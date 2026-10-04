@@ -64,11 +64,13 @@ and never goes online.
 - **Safe install.** The app is installed in Program Files, where only an administrator can change it. Only the copy itself runs with administrator rights; it trusts nothing it is handed: it works out the folder itself, checks every file in a staging folder only administrators can change, and writes nothing into your folders. All scripts use only Windows PowerShell's own modules and start PowerShell and cmd by full path. See [Install](#install).
 - **Optional firewall rules.** `Firewall-Block.cmd` blocks all traffic in and out of `MarkdownViewerWebView2.exe` (needs administrator rights; the result is shown in its own window); `Firewall-Unblock.cmd` removes the rules. Updates keep the rules on the installed copy.
 
+- **Check the project folder.** Every install records the SHA-256 of every project file (all except `.git\` and `app\dist\`) in Program Files, next to the program, where only an administrator can change the record. `app\Check-Source.cmd` compares the folder with it and lists every file changed, added or removed since the last install - also changes made by another program running as you, which cannot alter the record to hide them. Run it before installing an update you did not expect: changes you made or pulled yourself show up too, so only unexplained ones are a warning.
+
 **What this does not cover.** Windows' administrator prompt is not a security boundary against programs
 already running as you: they could change this repository's scripts or sources before you run
-`Install.cmd`, and Windows would still show its usual prompt. Keep the repository in your own folders, check
-`git status` before installing if in doubt, and confirm a signing request only while a build you started is
-running. A build in `app\dist` is for testing; only the installed copy in Program Files has the full protection.
+`Install.cmd`, and Windows would still show its usual prompt. Keep the repository in your own folders, run
+`Check-Source.cmd` (and `git status`) before installing if in doubt, and confirm a signing request only while
+a build you started is running. A build in `app\dist` is for testing; only the installed copy in Program Files has the full protection.
 
 ## Requirements
 
@@ -160,7 +162,8 @@ way. If you also want Windows (file Properties › Digital Signatures) to show t
 | `app\build.ps1` | Checks, compiles and signs the app into `app\dist\` |
 | `app\install.ps1`, `app\place.ps1` | Install for your account; `place.ps1` is the one administrator step (copy into Program Files) |
 | `app\uninstall.ps1`, `app\firewall.ps1`, `app\trust.ps1` | Uninstall, optional firewall block rules, optional certificate trust (also copied next to the program) |
-| `app\*.cmd` | Double-click launchers: `Install`, `Uninstall`, `Firewall-Block` / `-Unblock`, `Trust-` / `Untrust-Certificate` |
+| `app\check-source.ps1` | Records the project files' SHA-256 at install time and compares the folder with that record later |
+| `app\*.cmd` | Double-click launchers: `Install`, `Uninstall`, `Check-Source`, `Firewall-Block` / `-Unblock`, `Trust-` / `Untrust-Certificate` |
 | `webview2\` | Microsoft WebView2 SDK files needed to build the app, with their license |
 | `docs\` | Promo video and its poster picture |
 
