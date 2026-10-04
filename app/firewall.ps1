@@ -4,7 +4,7 @@
 #   firewall.ps1 -Remove   remove them
 # The app needs no network access, so the rules change nothing in how it works. They do not cover the
 # WebView2 engine (msedgewebview2.exe), which Windows shares with other apps.
-param([switch]$Remove, [string]$Exe, [string]$Log)
+param([switch]$Remove, [string]$Exe)
 # Run with administrator rights, PowerShell would otherwise look for commands such as New-NetFirewallRule
 # in the user's own module folder (Documents) first: a look-alike module there would run as administrator.
 # Only Windows PowerShell's own modules, from its system folder (set before any command is used).
@@ -12,20 +12,21 @@ $env:PSModulePath = "$PSHOME\Modules"
 $ErrorActionPreference = 'Stop'
 $group = 'Markdown Viewer (WebView2)'
 if (-not $Exe) {
-    # The installed program: in Program Files (Install-ProgramFiles.cmd) or for this user only.
-    $Exe = Join-Path $env:ProgramFiles 'MarkdownViewerWebView2\MarkdownViewerWebView2.exe'
+    # The installed program in Program Files (as Windows records it, not the ProgramFiles environment variable),
+    # or for this user only (earlier versions).
+    $Exe = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'MarkdownViewerWebView2\MarkdownViewerWebView2.exe'
     if (-not (Test-Path $Exe)) { $Exe = Join-Path $env:LOCALAPPDATA 'Programs\MarkdownViewerWebView2\MarkdownViewerWebView2.exe' }
 }
-if (-not $Log) { $Log = Join-Path $env:TEMP 'MarkdownViewerWebView2-firewall.log' }
 
-function Say($text) { Write-Host $text; Add-Content -Path $Log -Value $text -Encoding UTF8 }
+# Results are shown in the administrator window itself: no log file, so no file in the user's folders can be
+# made to point this administrator step at a system file.
+function Say($text) { Write-Host $text }
 
 $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $admin) {
-    # Run again with administrator rights. The program path and log file are passed on, so they stay
-    # this user's even if Windows asks for a different administrator account.
-    Set-Content -Path $Log -Value "$(Get-Date -Format s)  $(if ($Remove) { 'remove' } else { 'add' }) block rules" -Encoding UTF8
-    $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-Exe', "`"$Exe`"", '-Log', "`"$Log`"")
+    # Run again with administrator rights. The program path is passed on, so it stays this user's even if
+    # Windows asks for a different administrator account. (The rules only ever block that program.)
+    $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-Exe', "`"$Exe`"")
     if ($Remove) { $argList += '-Remove' }
     # Windows PowerShell by its full path, not whichever powershell.exe comes first on PATH.
     $psExe = Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'

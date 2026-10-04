@@ -1,4 +1,6 @@
-# Removes Markdown Viewer (WebView2) for the current user and restores the previous .md defaults.
+# Removes Markdown Viewer (WebView2): the Program Files copy (one UAC prompt to delete its folder), any
+# per-user copy from earlier versions, and this account's entries; restores the previous .md defaults.
+# The signing certificate stays in your certificate store (later builds reuse it).
 # Only Windows PowerShell's own modules, from its system folder: a look-alike command in the user's module
 # folder (Documents) could otherwise change what the UAC prompts below start.
 $env:PSModulePath = "$PSHOME\Modules"
@@ -6,10 +8,12 @@ $ErrorActionPreference = 'Continue'
 $name = 'Markdown Viewer (WebView2)'
 $key = 'MarkdownViewerWebView2'
 $progId = "$key.md"
-$userDest = Join-Path $env:LOCALAPPDATA "Programs\$key"
-$machineDest = Join-Path $env:ProgramFiles $key
-$machine = Test-Path (Join-Path $machineDest "$key.exe")
-$dest = if ($machine) { $machineDest } else { $userDest }
+$userDest = Join-Path $env:LOCALAPPDATA "Programs\$key"     # where earlier versions installed it
+# Program Files as Windows records it, not the ProgramFiles environment variable (which can be set per user):
+# its folder is deleted with administrator rights below.
+$machineDest = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) $key
+$machine = Test-Path $machineDest
+$dest = if (Test-Path (Join-Path $machineDest "$key.exe")) { $machineDest } else { $userDest }
 $backupKey = "HKCU:\Software\$key"
 $classes = 'HKCU:\Software\Classes'
 

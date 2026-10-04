@@ -1,10 +1,9 @@
-# Installs Markdown Viewer (WebView2) for the current user:
-#   the program in %LOCALAPPDATA%\Programs\MarkdownViewerWebView2 (no admin rights needed), or with
-#   -ProgramFiles in C:\Program Files\MarkdownViewerWebView2 (one UAC prompt, for the copy only: other
-#   programs running as you can then no longer change the program's files);
-#   Start menu entries, Settings > Apps entry and the .md / .markdown / .mdown / .mkd file association.
-# Once installed in Program Files, later runs (Install.cmd too) update it there.
-param([switch]$ProgramFiles)
+# Installs Markdown Viewer (WebView2):
+#   builds and signs it as you, then copies the program to C:\Program Files\MarkdownViewerWebView2 - the only
+#   step that runs with administrator rights (one UAC prompt). There, no program running as you can change
+#   the program's files or put a DLL next to them.
+#   Start menu entries, Settings > Apps entry and the .md / .markdown / .mdown / .mkd file association are
+#   made for your own account. A copy from earlier versions in %LOCALAPPDATA%\Programs is removed.
 # Only Windows PowerShell's own modules, from its system folder: a look-alike command in the user's module
 # folder (Documents) could otherwise run in place of Start-Process and change what the UAC prompt starts.
 $env:PSModulePath = "$PSHOME\Modules"
@@ -15,10 +14,9 @@ $key = 'MarkdownViewerWebView2'
 $exeName = "$key.exe"
 $progId = "$key.md"
 $dist = Join-Path $here 'dist'
-$userDest = Join-Path $env:LOCALAPPDATA "Programs\$key"
-$machineDest = Join-Path $env:ProgramFiles $key
-$machine = $ProgramFiles -or (Test-Path (Join-Path $machineDest $exeName))
-$dest = if ($machine) { $machineDest } else { $userDest }
+$userDest = Join-Path $env:LOCALAPPDATA "Programs\$key"     # where earlier versions installed it
+# Program Files as Windows records it (not the ProgramFiles environment variable, which can be set per user).
+$dest = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) $key
 $exe = Join-Path $dest $exeName
 $backupKey = "HKCU:\Software\$key"
 $exts = '.md', '.markdown', '.mdown', '.mkd'
@@ -26,13 +24,14 @@ $exts = '.md', '.markdown', '.mdown', '.mkd'
 $mediaExts = '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.bmp', '.svg', '.mp4', '.webm', '.mp3', '.wav', '.ogg'
 $mediaProgId = "$key.media"
 
-# No administrator rights: run as administrator, the install could land in another account's profile and
-# the viewer would refuse to start elevated anyway. (With User Account Control off there is no other way.)
+# Started normally, not as administrator: run as administrator, the build would sign with another account's
+# certificate and the registrations could land in another account's profile. Only the copy to Program Files
+# asks for administrator rights. (With User Account Control off there is no other way.)
 $elevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 $uac = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -ErrorAction SilentlyContinue).EnableLUA -ne 0
 if ($elevated -and $uac) {
-    Write-Host "Install.cmd does not need administrator rights. Run it normally (double-click it, not 'Run as administrator')"
-    Write-Host "so that $name is installed for your own account."
+    Write-Host "Run Install.cmd normally (double-click it, not 'Run as administrator')."
+    Write-Host 'Windows asks for administrator rights only for copying the program to Program Files.'
     exit 1
 }
 
@@ -64,31 +63,42 @@ if ($installedExe) {
     }
 }
 
-# Copy the program (place.ps1 also removes anything in its folder that isn't part of it).
-if ($machine) {
-    # Only this step runs with administrator rights. Its output goes to a log file shown here.
-    $log = Join-Path $env:TEMP "$key-place.log"
-    Set-Content -Path $log -Value '' -Encoding UTF8
-    Write-Host "Copying the program to $dest (Windows asks for administrator rights)..."
-    $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$(Join-Path $here 'place.ps1')`"",
-                 '-Source', "`"$dist`"", '-Scripts', "`"$here`"", '-Dest', "`"$dest`"", '-Log', "`"$log`"")
-    if ($accept) { $argList += '-AcceptThumbprint', $accept }
-    # Windows PowerShell by its full path (not whichever powershell.exe comes first on PATH); place.ps1
-    # itself only uses Windows PowerShell's own modules.
-    $psExe = Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
-    try { $p = Start-Process $psExe -Verb RunAs -ArgumentList $argList -WindowStyle Hidden -PassThru -Wait }
-    catch { Write-Host 'Administrator rights were not granted; nothing was installed.'; exit 1 }
-    Get-Content $log | Where-Object { $_ } | ForEach-Object { Write-Host $_ }
-    Remove-Item $log -ErrorAction SilentlyContinue
-    if ($p.ExitCode -ne 0) { Write-Host 'The program could not be copied; nothing else was changed.'; exit 1 }
-    # The earlier per-user copy is no longer used.
-    if (Test-Path (Join-Path $userDest $exeName)) {
-        Remove-Item -LiteralPath $userDest -Recurse -Force
-        Write-Host "Removed the earlier copy in $userDest"
+# Copy the program with place.ps1 - the only step that runs with administrator rights. It copies into a
+# staging folder in Program Files, checks the files there and then swaps the folders (see place.ps1).
+Write-Host "Copying the program to $dest (Windows asks for administrator rights)..."
+$argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$(Join-Path $here 'place.ps1')`"",
+             '-Source', "`"$dist`"", '-Scripts', "`"$here`"")
+if ($accept) { $argList += '-AcceptThumbprint', $accept }
+# Windows PowerShell by its full path (not whichever powershell.exe comes first on PATH); place.ps1
+# itself only uses Windows PowerShell's own modules.
+$psExe = Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
+try { $p = Start-Process $psExe -Verb RunAs -ArgumentList $argList -WindowStyle Hidden -PassThru -Wait }
+catch { Write-Host 'Administrator rights were not granted; nothing was installed.'; exit 1 }
+if ($p.ExitCode -ne 0) {
+    $why = switch ($p.ExitCode) {
+        2 { 'the program or its Content DLL is not signed, or was changed after it was signed' }
+        3 { 'the new build is signed by a different certificate than the installed copy' }
+        4 { 'a WebView2 file does not carry a valid Microsoft signature' }
+        5 { 'a file in app\dist is a link, not a plain file' }
+        default { 'the files could not be copied (is the viewer open in another account?)' }
     }
-} else {
-    & (Join-Path $here 'place.ps1') -Source $dist -Scripts $here -Dest $dest -AcceptThumbprint $accept
-    if ($LASTEXITCODE -ne 0) { exit 1 }
+    Write-Host "Not installed: $why. The installed copy was left as it was."
+    exit 1
+}
+# Check, as you, that Program Files now holds exactly what was built.
+$keep = $exeName, "$key.Content.dll", 'MarkdownViewer.ico', 'Microsoft.Web.WebView2.Core.dll',
+        'Microsoft.Web.WebView2.WinForms.dll', 'WebView2Loader.dll', 'uninstall.ps1', 'firewall.ps1', 'trust.ps1'
+$present = @(Get-ChildItem -LiteralPath $dest -Force | ForEach-Object Name)
+$differs = @($keep | Where-Object {
+    $src = if ($_ -like '*.ps1') { Join-Path $here $_ } else { Join-Path $dist $_ }
+    -not (Test-Path (Join-Path $dest $_)) -or (Get-FileHash (Join-Path $dest $_)).Hash -ne (Get-FileHash $src).Hash
+}) + @($present | Where-Object { $keep -notcontains $_ })
+if ($differs.Count) { Write-Host "WARNING: in $dest these do not match what was built: $($differs -join ', ')" -ForegroundColor Yellow }
+else { Write-Host "Copied to $dest and checked: exactly the files that were built." }
+# A copy from earlier versions is no longer used.
+if (Test-Path (Join-Path $userDest $exeName)) {
+    Remove-Item -LiteralPath $userDest -Recurse -Force
+    Write-Host "Removed the earlier copy in $userDest"
 }
 
 # Create a registry key only if it's missing. (New-Item -Force would recreate an existing key and
@@ -178,7 +188,21 @@ Set-ItemProperty $un -Name 'InstallLocation' -Value $dest
 Set-ItemProperty $un -Name 'EstimatedSize' -Value $sizeKB -Type DWord
 Set-ItemProperty $un -Name 'NoModify' -Value 1 -Type DWord
 Set-ItemProperty $un -Name 'NoRepair' -Value 1 -Type DWord
-Set-ItemProperty $un -Name 'UninstallString' -Value "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$dest\uninstall.ps1`""
+# PowerShell by its full path: Settings would otherwise look "powershell.exe" up (App Paths, PATH).
+$psExe = Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
+Set-ItemProperty $un -Name 'UninstallString' -Value "`"$psExe`" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$dest\uninstall.ps1`""
+
+# Read the entries back: Windows must now start this copy. (Something else holding on to the old values,
+# e.g. a security tool undoing changes to file types, would otherwise go unnoticed.)
+$stale = @(foreach ($k in "$classes\$progId\shell\open\command", "$appKey\shell\open\command", "$classes\$mediaProgId\shell\open\command") {
+    $v = (Get-ItemProperty $k -ErrorAction SilentlyContinue).'(default)'
+    if ($v -ne $command) { "  $k = $v" }
+})
+if ((Get-ItemProperty $un -ErrorAction SilentlyContinue).DisplayVersion -ne $version) { $stale += "  $un (version)" }
+if ($stale.Count) {
+    Write-Host 'WARNING: these entries did not take the new values, so Windows may still start another copy:' -ForegroundColor Yellow
+    $stale | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
+}
 
 # Tell Explorer that file associations changed.
 Add-Type -Namespace Win32 -Name Shell -MemberDefinition '[DllImport("shell32.dll")] public static extern void SHChangeNotify(int eventId, int flags, IntPtr item1, IntPtr item2);' -ErrorAction SilentlyContinue
@@ -199,11 +223,6 @@ if ($userChoice) {
 }
 if (Get-NetFirewallRule -Group $name -ErrorAction SilentlyContinue) { Write-Host 'Firewall: the block rules for this app are in place.' }
 else { Write-Host 'Optional: run Firewall-Block.cmd (as administrator) to block all network traffic of the program.' }
-if (-not $machine) {
-    Write-Host "Note: this per-user folder can be changed by any program running as you, and .NET loads a few Windows DLLs"
-    Write-Host "(cryptbase, cryptsp, profapi) from the program's folder before the app's own checks can run."
-    Write-Host 'For full protection, run Install-ProgramFiles.cmd instead (one administrator prompt).'
-}
 $sig = Get-AuthenticodeSignature $exe
 Write-Host "Signed by $($sig.SignerCertificate.Subject) ($($sig.SignerCertificate.Thumbprint))."
 if ($sig.Status -ne 'Valid') { Write-Host 'Optional: run Trust-Certificate.cmd so Windows also shows this signature as valid.' }

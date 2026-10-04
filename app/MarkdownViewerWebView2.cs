@@ -25,6 +25,7 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
+using Microsoft.Win32;
 using Microsoft.Win32.SafeHandles;
 
 [assembly: AssemblyTitle("Markdown Viewer (WebView2, preview only)")]
@@ -34,15 +35,15 @@ using Microsoft.Win32.SafeHandles;
 // The program's own calls into Windows DLLs (user32, kernel32, advapi32, wintrust) load them from System32
 // only, never from the program's folder or anywhere else on the search path.
 [assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
-[assembly: AssemblyVersion("1.8.3.0")]
-[assembly: AssemblyFileVersion("1.8.3.0")]
-[assembly: AssemblyInformationalVersion("1.8.3")]
+[assembly: AssemblyVersion("1.8.4.0")]
+[assembly: AssemblyFileVersion("1.8.4.0")]
+[assembly: AssemblyInformationalVersion("1.8.4")]
 
 static class Program
 {
     const string AppName = "Markdown Viewer (WebView2)";
     const string DataFolder = "MarkdownViewerWebView2";     // %APPDATA% (settings) and %LOCALAPPDATA% (browser data)
-    const string AppVersion = "1.8.3";
+    const string AppVersion = "1.8.4";
     // Exists only inside this program's windows. Not a .local name: Windows would first spend ~2 s
     // looking for a device called "mdviewer" on the local network before the page could load.
     const string PrivateHost = "https://mdviewer.example";
@@ -91,6 +92,7 @@ static class Program
                 MessageBox.Show(problem, AppName, MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return 1;
             }
+            try { RepairRegistrations(Application.ExecutablePath); } catch { }
             return Run(args);
         }
         catch (Exception ex)
@@ -380,6 +382,61 @@ static class Program
         return s;
     }
 
+    // ------------------------------------------------------------------ Windows registrations
+
+    // The entries the installer made (Open for .md files, "Open with", pictures/video/audio). An entry that
+    // points to a deleted copy is a risk: any program running as you could put its own program there, and
+    // opening a .md file would start it. An installed copy corrects such entries at start; the Program Files
+    // copy also corrects entries pointing to any other copy. Development builds and copies run from other
+    // folders never touch them, and entries that are not there (e.g. after uninstalling) are not added.
+    static readonly string[] RegistrationKeys =
+    {
+        @"Software\Classes\" + DataFolder + ".md",
+        @"Software\Classes\" + DataFolder + ".media",
+        @"Software\Classes\Applications\" + DataFolder + ".exe"
+    };
+
+    static void RepairRegistrations(string self)
+    {
+        string dir = Path.GetDirectoryName(self);
+        string programFiles = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), DataFolder);
+        string perUser = Path.Combine(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs"), DataFolder);
+        bool inProgramFiles = SamePath(dir, programFiles);
+        if (!inProgramFiles && !SamePath(dir, perUser)) return;
+        foreach (string key in RegistrationKeys)
+            using (RegistryKey command = Registry.CurrentUser.OpenSubKey(key + @"\shell\open\command", true))
+            {
+                if (command == null) continue;
+                if (!NeedsRepair(CommandExe(command.GetValue("") as string), self, inProgramFiles, File.Exists)) continue;
+                command.SetValue("", "\"" + self + "\" \"%1\"");
+                using (RegistryKey icon = Registry.CurrentUser.CreateSubKey(key + @"\DefaultIcon"))
+                    icon.SetValue("", "\"" + self + "\",0");
+            }
+    }
+
+    // Whether an entry that starts `registered` must be pointed at this copy (`self`) instead.
+    static bool NeedsRepair(string registered, string self, bool selfInProgramFiles, Func<string, bool> exists)
+    {
+        if (string.IsNullOrEmpty(registered)) return true;                     // no program in the entry
+        if (SamePath(registered, self)) return false;                          // already this copy
+        if (!exists(registered)) return true;                                  // a deleted copy
+        return selfInProgramFiles;                                             // the Program Files copy wins
+    }
+
+    // The program an Open command starts: "C:\path\app.exe" "%1"  ->  C:\path\app.exe
+    static string CommandExe(string command)
+    {
+        if (string.IsNullOrEmpty(command)) return null;
+        Match m = Regex.Match(command, @"^\s*(?:""([^""]+)""|(\S+))");
+        return m.Success ? (m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value) : null;
+    }
+
+    static bool SamePath(string a, string b)
+    {
+        try { return string.Equals(Path.GetFullPath(a).TrimEnd('\\'), Path.GetFullPath(b).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase); }
+        catch { return false; }
+    }
+
     // ------------------------------------------------------------------ page files (signed Content DLL)
 
     static Assembly content;
@@ -545,7 +602,7 @@ static class Program
         WebView2Versions(out wvRuntime, out wvSdk);
         sb.AppendLine("- Window: own window with the WebView2 control - WebView2 Runtime " + (wvRuntime ?? "(not found)") +
                       ", WebView2 SDK " + (wvSdk ?? "?") + " (Microsoft.Web.WebView2)");
-        sb.AppendLine("- Installer: PowerShell scripts (build, install, uninstall); per-user file association, no admin rights");
+        sb.AppendLine("- Installer: PowerShell scripts (build, install, uninstall); installed in Program Files (one administrator prompt, for the copy only), file association for your account");
         sb.AppendLine("- Viewer: HTML, CSS and JavaScript, no frameworks");
         sb.AppendLine("- Created by: Shaimaa Soltan");
         sb.AppendLine("- Made using: GPT-5 (original viewer); extended and tested with Claude Code (Anthropic)");

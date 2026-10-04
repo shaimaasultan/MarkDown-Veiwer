@@ -52,43 +52,57 @@ and never goes online.
 - **Blocked-code alert.** When a file contains code (scripts, event handlers, code links), a popup says so when it opens: nothing ran, and it is a file to be careful with elsewhere. If the window's security policy ever has to stop code itself, that is shown too.
 - **No copy-paste traps.** Text inside code examples cannot be hidden or restyled, so what you copy is what you see.
 - **Signed, no loose script files.** The page and every library are packed into `MarkdownViewerWebView2.Content.dll`. It and the program are signed with the same Authenticode certificate. At every start the program checks both signatures, plus Microsoft's signature on the WebView2 files, without going online, before any of them is loaded. The WebView2 files must also be exactly the ones the program was built with (their SHA-256 is part of the signed program), so an older or different Microsoft file is refused as well. If any of these files is changed, swapped or missing, the app does not start. See [Signing](#signing).
-- **Nothing extra in the program's folder.** Windows looks in a program's folder first for many DLLs, and .NET for its configuration. Anything there that isn't part of the app (a planted DLL, a `.config`, `.manifest` or `.local` file or folder) stops the start; reinstalling removes it. Installed in Program Files (`Install-ProgramFiles.cmd`), the folder cannot be changed without administrator rights at all - the only full protection, because .NET itself loads a few Windows DLLs (`cryptbase`, `cryptsp`, `profapi`) from a program's folder before the program's first line runs.
+- **Nothing extra in the program's folder.** Windows looks in a program's folder first for many DLLs, and .NET for its configuration. Anything there that isn't part of the app (a planted DLL, a `.config`, `.manifest` or `.local` file or folder) stops the start; reinstalling removes it. The app is installed in Program Files, so the folder cannot be changed without administrator rights at all - the only full protection, because .NET itself loads a few Windows DLLs (`cryptbase`, `cryptsp`, `profapi`) from a program's folder before the program's first line runs.
 - **Checked files stay locked.** From the check until the app closes, the program, the Content DLL and the WebView2 files cannot be changed, replaced, renamed or deleted, and neither can their folder, so what was checked is what gets loaded.
 - **Safe DLL loading.** The app turns on Windows' image-load protections at start: system DLLs come from System32 before any copy elsewhere, and never from a network share, a file written by a sandboxed process, the current folder or PATH. The program's own calls into Windows DLLs load them from System32 only.
 - **Fresh browser data.** The WebView2 engine starts with a new, empty data folder at every start; folders of ended runs are deleted. Nothing left in that folder by an earlier run or another program is read.
 - **No startup hooks.** If environment variables would make .NET load a profiler or an AppDomain manager into the app (`COR_ENABLE_PROFILING`, `COR_PROFILER*`, `APPDOMAIN_MANAGER_*`), it refuses to start. `DOTNET_STARTUP_HOOKS` belongs to .NET Core and is never read by this .NET Framework app.
-- **Never as administrator by accident.** Opened with administrator rights (for example from an administrator prompt) while a normal start is possible, the app refuses and asks you to open the file normally. `Install.cmd` refuses to run as administrator too, so the app is always installed for your own account.
+- **Never as administrator by accident.** Opened with administrator rights (for example from an administrator prompt) while a normal start is possible, the app refuses and asks you to open the file normally. `Install.cmd` refuses to be started as administrator too: it builds, signs and registers the app as you, and asks for administrator rights only for the copy into Program Files.
+- **Windows entries stay pointed at the installed copy.** At start, an installed copy corrects the entries that open `.md` files, pictures and media when they point to a deleted copy (a place any program running as you could fill with its own program); the Program Files copy also corrects them when they point to any other copy. Development builds and copies run from other folders never touch them, and the installer reads them back and warns if a change did not stick.
 - **Genuine engine.** After the WebView2 engine starts, the app checks that it is Microsoft's `msedgewebview2.exe`, signed and under Program Files (which only an administrator can change); otherwise no document is shown.
 - **No developer access.** Developer tools are off; the app refuses to show documents if WebView2 remote debugging has been switched on, or if it cannot check.
-- **Optional firewall rules.** `Firewall-Block.cmd` blocks all traffic in and out of `MarkdownViewerWebView2.exe` (needs administrator rights); `Firewall-Unblock.cmd` removes the rules.
+- **Safe install.** The app is installed in Program Files, where only an administrator can change it. Only the copy itself runs with administrator rights; it trusts nothing it is handed: it works out the folder itself, checks every file in a staging folder only administrators can change, and writes nothing into your folders. All scripts use only Windows PowerShell's own modules and start PowerShell and cmd by full path. See [Install](#install).
+- **Optional firewall rules.** `Firewall-Block.cmd` blocks all traffic in and out of `MarkdownViewerWebView2.exe` (needs administrator rights; the result is shown in its own window); `Firewall-Unblock.cmd` removes the rules. Updates keep the rules on the installed copy.
+
+**What this does not cover.** Windows' administrator prompt is not a security boundary against programs
+already running as you: they could change this repository's scripts or sources before you run
+`Install.cmd`, and Windows would still show its usual prompt. Keep the repository in your own folders, check
+`git status` before installing if in doubt, and confirm a signing request only while a build you started is
+running. A build in `app\dist` is for testing; only the installed copy in Program Files has the full protection.
 
 ## Requirements
 
 - Windows 10 or 11 (64-bit)
 - Microsoft Edge WebView2 Runtime — included with Windows 11
 - .NET Framework 4.x — included with Windows; its C# compiler builds the app, nothing else to install
+- Administrator rights once per install or update (for the copy into Program Files); on a standard account,
+  Windows asks for an administrator's password
 
 ## Install
 
 1. Download or clone this repository.
-2. Run `app\Install.cmd` (or `app\Install-ProgramFiles.cmd`, see below). It builds the app and installs it for the current user (no administrator rights) to
-   `%LOCALAPPDATA%\Programs\MarkdownViewerWebView2`, with Start menu entries, a Settings › Apps entry and the
-   `.md` / `.markdown` / `.mdown` / `.mkd` file association.
+2. Run `app\Install.cmd` (double-click it; not "Run as administrator"). It builds and signs the app as you,
+   then asks once for administrator rights to copy it to `C:\Program Files\MarkdownViewerWebView2`, where only
+   an administrator can change the program's files: no program running as you can replace them or put a DLL
+   or `.config` file next to them. Start menu entries, a Settings › Apps entry and the `.md` / `.markdown` /
+   `.mdown` / `.mkd` file association are made for your own account.
 3. If Windows asks which app to use the next time you open a `.md` file, pick **Markdown Viewer (WebView2)** and click **Always**.
 
-**Install in Program Files (recommended for security).** Run `app\Install-ProgramFiles.cmd` instead. It builds
-and signs the app as you, then asks once for administrator rights to copy it to
-`C:\Program Files\MarkdownViewerWebView2`, where only an administrator can change the program's files: no
-program running as you can replace them or put a DLL or `.config` file next to them. Everything else
-(file types, Start menu, Settings › Apps) stays in your own account, and an earlier per-user copy is removed.
-Existing firewall block rules are moved to the new location. The installer, uninstaller and firewall
-scripts use only Windows PowerShell's own modules (never look-alikes from your Documents module folder) and
-start PowerShell and cmd by their full paths, so nothing planted in your account runs with the
-administrator rights you grant. From then on `Install.cmd` updates the
-Program Files copy (one UAC prompt each time).
+Run `Install.cmd` again to update (one administrator prompt each time). A copy that earlier versions installed
+in `%LOCALAPPDATA%\Programs\MarkdownViewerWebView2` is removed, and existing firewall block rules are moved to
+the Program Files copy. The installer, uninstaller and firewall scripts use only Windows PowerShell's own
+modules (never look-alikes from your Documents module folder) and start PowerShell and cmd by their full
+paths, so nothing planted in your account runs with the administrator rights you grant. The administrator
+step works out the Program Files folder itself (not from an environment variable), copies into a staging
+folder there that only administrators can change, checks the signatures in that folder and only then swaps it
+in - a copy in use is never left half replaced - and writes no log files into your folders. Afterwards the
+installer checks, as you, that Program Files holds exactly the files that were built.
 
-To remove it: Settings › Apps › Markdown Viewer (WebView2) › Uninstall, or run `app\Uninstall.cmd` (a Program
-Files copy asks once for administrator rights to delete its folder).
+To remove it: Settings › Apps › Markdown Viewer (WebView2) › Uninstall, or run `app\Uninstall.cmd`. It removes
+the Program Files copy (one administrator prompt) and any per-user copy from earlier versions, the file-type
+entries (your previous `.md` default comes back), shortcuts, saved settings and browser data, the firewall
+block rules (a second administrator prompt, only if you added them) and the certificate trust (if you added
+it). The signing certificate stays in your certificate store for later builds.
 
 ## Build only
 
@@ -96,9 +110,11 @@ Files copy asks once for administrator rights to delete its folder).
 powershell -NoProfile -ExecutionPolicy Bypass -File app\build.ps1
 ```
 
-Output goes to `app\dist\`. The build checks that the bundled libraries match the versions listed in
-`viewer.js` and that the page loads nothing from the internet. It then packs the page and libraries into
-`MarkdownViewerWebView2.Content.dll` and signs the program and that DLL.
+Output goes to `app\dist\` (for testing; it is not installed). The build checks the compiler's and the
+WebView2 files' Microsoft signatures and the WebView2 files' exact SHA-256, that the bundled libraries match
+the versions listed in `viewer.js` and that the page loads nothing from the internet. It then packs the page
+and libraries into `MarkdownViewerWebView2.Content.dll` and signs the program and that DLL (Windows asks you
+to confirm the signing).
 
 ## Signing
 
@@ -108,8 +124,14 @@ The first build creates a code-signing certificate on your PC named
 "Markdown Viewer (WebView2) Code Signing". It is stored in your personal certificate store, its private
 key cannot be exported, and the key is **protected**: Windows asks you to confirm every time something signs
 with it, so no other program running as you can quietly sign a changed program or Content DLL. Later builds
-reuse it (one confirmation per build). Certificates from earlier versions had no such protection; the build
+reuse it (you confirm when a build signs). Certificates from earlier versions had no such protection; the build
 no longer uses them, and you can delete them in certmgr.msc › Personal › Certificates.
+
+**Only fresh, untouched files are signed.** The build signs just the program and Content DLL it has compiled
+moments before. The WebView2 files are never signed by the build: they must carry Microsoft's valid signature
+and match the SHA-256 recorded in `build.ps1`, otherwise the build stops before anything is compiled or
+signed. The compiler, PowerShell and its modules are used from Windows' own folders by full path, never
+looked up on PATH or in your Documents module folder.
 
 **Updates keep the certificate.** The installer only replaces an installed copy with a build signed by the
 same certificate. When the certificate has changed (for example right after the protected one was made),
@@ -135,7 +157,10 @@ way. If you also want Windows (file Properties › Digital Signatures) to show t
 | `src\marked.min.js`, `src\lib\` | Bundled libraries (marked, KaTeX, highlight.js, Mermaid) |
 | `app\MarkdownViewerWebView2.cs` | The Windows app (C# 5, Windows Forms + WebView2) |
 | `app\Content.cs` | Resource-only `MarkdownViewerWebView2.Content.dll` that carries the page and the libraries |
-| `app\*.ps1`, `app\*.cmd` | Build, install, uninstall and firewall scripts |
+| `app\build.ps1` | Checks, compiles and signs the app into `app\dist\` |
+| `app\install.ps1`, `app\place.ps1` | Install for your account; `place.ps1` is the one administrator step (copy into Program Files) |
+| `app\uninstall.ps1`, `app\firewall.ps1`, `app\trust.ps1` | Uninstall, optional firewall block rules, optional certificate trust (also copied next to the program) |
+| `app\*.cmd` | Double-click launchers: `Install`, `Uninstall`, `Firewall-Block` / `-Unblock`, `Trust-` / `Untrust-Certificate` |
 | `webview2\` | Microsoft WebView2 SDK files needed to build the app, with their license |
 | `docs\` | Promo video and its poster picture |
 
