@@ -4,7 +4,8 @@
 #                  WebView2 SDK files it needs.
 #   -CertificateThumbprint <thumbprint>  sign with that code-signing certificate from Cert:\CurrentUser\My
 #                  (e.g. one bought from a certificate authority). Without it, the build uses - or creates
-#                  once - a certificate on this PC named "Markdown Viewer (WebView2) Code Signing".
+#                  once - a certificate on this PC named "Markdown Viewer (WebView2) Code Signing", whose key
+#                  is protected: Windows asks you to confirm each time it signs.
 param([string]$CertificateThumbprint)
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
@@ -128,13 +129,28 @@ if ($CertificateThumbprint) {
     $cert = Get-Item "Cert:\CurrentUser\My\$CertificateThumbprint" -ErrorAction SilentlyContinue
     if (-not $cert) { throw "Certificate $CertificateThumbprint not found in Cert:\CurrentUser\My." }
 } else {
+    # Only a certificate whose private key is protected: Windows asks you before anything signs with it,
+    # so no other program running as you can quietly sign a changed program or Content DLL with it.
+    function Test-Protected($c) {
+        try { [Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c).Key.UIPolicy.ProtectionLevel -ne 'None' }
+        catch { $false }
+    }
     $cert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert | Where-Object { $_.Subject -eq $certSubject -and $_.NotAfter -gt (Get-Date).AddDays(30) } |
-            Sort-Object NotAfter -Descending | Select-Object -First 1
+            Where-Object { Test-Protected $_ } | Sort-Object NotAfter -Descending | Select-Object -First 1
     if (-not $cert) {
-        # Private key stays on this PC and cannot be exported.
+        Write-Host "Creating a protected code-signing certificate '$certSubject'. Windows will ask you to confirm;"
+        Write-Host 'from now on it asks each time a build signs with it (that is the protection).'
+        # Private key stays on this PC, cannot be exported, and is used only after you confirm.
         $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject $certSubject -CertStoreLocation Cert:\CurrentUser\My `
-                    -KeyAlgorithm RSA -KeyLength 3072 -HashAlgorithm SHA256 -KeyExportPolicy NonExportable -NotAfter (Get-Date).AddYears(10)
+                    -KeyAlgorithm RSA -KeyLength 3072 -HashAlgorithm SHA256 -KeyExportPolicy NonExportable `
+                    -KeyProtection Protect -NotAfter (Get-Date).AddYears(10)
+        if (-not (Test-Protected $cert)) { throw "The new certificate $($cert.Thumbprint) did not get a protected key." }
         Write-Host "Created the code-signing certificate '$certSubject' ($($cert.Thumbprint)) in your personal certificate store."
+        $old = @(Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Subject -eq $certSubject -and $_.Thumbprint -ne $cert.Thumbprint })
+        if ($old.Count) {
+            Write-Host "Earlier certificate(s) with unprotected keys, no longer used: $($old.Thumbprint -join ', ')"
+            Write-Host 'You can delete them in certmgr.msc > Personal > Certificates.'
+        }
     }
 }
 if (-not $cert.HasPrivateKey) { throw "Certificate $($cert.Thumbprint) has no private key on this PC; it cannot sign." }

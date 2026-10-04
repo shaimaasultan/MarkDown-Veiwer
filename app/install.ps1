@@ -46,6 +46,24 @@ if ($running.Count) {
 
 # Always rebuild so the installed copy matches the current sources.
 & (Join-Path $here 'build.ps1')
+# An update must be signed by the same certificate as the installed copy. If it is not (e.g. after a new
+# signing certificate was made), you decide: a build you did not make yourself should not be installed.
+$accept = ''
+$newThumb = (Get-AuthenticodeSignature (Join-Path $dist $exeName)).SignerCertificate.Thumbprint
+$installedExe = @((Join-Path $dest $exeName), (Join-Path $userDest $exeName)) | Where-Object { Test-Path $_ } | Select-Object -First 1
+if ($installedExe) {
+    $oldThumb = (Get-AuthenticodeSignature $installedExe).SignerCertificate.Thumbprint
+    if ($oldThumb -and $newThumb -and $oldThumb -ne $newThumb) {
+        Write-Host ''
+        Write-Host "The new build is signed by a different certificate than the installed copy:"
+        Write-Host "  installed: $oldThumb"
+        Write-Host "  new build: $newThumb"
+        Write-Host 'That is expected only right after a new signing certificate was made on this PC.'
+        if ((Read-Host 'Install the new build? [Y/N]').Trim() -notmatch '^(y|yes)$') { Write-Host 'Nothing was changed.'; exit 1 }
+        $accept = $newThumb
+    }
+}
+
 # Copy the program (place.ps1 also removes anything in its folder that isn't part of it).
 if ($machine) {
     # Only this step runs with administrator rights. Its output goes to a log file shown here.
@@ -54,6 +72,7 @@ if ($machine) {
     Write-Host "Copying the program to $dest (Windows asks for administrator rights)..."
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$(Join-Path $here 'place.ps1')`"",
                  '-Source', "`"$dist`"", '-Scripts', "`"$here`"", '-Dest', "`"$dest`"", '-Log', "`"$log`"")
+    if ($accept) { $argList += '-AcceptThumbprint', $accept }
     # Windows PowerShell by its full path (not whichever powershell.exe comes first on PATH); place.ps1
     # itself only uses Windows PowerShell's own modules.
     $psExe = Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
@@ -68,7 +87,7 @@ if ($machine) {
         Write-Host "Removed the earlier copy in $userDest"
     }
 } else {
-    & (Join-Path $here 'place.ps1') -Source $dist -Scripts $here -Dest $dest
+    & (Join-Path $here 'place.ps1') -Source $dist -Scripts $here -Dest $dest -AcceptThumbprint $accept
     if ($LASTEXITCODE -ne 0) { exit 1 }
 }
 
@@ -180,6 +199,11 @@ if ($userChoice) {
 }
 if (Get-NetFirewallRule -Group $name -ErrorAction SilentlyContinue) { Write-Host 'Firewall: the block rules for this app are in place.' }
 else { Write-Host 'Optional: run Firewall-Block.cmd (as administrator) to block all network traffic of the program.' }
+if (-not $machine) {
+    Write-Host "Note: this per-user folder can be changed by any program running as you, and .NET loads a few Windows DLLs"
+    Write-Host "(cryptbase, cryptsp, profapi) from the program's folder before the app's own checks can run."
+    Write-Host 'For full protection, run Install-ProgramFiles.cmd instead (one administrator prompt).'
+}
 $sig = Get-AuthenticodeSignature $exe
 Write-Host "Signed by $($sig.SignerCertificate.Subject) ($($sig.SignerCertificate.Thumbprint))."
-if ($sig.Status -ne 'Valid') { Write-Host 'Optional: run Trust-Certificate.cmd so Windows also lists this certificate as a trusted publisher.' }
+if ($sig.Status -ne 'Valid') { Write-Host 'Optional: run Trust-Certificate.cmd so Windows also shows this signature as valid.' }

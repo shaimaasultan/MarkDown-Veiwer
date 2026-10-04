@@ -52,9 +52,10 @@ and never goes online.
 - **Blocked-code alert.** When a file contains code (scripts, event handlers, code links), a popup says so when it opens: nothing ran, and it is a file to be careful with elsewhere. If the window's security policy ever has to stop code itself, that is shown too.
 - **No copy-paste traps.** Text inside code examples cannot be hidden or restyled, so what you copy is what you see.
 - **Signed, no loose script files.** The page and every library are packed into `MarkdownViewerWebView2.Content.dll`. It and the program are signed with the same Authenticode certificate. At every start the program checks both signatures, plus Microsoft's signature on the WebView2 files, without going online, before any of them is loaded. The WebView2 files must also be exactly the ones the program was built with (their SHA-256 is part of the signed program), so an older or different Microsoft file is refused as well. If any of these files is changed, swapped or missing, the app does not start. See [Signing](#signing).
-- **Nothing extra in the program's folder.** Windows looks in a program's folder first for many DLLs, and .NET for its configuration. Anything there that isn't part of the app (a planted DLL, a `.config`, `.manifest` or `.local` file or folder) stops the start; reinstalling removes it. Installed in Program Files (`Install-ProgramFiles.cmd`), the folder cannot be changed without administrator rights at all.
+- **Nothing extra in the program's folder.** Windows looks in a program's folder first for many DLLs, and .NET for its configuration. Anything there that isn't part of the app (a planted DLL, a `.config`, `.manifest` or `.local` file or folder) stops the start; reinstalling removes it. Installed in Program Files (`Install-ProgramFiles.cmd`), the folder cannot be changed without administrator rights at all - the only full protection, because .NET itself loads a few Windows DLLs (`cryptbase`, `cryptsp`, `profapi`) from a program's folder before the program's first line runs.
 - **Checked files stay locked.** From the check until the app closes, the program, the Content DLL and the WebView2 files cannot be changed, replaced, renamed or deleted, and neither can their folder, so what was checked is what gets loaded.
-- **Safe DLL loading.** The app turns on Windows' image-load protections at start: system DLLs come from System32 before any copy elsewhere, and never from a network share, a file written by a sandboxed process, the current folder or PATH.
+- **Safe DLL loading.** The app turns on Windows' image-load protections at start: system DLLs come from System32 before any copy elsewhere, and never from a network share, a file written by a sandboxed process, the current folder or PATH. The program's own calls into Windows DLLs load them from System32 only.
+- **Fresh browser data.** The WebView2 engine starts with a new, empty data folder at every start; folders of ended runs are deleted. Nothing left in that folder by an earlier run or another program is read.
 - **No startup hooks.** If environment variables would make .NET load a profiler or an AppDomain manager into the app (`COR_ENABLE_PROFILING`, `COR_PROFILER*`, `APPDOMAIN_MANAGER_*`), it refuses to start. `DOTNET_STARTUP_HOOKS` belongs to .NET Core and is never read by this .NET Framework app.
 - **Never as administrator by accident.** Opened with administrator rights (for example from an administrator prompt) while a normal start is possible, the app refuses and asks you to open the file normally. `Install.cmd` refuses to run as administrator too, so the app is always installed for your own account.
 - **Genuine engine.** After the WebView2 engine starts, the app checks that it is Microsoft's `msedgewebview2.exe`, signed and under Program Files (which only an administrator can change); otherwise no document is shown.
@@ -104,18 +105,27 @@ Output goes to `app\dist\`. The build checks that the bundled libraries match th
 The program and `MarkdownViewerWebView2.Content.dll` are Authenticode-signed by every build, and the program checks both signatures - plus Microsoft's on the WebView2 files and their exact SHA-256 - at every start (see [Security](#security)).
 
 The first build creates a code-signing certificate on your PC named
-"Markdown Viewer (WebView2) Code Signing". It is stored in your personal certificate store, and its private
-key cannot be exported. Later builds reuse it. To sign with a certificate bought from a certificate
-authority instead, run:
+"Markdown Viewer (WebView2) Code Signing". It is stored in your personal certificate store, its private
+key cannot be exported, and the key is **protected**: Windows asks you to confirm every time something signs
+with it, so no other program running as you can quietly sign a changed program or Content DLL. Later builds
+reuse it (one confirmation per build). Certificates from earlier versions had no such protection; the build
+no longer uses them, and you can delete them in certmgr.msc › Personal › Certificates.
+
+**Updates keep the certificate.** The installer only replaces an installed copy with a build signed by the
+same certificate. When the certificate has changed (for example right after the protected one was made),
+it shows both thumbprints and installs only after you answer Y.
+
+To sign with a certificate bought from a certificate authority instead, run:
 
 ```bash
 powershell -NoProfile -ExecutionPolicy Bypass -File app\build.ps1 -CertificateThumbprint <thumbprint>
 ```
 
 Windows doesn't trust a certificate made on your own PC by default. The app's start-up check works either
-way. If you also want Windows (file Properties › Digital Signatures) to show the program as signed by a
-trusted publisher, run `app\Trust-Certificate.cmd`. `Untrust-Certificate.cmd` undoes that, and so does
-uninstalling the app.
+way. If you also want Windows (file Properties › Digital Signatures) to show the signature as valid, run
+`app\Trust-Certificate.cmd`. It adds the certificate to your Trusted Roots only, not to Trusted Publishers
+(Office macros and AllSigned PowerShell scripts from those publishers run without asking).
+`Untrust-Certificate.cmd` undoes that, and so does uninstalling the app.
 
 ## Project layout
 

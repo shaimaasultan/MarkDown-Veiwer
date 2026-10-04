@@ -3,7 +3,7 @@
 # a Program Files install. All paths are passed in, so they stay the installing user's even if Windows
 # asks for a different administrator account. Output also goes to -Log, which install.ps1 shows.
 param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$Scripts,
-      [Parameter(Mandatory)][string]$Dest, [string]$Log)
+      [Parameter(Mandatory)][string]$Dest, [string]$Log, [string]$AcceptThumbprint)
 # Run with administrator rights, PowerShell would otherwise look for commands such as Copy-Item in the
 # user's own module folder (Documents) first: a look-alike module there would run as administrator.
 # Only Windows PowerShell's own modules, from its system folder (set before any command is used).
@@ -18,6 +18,24 @@ $scriptFiles = 'uninstall.ps1', 'firewall.ps1', 'trust.ps1'
 function Say($text) { Write-Host $text; if ($Log) { Add-Content -Path $Log -Value $text -Encoding UTF8 } }
 
 try {
+    # The new program and Content DLL must be intact and signed by one certificate - the same one as the
+    # copy already installed here, unless the installing user confirmed this new certificate.
+    $new = foreach ($f in $exeName, 'MarkdownViewerWebView2.Content.dll') {
+        $s = Get-AuthenticodeSignature (Join-Path $Source $f)
+        if (-not $s.SignerCertificate -or $s.Status -in 'HashMismatch', 'NotSigned', 'NotSupportedFileFormat', 'Incompatible') {
+            throw "$f in $Source is not signed or has been changed since it was signed ($($s.Status))."
+        }
+        $s.SignerCertificate.Thumbprint
+    }
+    if ($new[0] -ne $new[1]) { throw "The program and its Content DLL in $Source are signed by different certificates." }
+    $installed = Join-Path $Dest $exeName
+    if (Test-Path $installed) {
+        $old = (Get-AuthenticodeSignature $installed).SignerCertificate.Thumbprint
+        if ($old -and $old -ne $new[0] -and $new[0] -ne $AcceptThumbprint) {
+            throw "The new build is signed by certificate $($new[0]), not by $old like the installed copy; nothing was changed."
+        }
+    }
+
     New-Item -ItemType Directory -Force $Dest | Out-Null
     # The page and every library are inside the signed MarkdownViewerWebView2.Content.dll - no loose script files.
     foreach ($f in @($exeName) + $programFiles) { Copy-Item (Join-Path $Source $f) $Dest -Force }

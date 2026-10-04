@@ -31,15 +31,18 @@ using Microsoft.Win32.SafeHandles;
 [assembly: AssemblyProduct("Markdown Viewer (WebView2)")]
 [assembly: AssemblyDescription("Previews Markdown files with figures, math and diagrams. Never runs code from a document.")]
 [assembly: AssemblyCopyright("Markdown Viewer")]
-[assembly: AssemblyVersion("1.8.2.0")]
-[assembly: AssemblyFileVersion("1.8.2.0")]
-[assembly: AssemblyInformationalVersion("1.8.2")]
+// The program's own calls into Windows DLLs (user32, kernel32, advapi32, wintrust) load them from System32
+// only, never from the program's folder or anywhere else on the search path.
+[assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+[assembly: AssemblyVersion("1.8.3.0")]
+[assembly: AssemblyFileVersion("1.8.3.0")]
+[assembly: AssemblyInformationalVersion("1.8.3")]
 
 static class Program
 {
     const string AppName = "Markdown Viewer (WebView2)";
     const string DataFolder = "MarkdownViewerWebView2";     // %APPDATA% (settings) and %LOCALAPPDATA% (browser data)
-    const string AppVersion = "1.8.2";
+    const string AppVersion = "1.8.3";
     // Exists only inside this program's windows. Not a .local name: Windows would first spend ~2 s
     // looking for a device called "mdviewer" on the local network before the page could load.
     const string PrivateHost = "https://mdviewer.example";
@@ -668,9 +671,9 @@ static class Program
             {
                 if (env == null)
                 {
-                    // Browser data (cache, page storage) stays in this app's own folder.
-                    string data = Path.Combine(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), DataFolder), "WebView2");
-                    ForgetHistory(data);
+                    // Browser data starts empty at every start, in a new folder of its own: nothing left there
+                    // earlier (by this app or another program) is read by the engine.
+                    string data = FreshDataFolder();
                     // Developer access stays off: WebView2 would otherwise accept extra browser switches
                     // (e.g. --remote-debugging-port) or another browser/data folder from WEBVIEW2_* variables.
                     foreach (string name in new System.Collections.ArrayList(Environment.GetEnvironmentVariables().Keys))
@@ -832,14 +835,30 @@ static class Program
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         static extern bool QueryFullProcessImageNameW(IntPtr process, int flags, StringBuilder name, ref int size);
 
-        // Earlier versions kept a normal browser history: the addresses - and so the file paths - of the
-        // documents opened. Remove it; the window now runs InPrivate and writes none.
-        static void ForgetHistory(string data)
+        // %LOCALAPPDATA%\MarkdownViewerWebView2\WebView2\<random>: a new, empty folder for this run. Each run
+        // keeps a lock file open in its folder; folders without a held lock (ended runs, and the single shared
+        // folder of earlier versions with its caches and history) are deleted. The last run's folder goes at
+        // the next start, as the engine may still be closing when this program ends.
+        static FileStream dataLock;
+
+        static string FreshDataFolder()
         {
-            string profile = Path.Combine(Path.Combine(data, "EBWebView"), "Default");
-            foreach (string name in new[] { "History", "Top Sites", "Favicons", "Visited Links", "Network Action Predictor", "Shortcuts" })
-                foreach (string f in new[] { name, name + "-journal" })
-                    try { File.Delete(Path.Combine(profile, f)); } catch { }
+            string root = Path.Combine(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), DataFolder), "WebView2");
+            Directory.CreateDirectory(root);
+            foreach (string dir in Directory.GetDirectories(root))
+            {
+                string lockFile = Path.Combine(dir, ".inuse");
+                try
+                {
+                    if (File.Exists(lockFile)) new FileStream(lockFile, FileMode.Open, FileAccess.ReadWrite, FileShare.None).Dispose();
+                    Directory.Delete(dir, true);
+                }
+                catch { }   // in use by another open viewer window
+            }
+            string data = Path.Combine(root, RandomHex(8));
+            Directory.CreateDirectory(data);
+            dataLock = new FileStream(Path.Combine(data, ".inuse"), FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
+            return data;
         }
 
         static readonly HashSet<string> MenuKeep = new HashSet<string>(StringComparer.Ordinal)
