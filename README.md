@@ -4,6 +4,10 @@ A preview-only Markdown viewer for Windows. Double-click a `.md` file and it ope
 window with figures, math, code colouring and diagrams — and the app never runs code from a document
 and never goes online.
 
+[![Watch the one-minute promo video](docs/promo-poster.png)](docs/promo.mp4)
+
+▶ **[Watch the one-minute promo video](docs/promo.mp4)** (MP4, 1080p, no sound)
+
 ## Features
 
 - **Markdown rendering** with [marked](https://github.com/markedjs/marked), including tables, task lists and inline HTML (sanitised)
@@ -101,6 +105,7 @@ uninstalling the app.
 | `app\Content.cs` | Resource-only `MarkdownViewerWebView2.Content.dll` that carries the page and the libraries |
 | `app\*.ps1`, `app\*.cmd` | Build, install, uninstall and firewall scripts |
 | `webview2\` | Microsoft WebView2 SDK files needed to build the app, with their license |
+| `docs\` | Promo video and its poster picture |
 
 ## Third-party components
 
