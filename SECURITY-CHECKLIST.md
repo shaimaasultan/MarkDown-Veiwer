@@ -3,7 +3,7 @@
 Every hardening point added to this app, where it lives and how it was checked. `[x]` = done and tested;
 `[ ]` = done, but still to be confirmed on a real run (these steps need a Windows administrator or signing
 prompt, which the automated tests cannot click). Version numbers show when each point was added.
-`[ ] To do:` = not done yet — found by comparing with the CloClo widget's hardening history.
+`[ ] To do:` = not done yet. (The points found by comparing with the CloClo widget's hardening history were all done in 1.8.6.)
 
 **How to re-check:** `app\Check-Source.cmd` (project files unchanged since the last install) and the
 tamper tests described under each section.
@@ -28,7 +28,7 @@ tamper tests described under each section.
 - [x] All libraries bundled; the engine cannot resolve any internet name; no background networking, component updates, pings, SmartScreen or account sign-in
 - [x] Web and mail links open outside only after a question showing the real address (1.5.0)
 - [x] Only `http:`, `https:` and `mailto:` addresses are ever handed to Windows; any other scheme is ignored (`AskOpenOutside`)
-- [ ] To do: Save settings through a temporary file and an atomic replace, so a crash while saving cannot corrupt `settings.ini` and silently reset choices such as Pictures off
+- [x] Settings saved through a temporary file and an atomic replace, so a crash while saving cannot corrupt `settings.ini` and silently reset choices such as Pictures off (1.8.6) — tested: saved value present, no temporary file left
 - [x] InPrivate window; camera, microphone, location, notifications, clipboard reading refused; downloads only from the viewer; trimmed right-click menu (1.5.0)
 - [x] Developer tools off; documents refused if WebView2 remote debugging is on or cannot be checked (fail closed) (1.5.0)
 - [x] `WEBVIEW2_*` environment variables cleared before the engine starts
@@ -58,7 +58,7 @@ tamper tests described under each section.
 - [x] **Not as administrator by accident:** started elevated while a normal start is possible, the app refuses (1.8.2)
   - [ ] Confirm on a real run: open a `.md` from an administrator prompt → refusal message
 - [x] **Genuine engine:** the started `msedgewebview2.exe` must be Microsoft-signed and under Program Files (1.8.1) — tested with the real engine and with `powershell.exe` as a stand-in
-- [ ] To do: Catch unexpected errors on the window thread and in background tasks (log type and stack only, never document text) instead of crashing - a crash hands Windows Error Reporting a memory dump that can hold the open document
+- [x] Unexpected errors on the window thread and in background tasks are caught and logged to `%LOCALAPPDATA%\MarkdownViewerWebView2\errors.log` (type and stack only, never the message, which can quote document text) instead of crashing - a crash hands Windows Error Reporting a memory dump that can hold the open document; an error on another thread ends the app without a dump (1.8.6) — tested: type logged, message not
 - [x] DLL planting checked for 28 DLL names: 25 caught by the folder check; `cryptbase`, `cryptsp`, `profapi` are loaded by .NET before any app code → only the Program Files install fully protects (documented)
 
 ## 5. Windows entries (file types, Open with)
@@ -76,7 +76,7 @@ tamper tests described under each section.
 - [x] **Tampered SDK stops the build** before anything is compiled or signed: Microsoft signature + pinned SHA-256 in `build.ps1` (1.8.4) — tested: one byte changed in `WebView2Loader.dll`, other Microsoft DLL as `Core.dll`
 - [x] Compiler found via Windows' own folder (not `WINDIR`) and must be Microsoft-signed (1.8.4)
 - [x] Generated source written next to the build, not into the shared Temp folder (1.8.4)
-- [ ] To do: `build.ps1` run on its own refuses an administrator window (as `Install.cmd` already does), so the compiler never runs elevated
+- [x] `build.ps1` run on its own refuses an administrator window (as `Install.cmd` already does), so the compiler never runs elevated (1.8.6)
 - [x] **Trust-Certificate adds Trusted Roots only**, not Trusted Publishers (Office macros / AllSigned scripts) (1.8.3)
 
 ## 7. Install in Program Files (one installer)
@@ -85,9 +85,9 @@ tamper tests described under each section.
 - [x] Build, signing and registrations run as you; **only the copy** (`place.ps1`) runs as administrator
 - [x] `Install.cmd` refuses to be started as administrator (1.8.2)
 - [x] The installer never starts the app, so it can never leave a copy running with administrator rights
-- [ ] To do: Pass the administrator step to the elevated PowerShell inline (`-EncodedCommand`) instead of running `place.ps1` from the project folder, so no file can be swapped between the UAC prompt and its start
-- [ ] To do: When the after-copy check finds a file that differs from the build, remove it and stop the install (today it warns)
-- [ ] To do: Stop with a message instead of waiting forever when the installer cannot read the keyboard for the certificate question (e.g. run from PowerShell ISE)
+- [x] The administrator step is passed to the elevated PowerShell inline (`-EncodedCommand`, read from `place.ps1` at that moment) instead of running a file from the project folder, so no file can be swapped between the UAC prompt and its start (1.8.6) — tested: inline step installs all 11 files
+- [x] Every copied file is compared, inside the administrator step, with the SHA-256 taken from the build just before; a difference or an unlisted file removes the staging folder and stops the install with the installed copy untouched (exit 7) (1.8.6) — tested: wrong hash, unlisted file
+- [x] The installer stops with a message instead of waiting forever when it cannot read the keyboard for the certificate question (e.g. PowerShell ISE, redirected input) (1.8.6) — tested with redirected input
 - [x] **Updates keep the certificate:** a build signed by another certificate is refused unless you confirm both thumbprints with Y (1.8.3) — tested exit 3 / accept
 - [x] The admin step works out the Program Files folder itself (not `$env:ProgramFiles`) and accepts no target from outside (1.8.4)
 - [x] **Staging folder:** files copied into an admin-only staging folder, checked there, then swapped in; a copy in use is never half replaced (1.8.4) — tested all exit codes 0/2/3/4/6, no leftovers
@@ -113,8 +113,8 @@ tamper tests described under each section.
 - [x] `app\Check-Source.cmd` lists files changed, added or removed since the last install (1.8.5) — tested unchanged / changed / added / removed
 - [x] Line endings fixed per file type (`.gitattributes`), so a checkout or pull never rewrites a file and causes false alarms — fresh clone compared byte for byte
   - [ ] After the next install, run `Check-Source.cmd` → "No changes"
-- [ ] To do: Install `check-source.ps1` in Program Files with the record and have `Check-Source.cmd` run that copy - today it runs the copy in the project folder, which a program running as you could change to always report "No changes"
-- [ ] To do: Take the record before the build and compare again after it; refuse to install if the sources changed while building (today the record is taken after the build)
+- [x] `check-source.ps1` is installed in Program Files with the record, and `Check-Source.cmd` runs that copy (found through Windows' own Program Files lookup) - not the copy in the project folder, which a program running as you could change to always report "No changes" (1.8.6) — tested: installed checker with -Root and with the recorded folder; "not installed yet" message
+- [x] The record is taken before the build and compared again after it; the install is refused if the sources changed while building (1.8.6) — tested: unchanged → 0, changed → 1
 
 ## 10. Clean-up after testing
 

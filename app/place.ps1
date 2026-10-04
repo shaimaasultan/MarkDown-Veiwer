@@ -1,7 +1,10 @@
-# Installs the built program in C:\Program Files\MarkdownViewerWebView2. Called by install.ps1 with
-# administrator rights (one UAC prompt); everything else in the install runs as the user.
+# Installs the built program in C:\Program Files\MarkdownViewerWebView2. Run by install.ps1 with
+# administrator rights (one UAC prompt); everything else in the install runs as the user. install.ps1 hands
+# this script's text to the elevated PowerShell inline (-EncodedCommand), so it is never run from a file
+# another program could swap between the prompt and the start.
 #   -Source            the built program (app\dist)
-#   -Scripts           the folder with uninstall.ps1, firewall.ps1 and trust.ps1 (app)
+#   -Scripts           the folder with uninstall.ps1, firewall.ps1, trust.ps1 and check-source.ps1 (app)
+#   -Expected          name=SHA-256;... of every file as built: each copy is compared with it
 #   -AcceptThumbprint  a new signing certificate the user has confirmed
 # Run as administrator, this script trusts nothing it is handed:
 #   - the install folder is worked out here, from Windows' own record of Program Files (not the ProgramFiles
@@ -11,8 +14,10 @@
 #   - it writes no log file: results come back as the exit code (see install.ps1), so no file in the user's
 #     folders can be made to point it at a system file.
 # Exit codes: 0 done, 2 program/Content DLL not intact or not signed, 3 signed by another certificate than
-# the installed copy, 4 a WebView2 file not signed by Microsoft, 5 a source file is a link, 6 in use / other.
-param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$Scripts, [string]$AcceptThumbprint)
+# the installed copy, 4 a WebView2 file not signed by Microsoft, 5 a source file is a link, 6 in use / other,
+# 7 a copied file differs from the build (nothing is installed).
+param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$Scripts,
+      [Parameter(Mandatory)][string]$Expected, [string]$AcceptThumbprint)
 # Only Windows PowerShell's own modules, from its system folder (set before any command is used): run as
 # administrator, a look-alike Copy-Item in the user's module folder (Documents) would run as administrator.
 $env:PSModulePath = "$PSHOME\Modules"
@@ -21,7 +26,7 @@ $name = 'Markdown Viewer (WebView2)'
 $exeName = 'MarkdownViewerWebView2.exe'
 $contentName = 'MarkdownViewerWebView2.Content.dll'
 $msFiles = 'Microsoft.Web.WebView2.Core.dll', 'Microsoft.Web.WebView2.WinForms.dll', 'WebView2Loader.dll'
-$scriptFiles = 'uninstall.ps1', 'firewall.ps1', 'trust.ps1'
+$scriptFiles = 'uninstall.ps1', 'firewall.ps1', 'trust.ps1', 'check-source.ps1'
 $dest = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'MarkdownViewerWebView2'
 $stage = "$dest.new"
 $old = "$dest.old"
@@ -41,7 +46,15 @@ try {
         Copy-Item -LiteralPath $f $stage
     }
 
-    # Checked in the staging folder, which only administrators can change.
+    # Checked in the staging folder, which only administrators can change. First: every copy must be exactly
+    # the file that was built (SHA-256 taken by install.ps1 before this step), and nothing else may be there.
+    $want = @{}
+    foreach ($pair in $Expected.Split(';')) { $kv = $pair.Split('=', 2); if ($kv.Count -eq 2) { $want[$kv[0]] = $kv[1] } }
+    $staged = @(Get-ChildItem -LiteralPath $stage -Force)
+    if ($staged.Count -ne $want.Count) { Fail 7 }
+    foreach ($f in $staged) {
+        if (-not $want.ContainsKey($f.Name) -or (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash -ne $want[$f.Name]) { Fail 7 }
+    }
     $thumbs = foreach ($f in $exeName, $contentName) {
         $s = Get-AuthenticodeSignature (Join-Path $stage $f)
         if (-not $s.SignerCertificate -or $s.Status -in 'HashMismatch', 'NotSigned', 'NotSupportedFileFormat', 'Incompatible') { Fail 2 }

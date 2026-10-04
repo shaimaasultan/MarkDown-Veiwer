@@ -11,6 +11,11 @@ param([string]$CertificateThumbprint)
 # in the user's Documents module folder could otherwise feed its own files to the signing key).
 $env:PSModulePath = "$PSHOME\Modules"
 $ErrorActionPreference = 'Stop'
+# Never built with administrator rights: the compiler and the build steps have no need for them. (With User
+# Account Control off there is no other way.)
+$elevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+$uac = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -ErrorAction SilentlyContinue).EnableLUA -ne 0
+if ($elevated -and $uac) { throw 'Run the build from a normal window, not as administrator.' }
 $here = $PSScriptRoot
 $root = Split-Path $here -Parent
 $dist = Join-Path $here 'dist'

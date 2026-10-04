@@ -43,12 +43,22 @@ if ($running.Count) {
     Start-Sleep -Milliseconds 500
 }
 
+# Record the SHA-256 of every project file before the build; the record is installed in Program Files with
+# the program, where only an administrator can change it, and Check-Source.cmd compares the folder with it.
+New-Item -ItemType Directory -Force $dist | Out-Null
+$recordFile = Join-Path $dist 'source-manifest.txt'
+& (Join-Path $here 'check-source.ps1') -Write $recordFile
+if ($LASTEXITCODE -ne 0) { Write-Host 'The project files could not be recorded; nothing was installed.'; exit 1 }
 # Always rebuild so the installed copy matches the current sources.
 & (Join-Path $here 'build.ps1')
-# Record the SHA-256 of every project file; it is installed in Program Files with the program, where only an
-# administrator can change it, and Check-Source.cmd compares the project folder with it later.
-& (Join-Path $here 'check-source.ps1') -Write (Join-Path $dist 'source-manifest.txt')
-if ($LASTEXITCODE -ne 0) { Write-Host 'The project files could not be recorded; nothing was installed.'; exit 1 }
+# The sources must still be exactly as recorded: a change while building would mean the program was built
+# from something other than what the record says.
+& (Join-Path $here 'check-source.ps1') -Record $recordFile -Quiet
+if ($LASTEXITCODE -ne 0) {
+    Write-Host 'The project files changed while the app was being built; nothing was installed.' -ForegroundColor Yellow
+    Write-Host 'Run Install.cmd again once nothing is editing the project folder.'
+    exit 1
+}
 # An update must be signed by the same certificate as the installed copy. If it is not (e.g. after a new
 # signing certificate was made), you decide: a build you did not make yourself should not be installed.
 $accept = ''
@@ -62,6 +72,11 @@ if ($installedExe) {
         Write-Host "  installed: $oldThumb"
         Write-Host "  new build: $newThumb"
         Write-Host 'That is expected only right after a new signing certificate was made on this PC.'
+        # Without a console keyboard (e.g. PowerShell ISE, or input redirected) the question would wait forever.
+        if ([Console]::IsInputRedirected -or $Host.Name -ne 'ConsoleHost') {
+            Write-Host 'This window cannot answer the question. Run Install.cmd by double-clicking it. Nothing was changed.' -ForegroundColor Yellow
+            exit 1
+        }
         if ((Read-Host 'Install the new build? [Y/N]').Trim() -notmatch '^(y|yes)$') { Write-Host 'Nothing was changed.'; exit 1 }
         $accept = $newThumb
     }
@@ -70,9 +85,19 @@ if ($installedExe) {
 # Copy the program with place.ps1 - the only step that runs with administrator rights. It copies into a
 # staging folder in Program Files, checks the files there and then swaps the folders (see place.ps1).
 Write-Host "Copying the program to $dest (Windows asks for administrator rights)..."
-$argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$(Join-Path $here 'place.ps1')`"",
-             '-Source', "`"$dist`"", '-Scripts', "`"$here`"")
-if ($accept) { $argList += '-AcceptThumbprint', $accept }
+# The SHA-256 of every file as built, taken now: the administrator step compares each copy with it.
+$installFiles = @($exeName, "$key.Content.dll", 'MarkdownViewer.ico', 'source-manifest.txt', 'Microsoft.Web.WebView2.Core.dll',
+                  'Microsoft.Web.WebView2.WinForms.dll', 'WebView2Loader.dll' | ForEach-Object { Join-Path $dist $_ }) +
+                @('uninstall.ps1', 'firewall.ps1', 'trust.ps1', 'check-source.ps1' | ForEach-Object { Join-Path $here $_ })
+$expected = ($installFiles | ForEach-Object { "$(Split-Path $_ -Leaf)=$((Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash)" }) -join ';'
+# place.ps1's text goes to the elevated PowerShell inline (-EncodedCommand): no file is run that another
+# program could swap between the prompt and the start.
+function Quote($s) { "'" + $s.Replace("'", "''") + "'" }
+$command = "& {`n$([IO.File]::ReadAllText((Join-Path $here 'place.ps1')))`n} -Source $(Quote $dist) -Scripts $(Quote $here) -Expected $(Quote $expected)"
+if ($accept) { $command += " -AcceptThumbprint $(Quote $accept)" }
+$encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+if ($encoded.Length -gt 30000) { Write-Host 'Internal error: the administrator step is too long to pass inline; nothing was installed.'; exit 1 }
+$argList = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded)
 # Windows PowerShell by its full path (not whichever powershell.exe comes first on PATH); place.ps1
 # itself only uses Windows PowerShell's own modules.
 $psExe = Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
@@ -84,20 +109,20 @@ if ($p.ExitCode -ne 0) {
         3 { 'the new build is signed by a different certificate than the installed copy' }
         4 { 'a WebView2 file does not carry a valid Microsoft signature' }
         5 { 'a file in app\dist is a link, not a plain file' }
+        7 { 'a copied file differs from the build (changed while installing?)' }
         default { 'the files could not be copied (is the viewer open in another account?)' }
     }
     Write-Host "Not installed: $why. The installed copy was left as it was."
     exit 1
 }
 # Check, as you, that Program Files now holds exactly what was built.
-$keep = $exeName, "$key.Content.dll", 'MarkdownViewer.ico', 'Microsoft.Web.WebView2.Core.dll',
-        'Microsoft.Web.WebView2.WinForms.dll', 'WebView2Loader.dll', 'uninstall.ps1', 'firewall.ps1', 'trust.ps1',
-        'source-manifest.txt'
+# (The administrator step has already refused any difference; this confirms it from your side.)
+$keep = @($installFiles | ForEach-Object { Split-Path $_ -Leaf })
 $present = @(Get-ChildItem -LiteralPath $dest -Force | ForEach-Object Name)
-$differs = @($keep | Where-Object {
-    $src = if ($_ -like '*.ps1') { Join-Path $here $_ } else { Join-Path $dist $_ }
-    -not (Test-Path (Join-Path $dest $_)) -or (Get-FileHash (Join-Path $dest $_)).Hash -ne (Get-FileHash $src).Hash
-}) + @($present | Where-Object { $keep -notcontains $_ })
+$differs = @($installFiles | Where-Object {
+    $inst = Join-Path $dest (Split-Path $_ -Leaf)
+    -not (Test-Path $inst) -or (Get-FileHash $inst).Hash -ne (Get-FileHash $_).Hash
+} | ForEach-Object { Split-Path $_ -Leaf }) + @($present | Where-Object { $keep -notcontains $_ })
 if ($differs.Count) { Write-Host "WARNING: in $dest these do not match what was built: $($differs -join ', ')" -ForegroundColor Yellow }
 else { Write-Host "Copied to $dest and checked: exactly the files that were built." }
 # A copy from earlier versions is no longer used.

@@ -35,15 +35,15 @@ using Microsoft.Win32.SafeHandles;
 // The program's own calls into Windows DLLs (user32, kernel32, advapi32, wintrust) load them from System32
 // only, never from the program's folder or anywhere else on the search path.
 [assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
-[assembly: AssemblyVersion("1.8.5.0")]
-[assembly: AssemblyFileVersion("1.8.5.0")]
-[assembly: AssemblyInformationalVersion("1.8.5")]
+[assembly: AssemblyVersion("1.8.6.0")]
+[assembly: AssemblyFileVersion("1.8.6.0")]
+[assembly: AssemblyInformationalVersion("1.8.6")]
 
 static class Program
 {
     const string AppName = "Markdown Viewer (WebView2)";
     const string DataFolder = "MarkdownViewerWebView2";     // %APPDATA% (settings) and %LOCALAPPDATA% (browser data)
-    const string AppVersion = "1.8.5";
+    const string AppVersion = "1.8.6";
     // Exists only inside this program's windows. Not a .local name: Windows would first spend ~2 s
     // looking for a device called "mdviewer" on the local network before the page could load.
     const string PrivateHost = "https://mdviewer.example";
@@ -93,6 +93,7 @@ static class Program
                 return 1;
             }
             try { RepairRegistrations(Application.ExecutablePath); } catch { }
+            try { CatchUnexpectedErrors(); } catch { }
             return Run(args);
         }
         catch (Exception ex)
@@ -238,8 +239,9 @@ static class Program
 
     // Only the program's own files may be in its folder. Windows looks there first for many DLLs, and .NET
     // for configuration; an extra file or folder (a planted DLL, a ".local" redirection folder) stops the start.
-    // source-manifest.txt: the project files' SHA-256 at install time (a text file, never loaded as code).
-    static readonly string[] FolderFiles = { "MarkdownViewer.ico", "uninstall.ps1", "firewall.ps1", "trust.ps1", "source-manifest.txt" };
+    // source-manifest.txt: the project files' SHA-256 at install time (a text file, never loaded as code);
+    // check-source.ps1: the checker Check-Source.cmd runs from here.
+    static readonly string[] FolderFiles = { "MarkdownViewer.ico", "uninstall.ps1", "firewall.ps1", "trust.ps1", "source-manifest.txt", "check-source.ps1" };
 
     static string CheckFolder()
     {
@@ -381,6 +383,38 @@ static class Program
         }
         catch { }
         return s;
+    }
+
+    // ------------------------------------------------------------------ unexpected errors
+
+    // An unexpected error is logged and the window keeps running, instead of a crash: a crash would hand
+    // Windows Error Reporting a memory dump of the process, which can hold the open document. The log
+    // (%LOCALAPPDATA%\MarkdownViewerWebView2\errors.log) gets the error's type and stack only - never its
+    // message, which can quote document text or file paths.
+    static void CatchUnexpectedErrors()
+    {
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+        Application.ThreadException += (s, e) => LogError(e.Exception);
+        TaskScheduler.UnobservedTaskException += (s, e) => { LogError(e.Exception); e.SetObserved(); };
+        // An error on another thread cannot be survived: log it and end without a crash dump.
+        AppDomain.CurrentDomain.UnhandledException += (s, e) => { LogError(e.ExceptionObject as Exception); Environment.Exit(3); };
+    }
+
+    static void LogError(Exception ex)
+    {
+        try
+        {
+            string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), DataFolder);
+            Directory.CreateDirectory(dir);
+            string log = Path.Combine(dir, "errors.log");
+            if (File.Exists(log) && new FileInfo(log).Length > 256 * 1024) File.Delete(log);
+            StringBuilder sb = new StringBuilder();
+            sb.Append(DateTime.Now.ToString("s")).Append("  ").Append(AppName).Append(' ').Append(AppVersion).Append("\r\n");
+            for (Exception e = ex; e != null; e = e.InnerException)
+                sb.Append(e.GetType().FullName).Append("\r\n").Append(e.StackTrace).Append("\r\n");
+            File.AppendAllText(log, sb.Append("\r\n").ToString());
+        }
+        catch { }
     }
 
     // ------------------------------------------------------------------ Windows registrations
@@ -1335,8 +1369,13 @@ static class Program
                 StringBuilder sb = new StringBuilder();
                 foreach (KeyValuePair<string, string> p in prefs)
                     if (Array.IndexOf(PrefValues[p.Key], p.Value) > 0) sb.Append(p.Key).Append('=').Append(p.Value).Append("\r\n");
-                Directory.CreateDirectory(Path.GetDirectoryName(PrefsFile()));
-                File.WriteAllText(PrefsFile(), sb.ToString());
+                // Written to a temporary file first and then swapped in, so a crash or power cut while saving
+                // can never leave a half-written settings.ini (which would silently reset e.g. Pictures off).
+                string file = PrefsFile(), temp = file + "." + RandomHex(4) + ".new";
+                Directory.CreateDirectory(Path.GetDirectoryName(file));
+                File.WriteAllText(temp, sb.ToString());
+                if (File.Exists(file)) File.Replace(temp, file, null);
+                else File.Move(temp, file);
             }
             catch { }
         }
