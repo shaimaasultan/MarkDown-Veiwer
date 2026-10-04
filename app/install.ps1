@@ -33,11 +33,15 @@ foreach ($f in $exeName, 'MarkdownViewerWebView2.Content.dll', 'MarkdownViewer.i
     Copy-Item (Join-Path $dist $f) $dest -Force
 }
 foreach ($f in 'uninstall.ps1', 'firewall.ps1', 'trust.ps1') { Copy-Item (Join-Path $here $f) $dest -Force }
-# Files earlier versions left behind: loose page files and libraries (the page was once called ReadMe.html).
-foreach ($f in 'viewer.html', 'viewer.js', 'marked.min.js', 'favicon_readme.png', 'editions.ps1', 'ReadMe.html') {
-    Remove-Item (Join-Path $dest $f) -Force -ErrorAction SilentlyContinue
+# Only the program's own files may be in its folder (the program refuses to start otherwise): remove
+# anything else - files earlier versions left behind (loose page files, lib\) or files put there since.
+$keep = $exeName, 'MarkdownViewerWebView2.Content.dll', 'MarkdownViewer.ico',
+        'Microsoft.Web.WebView2.Core.dll', 'Microsoft.Web.WebView2.WinForms.dll', 'WebView2Loader.dll',
+        'uninstall.ps1', 'firewall.ps1', 'trust.ps1'
+Get-ChildItem -LiteralPath $dest -Force | Where-Object { $keep -notcontains $_.Name -or $_.PSIsContainer } | ForEach-Object {
+    Write-Host "Removing $($_.Name) from the program folder (not part of $name)."
+    Remove-Item -LiteralPath $_.FullName -Recurse -Force
 }
-Remove-Item (Join-Path $dest 'lib') -Recurse -Force -ErrorAction SilentlyContinue
 
 # Create a registry key only if it's missing. (New-Item -Force would recreate an existing key and
 # wipe its values - e.g. other apps' entries under .md.)

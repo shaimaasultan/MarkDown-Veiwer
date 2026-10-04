@@ -31,15 +31,15 @@ using Microsoft.Win32.SafeHandles;
 [assembly: AssemblyProduct("Markdown Viewer (WebView2)")]
 [assembly: AssemblyDescription("Previews Markdown files with figures, math and diagrams. Never runs code from a document.")]
 [assembly: AssemblyCopyright("Markdown Viewer")]
-[assembly: AssemblyVersion("1.8.0.0")]
-[assembly: AssemblyFileVersion("1.8.0.0")]
-[assembly: AssemblyInformationalVersion("1.8.0")]
+[assembly: AssemblyVersion("1.8.1.0")]
+[assembly: AssemblyFileVersion("1.8.1.0")]
+[assembly: AssemblyInformationalVersion("1.8.1")]
 
 static class Program
 {
     const string AppName = "Markdown Viewer (WebView2)";
     const string DataFolder = "MarkdownViewerWebView2";     // %APPDATA% (settings) and %LOCALAPPDATA% (browser data)
-    const string AppVersion = "1.8.0";
+    const string AppVersion = "1.8.1";
     // Exists only inside this program's windows. Not a .local name: Windows would first spend ~2 s
     // looking for a device called "mdviewer" on the local network before the page could load.
     const string PrivateHost = "https://mdviewer.example";
@@ -80,8 +80,9 @@ static class Program
         try
         {
             appDir = AppDomain.CurrentDomain.BaseDirectory;
+            ProtectDllLoading();
             // Before anything is loaded from the WebView2 files or the Content DLL.
-            string problem = CheckSignatures();
+            string problem = CheckFolder() ?? CheckSignatures();
             if (problem != null)
             {
                 MessageBox.Show(problem, AppName, MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -161,6 +162,64 @@ static class Program
 
     static SignatureInfo signature;          // this program's, after a successful check
 
+    // Windows' DLL-loading rules for this process, from here on: system DLLs from System32 before any copy
+    // in the program's folder, never from a network share or from files written by low-integrity
+    // (sandboxed) processes, and never from the current folder or PATH.
+    static void ProtectDllLoading()
+    {
+        try { SetDefaultDllDirectories(0x1000); } catch { }        // LOAD_LIBRARY_SEARCH_DEFAULT_DIRS
+        try
+        {
+            // ProcessImageLoadPolicy: NoRemoteImages | NoLowMandatoryLabelImages | PreferSystem32Images
+            int flags = 0x1 | 0x2 | 0x4;
+            SetProcessMitigationPolicy(10, ref flags, (IntPtr)4);
+        }
+        catch { }
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool SetDefaultDllDirectories(uint flags);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool SetProcessMitigationPolicy(int policy, ref int buffer, IntPtr length);
+
+    // Only the program's own files may be in its folder. Windows looks there first for many DLLs, and .NET
+    // for configuration; an extra file or folder (a planted DLL, a ".local" redirection folder) stops the start.
+    static readonly string[] FolderFiles = { "MarkdownViewer.ico", "uninstall.ps1", "firewall.ps1", "trust.ps1" };
+
+    static string CheckFolder()
+    {
+        HashSet<string> allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { Path.GetFileName(Application.ExecutablePath), ContentDll };
+        allowed.UnionWith(MicrosoftFiles);
+        allowed.UnionWith(FolderFiles);
+        List<string> extra = new List<string>();
+        foreach (string e in Directory.GetFileSystemEntries(appDir))
+            if (!allowed.Contains(Path.GetFileName(e)) || Directory.Exists(e)) extra.Add(Path.GetFileName(e));
+        if (extra.Count == 0) return null;
+        return "The program's folder contains " + (extra.Count == 1 ? "something that is" : "things that are") + " not part of " + AppName + ":\n\n  " +
+               string.Join("\n  ", extra.GetRange(0, Math.Min(extra.Count, 8))) + (extra.Count > 8 ? "\n  ..." : "") +
+               "\n\nWindows or .NET could load code from there into the program, so " + AppName + " will not start.\n" +
+               "Reinstall it (app\\Install.cmd), which removes them, or delete them from\n" + appDir;
+    }
+
+    // The checked files stay open until the program ends, shared for reading only: they cannot be changed,
+    // replaced, renamed or deleted between the check and the moment they are loaded (the Content DLL only
+    // when the page first asks for a file). The folder itself cannot be renamed either.
+    static readonly List<IDisposable> locks = new List<IDisposable>();
+
+    static void Lock(string path)
+    {
+        if (!File.Exists(path)) return;     // reported as missing by the signature check
+        locks.Add(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read));
+    }
+
+    static void LockFolder()
+    {
+        // FILE_LIST_DIRECTORY, shared for read and write but not delete (so no rename), FILE_FLAG_BACKUP_SEMANTICS
+        SafeFileHandle h = CreateFileW(appDir.TrimEnd('\\'), 0x1, 0x1 | 0x2, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero);
+        if (h.IsInvalid) throw new IOException("The program's folder could not be opened (error " + Marshal.GetLastWin32Error() + ").");
+        locks.Add(h);
+    }
+
     // The program and its Content DLL must be signed by the same certificate and unchanged since; the
     // WebView2 files must carry Microsoft's valid signature and be exactly the files the program was built
     // with (their SHA-256 is part of the signed program, so an older or other Microsoft file is refused too).
@@ -173,6 +232,11 @@ static class Program
                    " load files other than the ones it checks.\n\n" + AppName + " will not start. Delete that file or reinstall it (app\\Install.cmd).";
         if (AppDomain.CurrentDomain.DomainManager != null)
             return "Something has changed how .NET starts this program.\n\n" + AppName + " will not start. Reinstall it (app\\Install.cmd).";
+        // Locked first, so the files checked below are the files that will be loaded.
+        LockFolder();
+        Lock(Application.ExecutablePath);
+        Lock(Path.Combine(appDir, ContentDll));
+        foreach (string f in MicrosoftFiles) Lock(Path.Combine(appDir, f));
         SignatureInfo self = Signature(Application.ExecutablePath);
         if (!self.Intact) return Tampered(Path.GetFileName(Application.ExecutablePath), self);
         SignatureInfo content = Signature(Path.Combine(appDir, ContentDll));
@@ -404,8 +468,11 @@ static class Program
         {
             sb.AppendLine("SIGNED: the program and " + ContentDll + " (the page and every");
             sb.AppendLine("library - there are no loose script files) are signed by \"" + signature.Signer + "\"");
-            sb.AppendLine("and checked at every start; the WebView2 files must carry Microsoft's signature.");
-            sb.AppendLine("A changed, swapped or missing file stops the app.");
+            sb.AppendLine("and checked at every start; the WebView2 files must carry Microsoft's signature and be");
+            sb.AppendLine("the exact versions it was built with. A changed, swapped or missing file, or anything");
+            sb.AppendLine("extra in the program's folder, stops the app. The checked files stay locked while it");
+            sb.AppendLine("runs, Windows loads system DLLs only from System32, and the WebView2 engine must be");
+            sb.AppendLine("Microsoft's, from Program Files.");
             sb.AppendLine("     certificate " + signature.Thumbprint);
             sb.AppendLine("     " + (signature.Trusted ? "trusted by Windows"
                           : "made on this PC, not in Windows' trusted list (Trust-Certificate.cmd adds it)"));
@@ -600,6 +667,17 @@ static class Program
                 Close();
                 return;
             }
+            // The engine that was started must be Microsoft's WebView2 Runtime from a folder only an
+            // administrator can change, not another browser picked by a setting.
+            string engineProblem = CheckEngine((int)core.BrowserProcessId);
+            if (engineProblem != null)
+            {
+                MessageBox.Show(engineProblem + "\n\n" + AppName + " will not open documents. Repair or reinstall the Microsoft Edge WebView2 Runtime\n" +
+                                "(Settings > Apps) and remove any setting that points WebView2 to another browser folder.",
+                                AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                Close();
+                return;
+            }
             core.Settings.AreDevToolsEnabled = false;          // no F12 / Inspect
             core.Settings.AreHostObjectsAllowed = false;       // the page gets no access to .NET objects
             core.Settings.IsWebMessageEnabled = false;         // ...and no message channel to the program
@@ -666,6 +744,46 @@ static class Program
             catch { return true; }
             return !found;
         }
+
+        // null if the engine process is msedgewebview2.exe under Program Files with Microsoft's valid signature.
+        static string CheckEngine(int browserPid)
+        {
+            string path = ProcessPath(browserPid);
+            if (path == null) return "The WebView2 engine could not be checked.";
+            string real = RealPath(path) ?? path;
+            bool inProgramFiles = false;
+            foreach (Environment.SpecialFolder f in new[] { Environment.SpecialFolder.ProgramFilesX86, Environment.SpecialFolder.ProgramFiles })
+            {
+                string root = Environment.GetFolderPath(f);
+                if (root.Length > 0 && real.StartsWith(root.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase)) inProgramFiles = true;
+            }
+            if (!inProgramFiles || !Path.GetFileName(real).Equals("msedgewebview2.exe", StringComparison.OrdinalIgnoreCase))
+                return "The WebView2 engine was started from an unexpected place:\n" + real;
+            SignatureInfo s = Signature(real);
+            if (!s.Trusted || s.Subject.IndexOf("O=Microsoft Corporation,", StringComparison.Ordinal) < 0)
+                return "The WebView2 engine is not signed by Microsoft:\n" + real;
+            return null;
+        }
+
+        static string ProcessPath(int pid)
+        {
+            IntPtr h = OpenProcess(0x1000, false, pid);       // PROCESS_QUERY_LIMITED_INFORMATION
+            if (h == IntPtr.Zero) return null;
+            try
+            {
+                StringBuilder sb = new StringBuilder(1024);
+                int size = sb.Capacity;
+                return QueryFullProcessImageNameW(h, 0, sb, ref size) ? sb.ToString(0, size) : null;
+            }
+            finally { CloseHandle(h); }
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern bool QueryFullProcessImageNameW(IntPtr process, int flags, StringBuilder name, ref int size);
+        [DllImport("kernel32.dll")]
+        static extern bool CloseHandle(IntPtr h);
 
         // Earlier versions kept a normal browser history: the addresses - and so the file paths - of the
         // documents opened. Remove it; the window now runs InPrivate and writes none.
