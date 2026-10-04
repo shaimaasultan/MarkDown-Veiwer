@@ -36,6 +36,12 @@ foreach ($ext in '.md', '.markdown', '.mdown', '.mkd') {
         else { Remove-ItemProperty $extKey -Name '(default)' -ErrorAction SilentlyContinue }
     }
 }
+foreach ($ext in '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.bmp', '.svg', '.mp4', '.webm', '.mp3', '.wav', '.ogg') {
+    if (Test-Path "$classes\$ext\OpenWithProgids") {
+        Remove-ItemProperty "$classes\$ext\OpenWithProgids" -Name "$key.media" -ErrorAction SilentlyContinue
+    }
+}
+Remove-Item "$classes\$key.media" -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item "$classes\$progId" -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item "$classes\Applications\$key.exe" -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $backupKey -Recurse -Force -ErrorAction SilentlyContinue

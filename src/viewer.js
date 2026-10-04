@@ -359,6 +359,18 @@ function decodeBytes(buf) {
   }
 }
 
+// A picture, video or audio file opened on its own ("Open with"): shown as a one-line document with its
+// player or picture, so the viewer's tools (picture viewer, Images list, Save as PDF…) work on it too.
+function mediaEntry(path) {
+  const name = path.split('/').pop();
+  const alt = name.replace(/[\\[\]]/g, '\\$&');
+  return {
+    path, stamp: null,
+    text: `# ${alt}\n\n![${alt}](<${name.replace(/[<>]/g, encodeURIComponent)}>)\n`,
+    info: { bytes: 0, bom: 'none', name: 'picture, video or audio file (shown, not read as text)', validUtf8: true, note: '' }
+  };
+}
+
 // Documents visited by following links or the file list, for Back / Forward.
 const navBack = [], navFwd = [];
 let fileStamp = null;          // version of the open file on disk (auto-reload)
@@ -368,7 +380,7 @@ async function openDoc(path, anchor, { fromHistory = false, scroll = null } = {}
       !confirm('This document has unsaved replacements. Open another document and discard them?')) return false;
   const from = currentPath ? { path: currentPath, scroll: content.scrollTop } : null;
   let entry;
-  try { entry = await readDoc(path); }
+  try { entry = MEDIA_FILE.test(path) && !MD_RE.test(path) ? mediaEntry(path) : await readDoc(path); }
   catch (e) { alert(e.message); return false; }
   if (!fromHistory && from && key(from.path) !== key(entry.path)) { navBack.push(from); navFwd.length = 0; }
   currentPath = entry.path;
@@ -494,8 +506,26 @@ function renderDoc({ anchor = null, keepScroll = false } = {}) {
 // (HTML, SVG, scripts, PDFs, programs, …) is never linked; the link text stays but is inactive.
 const OPENABLE = /\.(png|jpe?g|gif|webp|avif|bmp|ico|mp4|webm|mp3|wav|ogg|txt)$/i;
 
+// Video and audio files the viewer plays (the app hands these out).
+const VIDEO_EXT = /\.(mp4|webm)$/i, AUDIO_EXT = /\.(mp3|wav|ogg)$/i;
+const MEDIA_FILE = /\.(png|jpe?g|gif|webp|avif|bmp|ico|svg|mp4|webm|mp3|wav|ogg)$/i;
+
 // Point images/figures/links at the files inside the chosen folder.
 function fixResources(root, baseDir) {
+  // Video and audio written like a picture - ![clip](clip.mp4), as GitHub allows - play in a player.
+  root.querySelectorAll('img[src]').forEach(img => {
+    const src = img.getAttribute('src');
+    const file = src.split(/[?#]/)[0];
+    const kind = VIDEO_EXT.test(file) ? 'video' : AUDIO_EXT.test(file) ? 'audio' : null;
+    if (!kind || isWeb(src)) return;
+    const media = document.createElement(kind);
+    media.setAttribute('src', src);
+    media.controls = true;
+    media.preload = 'metadata';
+    if (img.getAttribute('alt')) media.title = img.getAttribute('alt');
+    for (const a of ['width', 'height']) if (img.getAttribute(a)) media.setAttribute(a, img.getAttribute(a));
+    img.replaceWith(media);
+  });
   root.querySelectorAll('img[src], video[src], audio[src], source[src]').forEach(el => {
     const src = el.getAttribute('src');
     el.dataset.origSrc = src;

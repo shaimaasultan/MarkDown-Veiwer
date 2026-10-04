@@ -699,7 +699,12 @@ static class Program
             // Hand the request line to the handler, then turn its HTTP-style response
             // (status, headers incl. Content-Security-Policy, body) into a WebView2 response.
             Uri u = new Uri(e.Request.Uri);
-            byte[] request = Encoding.ASCII.GetBytes(e.Request.Method + " " + u.PathAndQuery + " HTTP/1.1\r\n\r\n");
+            // A video player asks for pieces of the file ("Range: bytes=start-end").
+            string range = null;
+            try { if (e.Request.Headers.Contains("Range")) range = e.Request.Headers.GetHeader("Range"); } catch { }
+            if (range != null && !Regex.IsMatch(range, @"^bytes=\d{0,18}-\d{0,18}$")) range = null;
+            byte[] request = Encoding.ASCII.GetBytes(e.Request.Method + " " + u.PathAndQuery + " HTTP/1.1\r\n" +
+                                                     (range != null ? "Range: " + range + "\r\n" : "") + "\r\n");
             InMemoryExchange io = new InMemoryExchange(request);
             try { HandleStream(io); } catch { }
             e.Response = ToResponse(io.Output.ToArray());
@@ -764,6 +769,9 @@ static class Program
         if (method != "GET" && !headOnly) { Send(stream, 405, "text/plain", Encoding.UTF8.GetBytes("Method not allowed"), null, false); return; }
 
         string target = requestLine[1];
+        string range = null;
+        foreach (string line in head.Split(new[] { "\r\n" }, StringSplitOptions.None))
+            if (line.StartsWith("Range:", StringComparison.OrdinalIgnoreCase)) range = line.Substring(6).Trim();
         int q = target.IndexOf('?');
         string path = q >= 0 ? target.Substring(0, q) : target;
 
@@ -782,7 +790,7 @@ static class Program
         }
         else if (rest == "info") SendInfo(stream, headOnly);
         else if (rest.StartsWith("app/", StringComparison.Ordinal)) SendAppFile(stream, Uri.UnescapeDataString(rest.Substring(4)), headOnly);
-        else if (rest.StartsWith("fs/", StringComparison.Ordinal)) SendDiskFile(stream, Uri.UnescapeDataString(rest.Substring(3)), headOnly);
+        else if (rest.StartsWith("fs/", StringComparison.Ordinal)) SendDiskFile(stream, Uri.UnescapeDataString(rest.Substring(3)), headOnly, range);
         else NotFound(stream);
     }
 
@@ -834,7 +842,7 @@ static class Program
         Send(s, 200, Mime(name), body, csp, headOnly);
     }
 
-    static void SendDiskFile(Stream s, string webPath, bool headOnly)
+    static void SendDiskFile(Stream s, string webPath, bool headOnly, string range)
     {
         string full;
         try { full = Path.GetFullPath(webPath.Replace('/', '\\')); }
@@ -861,7 +869,8 @@ static class Program
             return;
         }
         FileInfo info = new FileInfo(full);
-        if (info.Length > (TextTypes.Contains(Path.GetExtension(full)) ? MaxTextBytes : MaxMediaBytes))
+        bool text = TextTypes.Contains(Path.GetExtension(full));
+        if (text && info.Length > MaxTextBytes)
         {
             Send(s, 413, "text/plain", Encoding.UTF8.GetBytes("File too large"), null, headOnly);
             return;
@@ -873,7 +882,59 @@ static class Program
         // The version stamp lets the page notice when the file is saved again (auto-reload); a HEAD
         // request only asks for it, so the file itself is not read.
         string etag = "\"" + info.LastWriteTimeUtc.Ticks.ToString("x") + "-" + info.Length.ToString("x") + "\"";
+        if (!text) { SendMedia(s, full, info, csp, etag, headOnly, range); return; }
         Send(s, 200, Mime(full), headOnly ? new byte[0] : File.ReadAllBytes(full), csp, headOnly, etag);
+    }
+
+    // Pictures, video and audio. A player asks for pieces ("Range: bytes=start-end"), so a long video is
+    // read a few megabytes at a time and seeking is immediate, whatever the file's size. A file is read
+    // whole only when nothing asks for a piece, and then only up to MaxMediaBytes.
+    const long MaxChunk = 4L << 20;
+
+    static void SendMedia(Stream s, string full, FileInfo info, string csp, string etag, bool headOnly, string range)
+    {
+        long len = info.Length, start = 0, end = len - 1;
+        Match m = range == null ? Match.Empty : Regex.Match(range, @"^bytes=(\d{0,18})-(\d{0,18})$");
+        bool partial = m.Success && (m.Groups[1].Length > 0 || m.Groups[2].Length > 0);
+        if (partial)
+        {
+            if (m.Groups[1].Length == 0) start = Math.Max(0, len - long.Parse(m.Groups[2].Value));    // the last N bytes
+            else
+            {
+                start = long.Parse(m.Groups[1].Value);
+                if (m.Groups[2].Length > 0) end = Math.Min(long.Parse(m.Groups[2].Value), len - 1);
+            }
+            if (len == 0 || start >= len || start > end)
+            {
+                Send(s, 416, "text/plain", new byte[0], null, headOnly, null, "Content-Range: bytes */" + len + "\r\n");
+                return;
+            }
+            end = Math.Min(end, start + MaxChunk - 1);
+        }
+        else if (len > MaxMediaBytes)
+        {
+            Send(s, 413, "text/plain", Encoding.UTF8.GetBytes("File too large"), null, headOnly);
+            return;
+        }
+
+        byte[] body = new byte[0];
+        if (!headOnly && len > 0)
+        {
+            body = new byte[end - start + 1];
+            using (FileStream f = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            {
+                f.Seek(start, SeekOrigin.Begin);
+                int read = 0;
+                while (read < body.Length)
+                {
+                    int n = f.Read(body, read, body.Length - read);
+                    if (n <= 0) break;
+                    read += n;
+                }
+            }
+        }
+        string extra = "Accept-Ranges: bytes\r\n" + (partial ? "Content-Range: bytes " + start + "-" + end + "/" + len + "\r\n" : "");
+        Send(s, partial ? 206 : 200, Mime(full), body, csp, headOnly, etag, extra);
     }
 
     static void SendInfo(Stream s, bool headOnly)
@@ -935,11 +996,11 @@ static class Program
         Send(s, 404, "text/plain", Encoding.UTF8.GetBytes("Not found"), null, false);
     }
 
-    static void Send(Stream s, int status, string mime, byte[] body, string csp, bool headOnly, string etag = null)
+    static void Send(Stream s, int status, string mime, byte[] body, string csp, bool headOnly, string etag = null, string extra = null)
     {
-        string reason = status == 200 ? "OK" : status == 204 ? "No Content" : status == 403 ? "Forbidden"
-                      : status == 404 ? "Not Found" : status == 405 ? "Method Not Allowed"
-                      : status == 413 ? "Payload Too Large" : "Bad Request";
+        string reason = status == 200 ? "OK" : status == 204 ? "No Content" : status == 206 ? "Partial Content"
+                      : status == 403 ? "Forbidden" : status == 404 ? "Not Found" : status == 405 ? "Method Not Allowed"
+                      : status == 413 ? "Payload Too Large" : status == 416 ? "Range Not Satisfiable" : "Bad Request";
         StringBuilder h = new StringBuilder();
         h.Append("HTTP/1.1 ").Append(status).Append(' ').Append(reason).Append("\r\n");
         h.Append("Content-Type: ").Append(mime).Append("\r\n");
@@ -948,6 +1009,7 @@ static class Program
         h.Append("Referrer-Policy: no-referrer\r\n");
         if (csp != null) h.Append("Content-Security-Policy: ").Append(csp).Append("\r\n");
         if (etag != null) h.Append("ETag: ").Append(etag).Append("\r\n");
+        if (extra != null) h.Append(extra);
         h.Append("\r\n");
         byte[] hb = Encoding.ASCII.GetBytes(h.ToString());
         s.Write(hb, 0, hb.Length);

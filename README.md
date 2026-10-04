@@ -27,6 +27,8 @@ and never goes online.
 - **Diagram export**: save a Mermaid diagram as SVG or PNG from the figure viewer
 - **Save as web page**: one self-contained .html file with pictures, math fonts and diagrams embedded, and no scripts
 - **Save as PDF** with a contents page, the file name at the top and page numbers ("2 / 5") at the bottom of every page
+- **Video and audio**: `![clip](clip.mp4)` (as on GitHub) or `<video src="clip.mp4" controls>` plays in the page; .mp4, .webm, .mp3, .wav, .ogg. Videos are read a few MB at a time as they play, so any size works and seeking is instant
+- **Open pictures, video and audio directly**: right-click a file › Open with › Markdown Viewer (WebView2) shows it on its own page (the installer adds it to Open with only, never as the default app)
 - Light / dark / automatic theme; view settings are remembered
 
 ## Security

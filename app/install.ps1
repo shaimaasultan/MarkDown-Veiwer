@@ -12,6 +12,9 @@ $dest = Join-Path $env:LOCALAPPDATA "Programs\$key"
 $exe = Join-Path $dest $exeName
 $backupKey = "HKCU:\Software\$key"
 $exts = '.md', '.markdown', '.mdown', '.mkd'
+# Offered under "Open with" only - the installer never makes the viewer their default app.
+$mediaExts = '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.bmp', '.svg', '.mp4', '.webm', '.mp3', '.wav', '.ogg'
+$mediaProgId = "$key.media"
 
 # Windows can't replace a running program: close open viewer windows first.
 $running = @(Get-Process $key -ErrorAction SilentlyContinue)
@@ -78,6 +81,17 @@ foreach ($ext in $exts) {
     Set-Item -Path $extKey -Value $progId
     Set-ItemProperty $extKey -Name 'Content Type' -Value 'text/markdown'
     Set-ItemProperty $extKey -Name 'PerceivedType' -Value 'text'
+}
+
+# "Open with" for pictures, video and audio: shown in the viewer's own page.
+Set-Default "$classes\$mediaProgId" 'Picture, video or audio'
+Set-Default "$classes\$mediaProgId\DefaultIcon" "`"$exe`",0"
+Set-Default "$classes\$mediaProgId\shell\open\command" $command
+Set-ItemProperty "$classes\$mediaProgId\shell\open" -Name 'FriendlyAppName' -Value $name
+foreach ($ext in $mediaExts) {
+    Ensure-Key "$classes\$ext\OpenWithProgids"
+    Set-ItemProperty "$classes\$ext\OpenWithProgids" -Name $mediaProgId -Value ([byte[]]@()) -Type Binary
+    Set-ItemProperty "$appKey\SupportedTypes" -Name $ext -Value ''
 }
 
 # Start menu shortcuts: the viewer (no file: choose a folder / drag & drop) and the About window.
