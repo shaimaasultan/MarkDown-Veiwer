@@ -15,6 +15,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -95,6 +96,8 @@ static class Program
         }
     }
 
+    // Kept out of Main so that nothing from the WebView2 files is loaded before CheckSignatures has run.
+    [MethodImpl(MethodImplOptions.NoInlining)]
     static int Run(string[] args)
     {
         try { SetProcessDPIAware(); } catch { }
@@ -159,9 +162,17 @@ static class Program
     static SignatureInfo signature;          // this program's, after a successful check
 
     // The program and its Content DLL must be signed by the same certificate and unchanged since; the
-    // WebView2 files must carry Microsoft's valid signature.
+    // WebView2 files must carry Microsoft's valid signature and be exactly the files the program was built
+    // with (their SHA-256 is part of the signed program, so an older or other Microsoft file is refused too).
+    // A .config file next to the program could send .NET to load copies from elsewhere, unchecked: refused.
     static string CheckSignatures()
     {
+        string config = AppDomain.CurrentDomain.SetupInformation.ConfigurationFile;
+        if (!string.IsNullOrEmpty(config) && File.Exists(config))
+            return Path.GetFileName(Application.ExecutablePath) + ".config was found next to the program. It could make " + AppName +
+                   " load files other than the ones it checks.\n\n" + AppName + " will not start. Delete that file or reinstall it (app\\Install.cmd).";
+        if (AppDomain.CurrentDomain.DomainManager != null)
+            return "Something has changed how .NET starts this program.\n\n" + AppName + " will not start. Reinstall it (app\\Install.cmd).";
         SignatureInfo self = Signature(Application.ExecutablePath);
         if (!self.Intact) return Tampered(Path.GetFileName(Application.ExecutablePath), self);
         SignatureInfo content = Signature(Path.Combine(appDir, ContentDll));
@@ -171,10 +182,20 @@ static class Program
         foreach (string f in MicrosoftFiles)
         {
             SignatureInfo ms = Signature(Path.Combine(appDir, f));
-            if (!ms.Trusted || ms.Subject.IndexOf("O=Microsoft Corporation", StringComparison.Ordinal) < 0) return Tampered(f, ms);
+            if (!ms.Trusted || ms.Subject.IndexOf("O=Microsoft Corporation,", StringComparison.Ordinal) < 0) return Tampered(f, ms);
+            if (!PinnedFiles.Matches(f, Sha256(Path.Combine(appDir, f))))
+                return f + " cannot be trusted: it is signed by Microsoft but is not the version " + AppName +
+                       " was built with.\n\n" + AppName + " will not start. Reinstall it (app\\Install.cmd).";
         }
         signature = self;
         return null;
+    }
+
+    static string Sha256(string path)
+    {
+        using (SHA256 sha = SHA256.Create())
+        using (FileStream fs = File.OpenRead(path))
+            return BitConverter.ToString(sha.ComputeHash(fs)).Replace("-", "");
     }
 
     static string Tampered(string file, SignatureInfo s)
