@@ -51,10 +51,12 @@ and never goes online.
 - **Stays in the document's folder.** Folder links (junctions, symbolic links) cannot lead outside it, and very large files (over 50 MB of text or 200 MB of media) are not opened. A document cannot draw over the viewer's own controls, and a diagram cannot add CSS of its own.
 - **Blocked-code alert.** When a file contains code (scripts, event handlers, code links), a popup says so when it opens: nothing ran, and it is a file to be careful with elsewhere. If the window's security policy ever has to stop code itself, that is shown too.
 - **No copy-paste traps.** Text inside code examples cannot be hidden or restyled, so what you copy is what you see.
-- **Signed, no loose script files.** The page and every library are packed into `MarkdownViewerWebView2.Content.dll`. It and the program are signed with the same Authenticode certificate. At every start the program checks both signatures, plus Microsoft's signature on the WebView2 files, without going online, before any of them is loaded. The WebView2 files must also be exactly the ones the program was built with (their SHA-256 is part of the signed program), so an older or different Microsoft file is refused as well. If any of these files is changed, swapped or missing, the app does not start.
-- **Nothing extra in the program's folder.** Windows looks in a program's folder first for many DLLs, and .NET for its configuration. Anything there that isn't part of the app (a planted DLL, a `.config` file, a `.local` redirection folder) stops the start; reinstalling removes it.
+- **Signed, no loose script files.** The page and every library are packed into `MarkdownViewerWebView2.Content.dll`. It and the program are signed with the same Authenticode certificate. At every start the program checks both signatures, plus Microsoft's signature on the WebView2 files, without going online, before any of them is loaded. The WebView2 files must also be exactly the ones the program was built with (their SHA-256 is part of the signed program), so an older or different Microsoft file is refused as well. If any of these files is changed, swapped or missing, the app does not start. See [Signing](#signing).
+- **Nothing extra in the program's folder.** Windows looks in a program's folder first for many DLLs, and .NET for its configuration. Anything there that isn't part of the app (a planted DLL, a `.config`, `.manifest` or `.local` file or folder) stops the start; reinstalling removes it. Installed in Program Files (`Install-ProgramFiles.cmd`), the folder cannot be changed without administrator rights at all.
 - **Checked files stay locked.** From the check until the app closes, the program, the Content DLL and the WebView2 files cannot be changed, replaced, renamed or deleted, and neither can their folder, so what was checked is what gets loaded.
 - **Safe DLL loading.** The app turns on Windows' image-load protections at start: system DLLs come from System32 before any copy elsewhere, and never from a network share, a file written by a sandboxed process, the current folder or PATH.
+- **No startup hooks.** If environment variables would make .NET load a profiler or an AppDomain manager into the app (`COR_ENABLE_PROFILING`, `COR_PROFILER*`, `APPDOMAIN_MANAGER_*`), it refuses to start. `DOTNET_STARTUP_HOOKS` belongs to .NET Core and is never read by this .NET Framework app.
+- **Never as administrator by accident.** Opened with administrator rights (for example from an administrator prompt) while a normal start is possible, the app refuses and asks you to open the file normally. `Install.cmd` refuses to run as administrator too, so the app is always installed for your own account.
 - **Genuine engine.** After the WebView2 engine starts, the app checks that it is Microsoft's `msedgewebview2.exe`, signed and under Program Files (which only an administrator can change); otherwise no document is shown.
 - **No developer access.** Developer tools are off; the app refuses to show documents if WebView2 remote debugging has been switched on, or if it cannot check.
 - **Optional firewall rules.** `Firewall-Block.cmd` blocks all traffic in and out of `MarkdownViewerWebView2.exe` (needs administrator rights); `Firewall-Unblock.cmd` removes the rules.
@@ -68,12 +70,21 @@ and never goes online.
 ## Install
 
 1. Download or clone this repository.
-2. Run `app\Install.cmd`. It builds the app and installs it for the current user (no administrator rights) to
+2. Run `app\Install.cmd` (or `app\Install-ProgramFiles.cmd`, see below). It builds the app and installs it for the current user (no administrator rights) to
    `%LOCALAPPDATA%\Programs\MarkdownViewerWebView2`, with Start menu entries, a Settings › Apps entry and the
    `.md` / `.markdown` / `.mdown` / `.mkd` file association.
 3. If Windows asks which app to use the next time you open a `.md` file, pick **Markdown Viewer (WebView2)** and click **Always**.
 
-To remove it: Settings › Apps › Markdown Viewer (WebView2) › Uninstall, or run `app\Uninstall.cmd`.
+**Install in Program Files (recommended for security).** Run `app\Install-ProgramFiles.cmd` instead. It builds
+and signs the app as you, then asks once for administrator rights to copy it to
+`C:\Program Files\MarkdownViewerWebView2`, where only an administrator can change the program's files: no
+program running as you can replace them or put a DLL or `.config` file next to them. Everything else
+(file types, Start menu, Settings › Apps) stays in your own account, and an earlier per-user copy is removed.
+Existing firewall block rules are moved to the new location. From then on `Install.cmd` updates the
+Program Files copy (one UAC prompt each time).
+
+To remove it: Settings › Apps › Markdown Viewer (WebView2) › Uninstall, or run `app\Uninstall.cmd` (a Program
+Files copy asks once for administrator rights to delete its folder).
 
 ## Build only
 
@@ -85,7 +96,11 @@ Output goes to `app\dist\`. The build checks that the bundled libraries match th
 `viewer.js` and that the page loads nothing from the internet. It then packs the page and libraries into
 `MarkdownViewerWebView2.Content.dll` and signs the program and that DLL.
 
-**Signing certificate.** The first build creates a code-signing certificate on your PC named
+## Signing
+
+The program and `MarkdownViewerWebView2.Content.dll` are Authenticode-signed by every build, and the program checks both signatures - plus Microsoft's on the WebView2 files and their exact SHA-256 - at every start (see [Security](#security)).
+
+The first build creates a code-signing certificate on your PC named
 "Markdown Viewer (WebView2) Code Signing". It is stored in your personal certificate store, and its private
 key cannot be exported. Later builds reuse it. To sign with a certificate bought from a certificate
 authority instead, run:

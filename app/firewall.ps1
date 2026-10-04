@@ -7,7 +7,11 @@
 param([switch]$Remove, [string]$Exe, [string]$Log)
 $ErrorActionPreference = 'Stop'
 $group = 'Markdown Viewer (WebView2)'
-if (-not $Exe) { $Exe = Join-Path $env:LOCALAPPDATA 'Programs\MarkdownViewerWebView2\MarkdownViewerWebView2.exe' }
+if (-not $Exe) {
+    # The installed program: in Program Files (Install-ProgramFiles.cmd) or for this user only.
+    $Exe = Join-Path $env:ProgramFiles 'MarkdownViewerWebView2\MarkdownViewerWebView2.exe'
+    if (-not (Test-Path $Exe)) { $Exe = Join-Path $env:LOCALAPPDATA 'Programs\MarkdownViewerWebView2\MarkdownViewerWebView2.exe' }
+}
 if (-not $Log) { $Log = Join-Path $env:TEMP 'MarkdownViewerWebView2-firewall.log' }
 
 function Say($text) { Write-Host $text; Add-Content -Path $Log -Value $text -Encoding UTF8 }

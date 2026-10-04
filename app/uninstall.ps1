@@ -3,7 +3,10 @@ $ErrorActionPreference = 'Continue'
 $name = 'Markdown Viewer (WebView2)'
 $key = 'MarkdownViewerWebView2'
 $progId = "$key.md"
-$dest = Join-Path $env:LOCALAPPDATA "Programs\$key"
+$userDest = Join-Path $env:LOCALAPPDATA "Programs\$key"
+$machineDest = Join-Path $env:ProgramFiles $key
+$machine = Test-Path (Join-Path $machineDest "$key.exe")
+$dest = if ($machine) { $machineDest } else { $userDest }
 $backupKey = "HKCU:\Software\$key"
 $classes = 'HKCU:\Software\Classes'
 
@@ -55,6 +58,12 @@ Remove-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$key" -Re
 Add-Type -Namespace Win32 -Name Shell -MemberDefinition '[DllImport("shell32.dll")] public static extern void SHChangeNotify(int eventId, int flags, IntPtr item1, IntPtr item2);' -ErrorAction SilentlyContinue
 [Win32.Shell]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
 
-# The running script may live inside $dest, so delete the folder after this process exits.
-Start-Process cmd.exe -WindowStyle Hidden -ArgumentList "/c timeout /t 2 >nul & rmdir /s /q `"$dest`""
+# The running script may live inside the program folder, so delete it after this process exits.
+# A Program Files folder needs administrator rights to delete (one UAC prompt).
+$rmdir = @{ FilePath = 'cmd.exe'; WindowStyle = 'Hidden' }
+if (Test-Path $userDest) { Start-Process @rmdir -ArgumentList "/c timeout /t 2 >nul & rmdir /s /q `"$userDest`"" }
+if ($machine) {
+    try { Start-Process @rmdir -Verb RunAs -ArgumentList "/c timeout /t 2 >nul & rmdir /s /q `"$machineDest`"" }
+    catch { Write-Host "Administrator rights were not granted: delete $machineDest yourself to finish." }
+}
 Write-Host "$name was uninstalled."

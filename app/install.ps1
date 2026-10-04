@@ -1,6 +1,10 @@
-# Installs Markdown Viewer (WebView2) for the current user (no admin rights needed):
-#   %LOCALAPPDATA%\Programs\MarkdownViewerWebView2, Start menu entries, Settings > Apps entry,
-#   and the .md / .markdown / .mdown / .mkd file association.
+# Installs Markdown Viewer (WebView2) for the current user:
+#   the program in %LOCALAPPDATA%\Programs\MarkdownViewerWebView2 (no admin rights needed), or with
+#   -ProgramFiles in C:\Program Files\MarkdownViewerWebView2 (one UAC prompt, for the copy only: other
+#   programs running as you can then no longer change the program's files);
+#   Start menu entries, Settings > Apps entry and the .md / .markdown / .mdown / .mkd file association.
+# Once installed in Program Files, later runs (Install.cmd too) update it there.
+param([switch]$ProgramFiles)
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
 $name = 'Markdown Viewer (WebView2)'
@@ -8,13 +12,26 @@ $key = 'MarkdownViewerWebView2'
 $exeName = "$key.exe"
 $progId = "$key.md"
 $dist = Join-Path $here 'dist'
-$dest = Join-Path $env:LOCALAPPDATA "Programs\$key"
+$userDest = Join-Path $env:LOCALAPPDATA "Programs\$key"
+$machineDest = Join-Path $env:ProgramFiles $key
+$machine = $ProgramFiles -or (Test-Path (Join-Path $machineDest $exeName))
+$dest = if ($machine) { $machineDest } else { $userDest }
 $exe = Join-Path $dest $exeName
 $backupKey = "HKCU:\Software\$key"
 $exts = '.md', '.markdown', '.mdown', '.mkd'
 # Offered under "Open with" only - the installer never makes the viewer their default app.
 $mediaExts = '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.bmp', '.svg', '.mp4', '.webm', '.mp3', '.wav', '.ogg'
 $mediaProgId = "$key.media"
+
+# No administrator rights: run as administrator, the install could land in another account's profile and
+# the viewer would refuse to start elevated anyway. (With User Account Control off there is no other way.)
+$elevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+$uac = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -ErrorAction SilentlyContinue).EnableLUA -ne 0
+if ($elevated -and $uac) {
+    Write-Host "Install.cmd does not need administrator rights. Run it normally (double-click it, not 'Run as administrator')"
+    Write-Host "so that $name is installed for your own account."
+    exit 1
+}
 
 # Windows can't replace a running program: close open viewer windows first.
 $running = @(Get-Process $key -ErrorAction SilentlyContinue)
@@ -26,21 +43,27 @@ if ($running.Count) {
 
 # Always rebuild so the installed copy matches the current sources.
 & (Join-Path $here 'build.ps1')
-New-Item -ItemType Directory -Force $dest | Out-Null
-# The page and every library are inside the signed MarkdownViewerWebView2.Content.dll - no loose script files.
-foreach ($f in $exeName, 'MarkdownViewerWebView2.Content.dll', 'MarkdownViewer.ico',
-               'Microsoft.Web.WebView2.Core.dll', 'Microsoft.Web.WebView2.WinForms.dll', 'WebView2Loader.dll') {
-    Copy-Item (Join-Path $dist $f) $dest -Force
-}
-foreach ($f in 'uninstall.ps1', 'firewall.ps1', 'trust.ps1') { Copy-Item (Join-Path $here $f) $dest -Force }
-# Only the program's own files may be in its folder (the program refuses to start otherwise): remove
-# anything else - files earlier versions left behind (loose page files, lib\) or files put there since.
-$keep = $exeName, 'MarkdownViewerWebView2.Content.dll', 'MarkdownViewer.ico',
-        'Microsoft.Web.WebView2.Core.dll', 'Microsoft.Web.WebView2.WinForms.dll', 'WebView2Loader.dll',
-        'uninstall.ps1', 'firewall.ps1', 'trust.ps1'
-Get-ChildItem -LiteralPath $dest -Force | Where-Object { $keep -notcontains $_.Name -or $_.PSIsContainer } | ForEach-Object {
-    Write-Host "Removing $($_.Name) from the program folder (not part of $name)."
-    Remove-Item -LiteralPath $_.FullName -Recurse -Force
+# Copy the program (place.ps1 also removes anything in its folder that isn't part of it).
+if ($machine) {
+    # Only this step runs with administrator rights. Its output goes to a log file shown here.
+    $log = Join-Path $env:TEMP "$key-place.log"
+    Set-Content -Path $log -Value '' -Encoding UTF8
+    Write-Host "Copying the program to $dest (Windows asks for administrator rights)..."
+    $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$(Join-Path $here 'place.ps1')`"",
+                 '-Source', "`"$dist`"", '-Scripts', "`"$here`"", '-Dest', "`"$dest`"", '-Log', "`"$log`"")
+    try { $p = Start-Process powershell.exe -Verb RunAs -ArgumentList $argList -WindowStyle Hidden -PassThru -Wait }
+    catch { Write-Host 'Administrator rights were not granted; nothing was installed.'; exit 1 }
+    Get-Content $log | Where-Object { $_ } | ForEach-Object { Write-Host $_ }
+    Remove-Item $log -ErrorAction SilentlyContinue
+    if ($p.ExitCode -ne 0) { Write-Host 'The program could not be copied; nothing else was changed.'; exit 1 }
+    # The earlier per-user copy is no longer used.
+    if (Test-Path (Join-Path $userDest $exeName)) {
+        Remove-Item -LiteralPath $userDest -Recurse -Force
+        Write-Host "Removed the earlier copy in $userDest"
+    }
+} else {
+    & (Join-Path $here 'place.ps1') -Source $dist -Scripts $here -Dest $dest
+    if ($LASTEXITCODE -ne 0) { exit 1 }
 }
 
 # Create a registry key only if it's missing. (New-Item -Force would recreate an existing key and

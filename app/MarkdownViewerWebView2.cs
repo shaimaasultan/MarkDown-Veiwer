@@ -31,15 +31,15 @@ using Microsoft.Win32.SafeHandles;
 [assembly: AssemblyProduct("Markdown Viewer (WebView2)")]
 [assembly: AssemblyDescription("Previews Markdown files with figures, math and diagrams. Never runs code from a document.")]
 [assembly: AssemblyCopyright("Markdown Viewer")]
-[assembly: AssemblyVersion("1.8.1.0")]
-[assembly: AssemblyFileVersion("1.8.1.0")]
-[assembly: AssemblyInformationalVersion("1.8.1")]
+[assembly: AssemblyVersion("1.8.2.0")]
+[assembly: AssemblyFileVersion("1.8.2.0")]
+[assembly: AssemblyInformationalVersion("1.8.2")]
 
 static class Program
 {
     const string AppName = "Markdown Viewer (WebView2)";
     const string DataFolder = "MarkdownViewerWebView2";     // %APPDATA% (settings) and %LOCALAPPDATA% (browser data)
-    const string AppVersion = "1.8.1";
+    const string AppVersion = "1.8.2";
     // Exists only inside this program's windows. Not a .local name: Windows would first spend ~2 s
     // looking for a device called "mdviewer" on the local network before the page could load.
     const string PrivateHost = "https://mdviewer.example";
@@ -82,7 +82,7 @@ static class Program
             appDir = AppDomain.CurrentDomain.BaseDirectory;
             ProtectDllLoading();
             // Before anything is loaded from the WebView2 files or the Content DLL.
-            string problem = CheckFolder() ?? CheckSignatures();
+            string problem = CheckElevation() ?? CheckStartupHooks() ?? CheckFolder() ?? CheckSignatures();
             if (problem != null)
             {
                 MessageBox.Show(problem, AppName, MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -181,6 +181,55 @@ static class Program
     static extern bool SetDefaultDllDirectories(uint flags);
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool SetProcessMitigationPolicy(int policy, ref int buffer, IntPtr length);
+
+    // A document viewer never needs administrator rights. Started elevated by accident (a .md opened from
+    // an administrator prompt or another elevated program) while a normal start is possible, it refuses.
+    // With User Account Control off there is no normal start to fall back on, so it runs as it is.
+    static string CheckElevation()
+    {
+        IntPtr token;
+        if (!OpenProcessToken(GetCurrentProcess(), 0x0008 /* TOKEN_QUERY */, out token)) return null;
+        try
+        {
+            int type, size;
+            if (GetTokenInformation(token, 18 /* TokenElevationType */, out type, 4, out size) && type == 2 /* Full */)
+                return AppName + " was started with administrator rights. It never needs them, and a document\n" +
+                       "should not be viewed with them.\n\nOpen the file again normally (double-click it in File Explorer).";
+        }
+        finally { CloseHandle(token); }
+        return null;
+    }
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    static extern bool GetTokenInformation(IntPtr token, int infoClass, out int info, int length, out int returned);
+    [DllImport("kernel32.dll")]
+    static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll")]
+    static extern bool CloseHandle(IntPtr h);
+
+    // .NET Framework loads a profiler DLL (COR_ENABLE_PROFILING / COR_PROFILER) or an AppDomain manager
+    // (APPDOMAIN_MANAGER_ASM / _TYPE) named by environment variables into any .NET program at start. Neither
+    // has a place in this app: if one is set, it refuses to go on. (DOTNET_STARTUP_HOOKS is a .NET Core
+    // feature; .NET Framework never reads it.)
+    static string CheckStartupHooks()
+    {
+        List<string> found = new List<string>();
+        foreach (System.Collections.DictionaryEntry e in Environment.GetEnvironmentVariables())
+        {
+            string name = ((string)e.Key).ToUpperInvariant(), value = (e.Value as string ?? "").Trim();
+            if (value.Length == 0) continue;
+            if ((name == "COR_ENABLE_PROFILING" || name == "COMPLUS_ENABLEPROFILING") && value != "0") found.Add(e.Key as string);
+            else if (name.StartsWith("COR_PROFILER", StringComparison.Ordinal) || name.StartsWith("APPDOMAIN_MANAGER_", StringComparison.Ordinal))
+                found.Add(e.Key as string);
+        }
+        if (found.Count == 0) return null;
+        found.Sort(StringComparer.OrdinalIgnoreCase);
+        return "These settings would make .NET load extra code into " + AppName + ":\n\n  " + string.Join("\n  ", found) +
+               "\n\n" + AppName + " will not start. Remove them (Settings > System > About > Advanced system settings >\n" +
+               "Environment Variables) unless you know which program added them and why.";
+    }
 
     // Only the program's own files may be in its folder. Windows looks there first for many DLLs, and .NET
     // for configuration; an extra file or folder (a planted DLL, a ".local" redirection folder) stops the start.
@@ -782,8 +831,6 @@ static class Program
         static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         static extern bool QueryFullProcessImageNameW(IntPtr process, int flags, StringBuilder name, ref int size);
-        [DllImport("kernel32.dll")]
-        static extern bool CloseHandle(IntPtr h);
 
         // Earlier versions kept a normal browser history: the addresses - and so the file paths - of the
         // documents opened. Remove it; the window now runs InPrivate and writes none.
