@@ -240,9 +240,80 @@ function slugify(text) {
   return n ? `${s}-${n}` : s;
 }
 
+// ---------------------------------------------------------------- footnotes
+// [^label] in the text and "[^label]: note" anywhere in the file: numbered in order of first use and listed
+// at the end with links both ways, as on GitHub. Notes nobody refers to are not shown; a [^label] without
+// a note stays as plain text.
+const footnoteStore = { defs: new Map(), html: new Map(), order: new Map(), uses: new Map() };
+let lastFootnoteOrder = new Map();      // numbering of the last rendered document (for the Breakdown)
+const fnId = label => label.replace(/[^\p{L}\p{N}_-]/gu, c => '_' + c.codePointAt(0).toString(16));
+
+const footnoteDef = {
+  name: 'footnoteDef',
+  level: 'block',
+  start(src) {
+    const m = /(^|\n) {0,3}\[\^[^\]\s]+\]:/.exec(src);
+    return m ? m.index + m[1].length : undefined;
+  },
+  tokenizer(src) {
+    // The note: the rest of the line, plus following lines indented by 2+ spaces or a tab.
+    const m = /^ {0,3}\[\^([^\]\s]+)\]:[ \t]*([^\n]*(?:\n(?:[ \t]{2,}|\t)[^\n]*)*)(?:\n|$)/.exec(src);
+    if (!m) return;
+    const label = m[1].toLowerCase();
+    const token = { type: 'footnoteDef', raw: m[0], label, text: m[2].replace(/\n[ \t]+/g, '\n').trim(), tokens: [] };
+    this.lexer.inline(token.text, token.tokens);
+    if (!footnoteStore.defs.has(label)) footnoteStore.defs.set(label, token);
+    return token;
+  },
+  renderer(t) {
+    if (!footnoteStore.html.has(t.label)) footnoteStore.html.set(t.label, this.parser.parseInline(t.tokens));
+    return '';
+  }
+};
+
+const footnoteRef = {
+  name: 'footnoteRef',
+  level: 'inline',
+  start(src) {
+    const i = src.indexOf('[^');
+    return i < 0 ? undefined : i;
+  },
+  tokenizer(src) {
+    const m = /^\[\^([^\]\s]+)\]/.exec(src);
+    if (!m || !footnoteStore.defs.has(m[1].toLowerCase())) return;
+    return { type: 'footnoteRef', raw: m[0], label: m[1].toLowerCase() };
+  },
+  renderer(t) {
+    if (!footnoteStore.order.has(t.label)) footnoteStore.order.set(t.label, footnoteStore.order.size + 1);
+    const k = (footnoteStore.uses.get(t.label) || 0) + 1;
+    footnoteStore.uses.set(t.label, k);
+    const id = fnId(t.label);
+    return `<sup class="fn-ref"><a class="fn-link" href="#fn-${id}" id="fnref-${id}${k > 1 ? '-' + k : ''}">${footnoteStore.order.get(t.label)}</a></sup>`;
+  }
+};
+
+function footnotesHtml() {
+  lastFootnoteOrder = new Map(footnoteStore.order);
+  if (!footnoteStore.order.size) return '';
+  const items = [...footnoteStore.order.keys()].map(label => {
+    const id = fnId(label);
+    return `<li id="fn-${id}">${footnoteStore.html.get(label) || ''}<a class="fn-link fn-back" href="#fnref-${id}" aria-label="Back to the text"></a></li>`;
+  }).join('');
+  return `\n<section class="footnotes"><ol>${items}</ol></section>\n`;
+}
+
+const footnoteHooks = {
+  preprocess(src) {
+    footnoteStore.defs.clear(); footnoteStore.html.clear(); footnoteStore.order.clear(); footnoteStore.uses.clear();
+    return src;
+  },
+  postprocess(html) { return html + footnotesHtml(); }
+};
+
 const md = new marked.Marked({ gfm: true });
+md.use({ hooks: footnoteHooks });
 md.use({
-  extensions: [mathBlock, mathInline],
+  extensions: [mathBlock, mathInline, footnoteDef, footnoteRef],
   renderer: {
     heading({ tokens, depth, text }) {
       const inner = this.parser.parseInline(tokens);
@@ -471,6 +542,7 @@ function renderDoc({ anchor = null, keepScroll = false } = {}) {
   highlightCode(output);
   markHiddenChars(output);
   addCopyButtons(output);
+  addTableTools(output);
   output.querySelectorAll('.katex').forEach(k => { k.title = 'Click to copy the LaTeX'; });
   markZoomable(output);
   buildToc();
@@ -495,6 +567,7 @@ function renderDoc({ anchor = null, keepScroll = false } = {}) {
   copyBtn.disabled = false;
   findBtn.disabled = false;
   srcBtn.disabled = false;
+  cmpBtn.disabled = false;
   for (const li of fileList.children) li.classList.toggle('active', key(li.dataset.path) === key(currentPath));
 
   if (keepScroll) content.scrollTop = scroll;
@@ -629,6 +702,86 @@ function addCopyButtons(root) {
   });
 }
 
+// Tables: click a column header to sort by it (again: reverse; a third time: the original order).
+// "⧉ Copy" puts the table on the clipboard so it pastes into Excel or Word as cells; "⬇ CSV" saves it.
+// (Button labels are drawn by CSS, so they are not part of the document's text.)
+function tableCells(table) {
+  return [...table.rows].map(row => [...row.cells].map(cell => {
+    const c = cell.cloneNode(true);
+    c.querySelectorAll('.hc-badge').forEach(x => x.remove());
+    return c.textContent.replace(/\s+/g, ' ').trim();
+  }));
+}
+const tableTsv = table => tableCells(table).map(r => r.join('\t')).join('\r\n');
+const tableCsv = table => tableCells(table)
+  .map(r => r.map(v => /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v).join(',')).join('\r\n');
+
+function sortValue(text) {
+  const n = text.replace(/[\s,%$€£]/g, '');
+  return /\d/.test(n) && n !== '' && isFinite(Number(n)) ? Number(n) : null;
+}
+
+function addTableTools(root) {
+  root.querySelectorAll('table').forEach((table, index) => {
+    if (table.parentElement.classList.contains('table-tools')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'table-tools';
+    table.replaceWith(wrap);
+    wrap.append(table);
+    const bar = document.createElement('div');
+    bar.className = 'table-bar';
+    const button = (cls, title, onClick) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = cls;
+      b.title = title;
+      b.setAttribute('aria-label', title);
+      b.addEventListener('click', onClick);
+      bar.append(b);
+    };
+    button('table-copy', 'Copy the table — pastes into Excel or Word as cells', async () => {
+      showToast(await copyToClipboard(tableTsv(table)) ? 'Table copied — paste it into Excel or Word.' : 'Could not copy the table.');
+    });
+    button('table-csv', 'Save the table as a CSV file', async () => {
+      const base = (currentPath || 'table').split('/').pop().replace(MD_RE, '');
+      const csv = String.fromCharCode(0xFEFF) + tableCsv(table);         // the mark makes Excel read it as UTF-8
+      try {
+        const saved = await saveFileAs(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `${base}-table-${index + 1}.csv`,
+          { description: 'CSV table', accept: { 'text/csv': ['.csv'] } });
+        if (saved) showToast(`Saved “${saved}”.`);
+      } catch (e) { showToast(`Saving failed: ${e.message}`); }
+    });
+    wrap.prepend(bar);
+
+    const head = table.tHead && table.tHead.rows[0];
+    const body = table.tBodies[0];
+    if (!head || !body || body.rows.length < 2) return;
+    const original = [...body.rows];
+    [...head.cells].forEach((th, col) => {
+      th.classList.add('sortable');
+      th.tabIndex = 0;
+      th.title = 'Click to sort by this column';
+      const sort = () => {
+        const next = th.dataset.sort === 'asc' ? 'desc' : th.dataset.sort === 'desc' ? '' : 'asc';
+        head.querySelectorAll('th').forEach(h => { delete h.dataset.sort; });
+        let rows = original;
+        if (next) {
+          const key = r => (r.cells[col] ? r.cells[col].textContent.trim() : '');
+          rows = [...original].sort((a, b) => {
+            const x = key(a), y = key(b), nx = sortValue(x), ny = sortValue(y);
+            const c = nx !== null && ny !== null ? nx - ny : x.localeCompare(y, undefined, { numeric: true, sensitivity: 'base' });
+            return next === 'asc' ? c : -c;
+          });
+          th.dataset.sort = next;
+        }
+        body.append(...rows);
+      };
+      th.addEventListener('click', sort);
+      th.addEventListener('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); sort(); } });
+    });
+  });
+}
+
 function disableLink(a, reason) {
   a.removeAttribute('href');
   a.classList.add('link-disabled');
@@ -705,7 +858,7 @@ function updateStats() {
     !p.closest('table') && /[\p{L}\p{N}]/u.test(p.textContent) && (p.checkVisibility ? p.checkVisibility() : true)).length;
 
   // Links: everything that is a link in the document, including ones disabled in preview mode.
-  const linkEls = [...output.querySelectorAll('a')].filter(a => a.hasAttribute('href') || a.classList.contains('link-disabled'));
+  const linkEls = [...output.querySelectorAll('a')].filter(a => (a.hasAttribute('href') || a.classList.contains('link-disabled')) && !a.classList.contains('fn-link'));
   const disabledLinks = linkEls.filter(a => a.classList.contains('link-disabled')).length;
 
   const images = output.querySelectorAll('img').length;
@@ -2207,6 +2360,7 @@ copyMenu.addEventListener('keydown', ev => {
 
 const CAT = {
   frontMatter: 'Front matter (--- YAML ---)',
+  footnote: 'Footnote markers ([^1] and [^1]: …)',
   callout: 'Callout markers ([!NOTE] …)',
   blankLines: 'Empty lines',
   blankSpaces: 'Spaces on empty lines',
@@ -2354,6 +2508,11 @@ function analyzeDocument(source) {
           }
           break;
         }
+        case 'footnoteRef': {          // shown as its number
+          const v = String(lastFootnoteOrder.get(t.label) || '');
+          book(CAT.footnote, 0, len(raw) - len(v), W(raw) - W(v));
+          out += v; break;
+        }
         case 'mathInline': {
           // Shown as symbols, but equations aren't counted as words.
           const v = noWords(measureHtml(renderMath(t.text, t.display)).replace(/\n+/g, ' ').trim());
@@ -2469,6 +2628,10 @@ function analyzeDocument(source) {
         return leaf(t, v, CAT.table, c0, l0, w0, CAT.table);
       }
       case 'hr': return leaf(t, '', CAT.hr, c0, l0, w0, CAT.hr);
+      case 'footnoteDef': {           // listed at the end when something refers to it
+        if (!lastFootnoteOrder.has(t.label)) return leaf(t, '', CAT.footnote, c0, l0, w0, CAT.footnote);
+        return leaf(t, flow(inline(t.tokens)), CAT.footnote, c0, l0, w0);
+      }
       case 'def': return leaf(t, '', CAT.refDefs, c0, l0, w0, CAT.refDefs);
       case 'html': {
         const wasHidden = hidden();
@@ -2612,7 +2775,7 @@ async function renderDiagrams(root, forceTheme) {
 // Remembered view settings. The app stores them itself (in its settings file) and puts them on
 // <html data-…> before the page is shown; the standalone page uses localStorage. The first value is the default.
 const PREFS = { theme: ['auto', 'light', 'dark'], sidebar: ['shown', 'hidden'], toc: ['shown', 'hidden'], hiddenchars: ['off', 'on'],
-                pictures: ['shown', 'blocked'] };
+                pictures: ['shown', 'blocked'], size: ['normal', 'small', 'large', 'larger', 'largest'], width: ['normal', 'wide', 'full'] };
 
 function loadPref(name) {
   const values = PREFS[name];
@@ -2802,6 +2965,50 @@ function togglePictures() {
   showToast(next === 'blocked' ? 'Pictures are off — documents open without loading pictures.' : 'Pictures are on.');
 }
 picBtn.addEventListener('click', togglePictures);
+// ---------------------------------------------------------------- text size and page width
+// A− / A+ change the document's text size; ↔ switches the page between normal, wide and full width.
+// Both are remembered. (Printing and PDF keep their own size.)
+const SIZE_STEPS = ['small', 'normal', 'large', 'larger', 'largest'];
+const SIZE_NAMES = { small: 'Small', normal: 'Normal', large: 'Large', larger: 'Larger', largest: 'Largest' };
+const WIDTH_STEPS = ['normal', 'wide', 'full'];
+const WIDTH_NAMES = { normal: 'Normal', wide: 'Wide', full: 'Full window' };
+const sizeDown = document.getElementById('sizeDown');
+const sizeUp = document.getElementById('sizeUp');
+const widthBtn = document.getElementById('widthBtn');
+
+function updateSizeButtons() {
+  const i = SIZE_STEPS.indexOf(loadPrefLive('size'));
+  sizeDown.disabled = i <= 0;
+  sizeUp.disabled = i >= SIZE_STEPS.length - 1;
+  const name = SIZE_NAMES[SIZE_STEPS[i]];
+  sizeDown.title = `Smaller text (now: ${name})`;
+  sizeUp.title = `Larger text (now: ${name})`;
+  const w = loadPrefLive('width');
+  widthBtn.setAttribute('aria-label', `Page width: ${WIDTH_NAMES[w]}`);
+  widthBtn.title = `Page width: ${WIDTH_NAMES[w]} — click to change`;
+}
+function setViewPref(name, value) {
+  const scroll = content.scrollTop / Math.max(1, content.scrollHeight - content.clientHeight);
+  setRootPref(name, value);
+  savePref(name, value);
+  updateSizeButtons();
+  content.scrollTop = scroll * (content.scrollHeight - content.clientHeight);   // stay at the same place
+}
+function stepSize(dir) {
+  const i = SIZE_STEPS.indexOf(loadPrefLive('size'));
+  const next = SIZE_STEPS[Math.max(0, Math.min(SIZE_STEPS.length - 1, i + dir))];
+  if (next !== SIZE_STEPS[i]) setViewPref('size', next);
+}
+sizeDown.addEventListener('click', () => stepSize(-1));
+sizeUp.addEventListener('click', () => stepSize(1));
+widthBtn.addEventListener('click', () => {
+  const w = loadPrefLive('width');
+  setViewPref('width', WIDTH_STEPS[(WIDTH_STEPS.indexOf(w) + 1) % WIDTH_STEPS.length]);
+});
+setRootPref('size', loadPref('size'));
+setRootPref('width', loadPref('width'));
+updateSizeButtons();
+
 setRootPref('pictures', loadPref('pictures'));
 updatePicButton();
 
@@ -3011,7 +3218,7 @@ function linkInfo(a) {
 }
 
 function buildLinkList() {
-  const links = [...output.querySelectorAll('a')].filter(a => a.dataset.origHref || a.hasAttribute('href'));
+  const links = [...output.querySelectorAll('a')].filter(a => (a.dataset.origHref || a.hasAttribute('href')) && !a.classList.contains('fn-link'));
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
   linkList.replaceChildren();
   linkEntries = [];
@@ -3166,7 +3373,7 @@ const srcIsOpen = () => 'srcOpen' in document.documentElement.dataset;
 // Top-level blocks → the source line they start on (front matter counted).
 const BLOCK_TAGS = {
   heading: /^H[1-6]$/, paragraph: /^(P|DIV)$/, code: /^(PRE|DIV)$/, mathBlock: /^DIV$/, list: /^(UL|OL)$/,
-  table: /^TABLE$/, blockquote: /^BLOCKQUOTE$/, hr: /^HR$/
+  table: /^(TABLE|DIV)$/, blockquote: /^BLOCKQUOTE$/, hr: /^HR$/
 };
 function mapSourceLines() {
   const text = currentSource.replace(/\r\n|\r/g, '\n');
@@ -3222,6 +3429,195 @@ function buildSource() {
   document.getElementById('srcTitle').textContent = `Source · ${plural(lines.length, 'line')}`;
   syncSourceFromView();
 }
+
+// ---------------------------------------------------------------- compare two versions
+// This document (as shown, with any unsaved replacements) and another Markdown file, line by line: lines
+// only in the other file in red, lines only in this one in green, and inside a changed line the words that
+// changed. Unchanged stretches fold away (click to show them).
+const cmpDlg = document.getElementById('compare');
+const cmpBody = document.getElementById('cmpBody');
+const cmpSummary = document.getElementById('cmpSummary');
+const cmpOther = document.getElementById('cmpOther');
+const cmpFile = document.getElementById('cmpFile');
+const cmpBtn = document.getElementById('cmpBtn');
+const CMP_CONTEXT = 3;            // unchanged lines kept around each change
+const CMP_MAX_CELLS = 9e6;        // lines-left × lines-right still compared exactly
+let cmpOtherText = null, cmpOtherName = '', cmpChanges = [], cmpAt = -1;
+
+const splitLines = s => { const l = s.replace(/\r\n|\r/g, '\n').split('\n'); if (l.length > 1 && l[l.length - 1] === '') l.pop(); return l; };
+
+// Longest common subsequence of two arrays of keys → steps: ['=', i, j] / ['-', i] / ['+', j].
+function diffKeys(a, b, maxCells) {
+  let s = 0;
+  while (s < a.length && s < b.length && a[s] === b[s]) s++;
+  let ea = a.length, eb = b.length;
+  while (ea > s && eb > s && a[ea - 1] === b[eb - 1]) { ea--; eb--; }
+  const n = ea - s, m = eb - s;
+  if (n * m > maxCells || n > 65000 || m > 65000) return null;
+  const w = m + 1, L = new Uint16Array((n + 1) * w);
+  for (let i = n - 1; i >= 0; i--)
+    for (let j = m - 1; j >= 0; j--)
+      L[i * w + j] = a[s + i] === b[s + j] ? L[(i + 1) * w + j + 1] + 1 : Math.max(L[(i + 1) * w + j], L[i * w + j + 1]);
+  const out = [];
+  for (let k = 0; k < s; k++) out.push(['=', k, k]);
+  let i = 0, j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && a[s + i] === b[s + j]) { out.push(['=', s + i, s + j]); i++; j++; }
+    else if (j < m && (i === n || L[i * w + j + 1] >= L[(i + 1) * w + j])) { out.push(['+', s + j]); j++; }
+    else { out.push(['-', s + i]); i++; }
+  }
+  for (let k = 0; k < a.length - ea; k++) out.push(['=', ea + k, eb + k]);
+  return out;
+}
+
+// Inside a changed line: which words were removed / added.
+function wordMarks(oldLine, newLine) {
+  const tok = s => s.match(/\s+|[\p{L}\p{N}_]+|./gsu) || [];
+  const a = tok(oldLine), b = tok(newLine);
+  if (a.length > 1500 || b.length > 1500) return null;
+  return { a, b, steps: diffKeys(a, b, 2.5e6) };
+}
+
+function cmpText(el, text, marks, side) {
+  if (!marks || !marks.steps) { appendWithMarkers(el, text); return; }
+  for (const st of marks.steps) {
+    if (st[0] === '=') { if (side === 'a') appendWithMarkers(el, marks.a[st[1]]); else appendWithMarkers(el, marks.b[st[2]]); }
+    else if ((st[0] === '-' && side === 'a') || (st[0] === '+' && side === 'b')) {
+      const w = document.createElement('span');
+      w.className = side === 'a' ? 'cmp-w-del' : 'cmp-w-add';
+      appendWithMarkers(w, side === 'a' ? marks.a[st[1]] : marks.b[st[1]]);
+      el.append(w);
+    }
+  }
+}
+
+function runCompare() {
+  if (cmpOtherText === null) return;
+  const ignore = document.getElementById('cmpSpaces').checked;
+  const before = splitLines(cmpOtherText), after = splitLines(currentSource);
+  const norm = l => ignore ? l.replace(/\s+/g, ' ').trim() : l;
+  const ids = new Map();
+  const id = l => { const k = norm(l); if (!ids.has(k)) ids.set(k, ids.size); return ids.get(k); };
+  const steps = diffKeys(before.map(id), after.map(id), CMP_MAX_CELLS);
+  cmpChanges = [];
+  cmpAt = -1;
+  if (!steps) {
+    cmpBody.replaceChildren();
+    cmpSummary.className = 'cmp-summary bad';
+    cmpSummary.textContent = 'These files differ in too many lines to compare line by line here.';
+    return;
+  }
+
+  // Changed lines next to each other become pairs, so the words that changed can be marked.
+  const rows = [];
+  for (let k = 0; k < steps.length;) {
+    if (steps[k][0] === '=') { rows.push({ op: '=', a: steps[k][1], b: steps[k][2] }); k++; continue; }
+    const dels = [], adds = [];
+    while (k < steps.length && steps[k][0] !== '=') { (steps[k][0] === '-' ? dels : adds).push(steps[k][1]); k++; }
+    const block = [];
+    dels.forEach((a, x) => block.push({ op: '-', a, pair: x < adds.length ? adds[x] : null }));
+    adds.forEach((b, x) => block.push({ op: '+', b, pair: x < dels.length ? dels[x] : null }));
+    block[0].start = true;
+    rows.push(...block);
+  }
+  const added = rows.filter(r => r.op === '+').length, removed = rows.filter(r => r.op === '-').length;
+  const blocks = rows.filter(r => r.start).length;
+
+  // Which unchanged lines stay visible: those close to a change.
+  const keep = rows.map(r => r.op !== '=');
+  rows.forEach((r, i) => { if (r.op !== '=') for (let d = -CMP_CONTEXT; d <= CMP_CONTEXT; d++) if (rows[i + d]) keep[i + d] = true; });
+
+  const frag = document.createDocumentFragment();
+  const rowEl = r => {
+    const el = document.createElement('div');
+    el.className = 'cmp-row ' + (r.op === '-' ? 'del' : r.op === '+' ? 'add' : 'same');
+    const na = document.createElement('span'); na.className = 'cmp-n'; na.textContent = r.op === '+' ? '' : r.a + 1;
+    const nb = document.createElement('span'); nb.className = 'cmp-n'; nb.textContent = r.op === '-' ? '' : r.b + 1;
+    const mk = document.createElement('span'); mk.className = 'cmp-mark'; mk.textContent = r.op === '=' ? '' : r.op === '-' ? '−' : '+';
+    const tx = document.createElement('span'); tx.className = 'cmp-text';
+    if (r.op === '=') appendWithMarkers(tx, after[r.b]);
+    else if (r.op === '-') cmpText(tx, before[r.a], r.pair !== null ? wordMarks(before[r.a], after[r.pair]) : null, 'a');
+    else cmpText(tx, after[r.b], r.pair !== null ? wordMarks(before[r.pair], after[r.b]) : null, 'b');
+    el.append(na, nb, mk, tx);
+    if (r.start) cmpChanges.push(el);
+    return el;
+  };
+  for (let i = 0; i < rows.length;) {
+    if (keep[i]) { frag.append(rowEl(rows[i])); i++; continue; }
+    const from = i;
+    while (i < rows.length && !keep[i]) i++;
+    const hiddenRows = rows.slice(from, i);
+    const fold = document.createElement('button');
+    fold.type = 'button';
+    fold.className = 'cmp-fold';
+    fold.textContent = `⋯ ${plural(hiddenRows.length, 'unchanged line')} — click to show`;
+    fold.addEventListener('click', () => fold.replaceWith(...hiddenRows.map(rowEl)));
+    frag.append(fold);
+  }
+  cmpBody.replaceChildren(frag);
+  cmpBody.scrollTop = 0;
+  cmpSummary.className = 'cmp-summary ' + (blocks ? 'warn' : 'ok');
+  cmpSummary.textContent = blocks
+    ? `${plural(blocks, 'change')}: ${plural(removed, 'line')} only in “${cmpOtherName}” (red), ${plural(added, 'line')} only in this document (green)` +
+      (ignore ? ' · spaces ignored' : '')
+    : `✓ No differences${ignore ? ' (ignoring spaces)' : ''}.`;
+  if (blocks) stepCompare(1);
+}
+
+function stepCompare(dir) {
+  if (!cmpChanges.length) return;
+  cmpChanges[cmpAt]?.classList.remove('cmp-current');
+  cmpAt = (cmpAt + dir + cmpChanges.length) % cmpChanges.length;
+  const el = cmpChanges[cmpAt];
+  el.classList.add('cmp-current');
+  el.scrollIntoView({ block: 'center' });
+  document.getElementById('cmpPos').textContent = `${cmpAt + 1} / ${cmpChanges.length}`;
+}
+
+function openCompare() {
+  if (!currentPath) return;
+  document.getElementById('cmpThis').textContent = fileName(currentPath) + (isEdited() ? ' (with unsaved replacements)' : '');
+  cmpOther.replaceChildren(new Option('Choose the other version…', ''));
+  for (const p of mdPaths) {
+    if (key(p) === key(currentPath)) continue;
+    cmpOther.append(new Option(listBase && key(p).startsWith(key(listBase)) ? p.slice(listBase.length) : p, p));
+  }
+  cmpOther.value = '';
+  cmpOtherText = null;
+  cmpChanges = [];
+  document.getElementById('cmpPos').textContent = '';
+  cmpBody.replaceChildren();
+  cmpSummary.className = 'cmp-summary';
+  cmpSummary.textContent = 'Pick the other version: a Markdown file from this folder, or “Other file…” for one anywhere on your PC.';
+  cmpDlg.showModal();
+}
+
+cmpOther.addEventListener('change', async () => {
+  if (!cmpOther.value) return;
+  try {
+    const entry = await readDoc(cmpOther.value);
+    cmpOtherText = entry.text;
+    cmpOtherName = fileName(entry.path);
+    runCompare();
+  } catch (e) { cmpSummary.className = 'cmp-summary bad'; cmpSummary.textContent = e.message; }
+});
+document.getElementById('cmpBrowse').addEventListener('click', () => cmpFile.click());
+cmpFile.addEventListener('change', async () => {
+  const f = cmpFile.files[0];
+  cmpFile.value = '';
+  if (!f) return;
+  try {
+    cmpOtherText = decodeBytes(await f.arrayBuffer()).text;
+    cmpOtherName = f.name;
+    cmpOther.value = '';
+    runCompare();
+  } catch (e) { cmpSummary.className = 'cmp-summary bad'; cmpSummary.textContent = `Could not read ${f.name}: ${e.message}`; }
+});
+document.getElementById('cmpSpaces').addEventListener('change', runCompare);
+document.getElementById('cmpPrev').addEventListener('click', () => stepCompare(-1));
+document.getElementById('cmpNext').addEventListener('click', () => stepCompare(1));
+document.getElementById('cmpClose').addEventListener('click', () => cmpDlg.close());
+cmpBtn.addEventListener('click', openCompare);
 
 // Programmatic scrolling of one side must not scroll the other side back.
 let quietView = 0, quietSrc = 0;
@@ -3733,7 +4129,7 @@ async function exportHtml() {
     if (dark) await renderDiagrams(output, 'default');
     const clone = output.cloneNode(true);
     if (dark) await renderDiagrams(output);
-    clone.querySelectorAll('.code-copy, .hc-badge, .print-toc').forEach(e => e.remove());
+    clone.querySelectorAll('.code-copy, .hc-badge, .print-toc, .table-bar').forEach(e => e.remove());
     let pictures = 0, left = 0;
     for (const img of clone.querySelectorAll('img')) {
       const src = img.getAttribute('src');

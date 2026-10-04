@@ -1028,7 +1028,9 @@ static class Program
         { "sidebar", new[] { "shown", "hidden" } },
         { "toc",     new[] { "shown", "hidden" } },
         { "hiddenchars", new[] { "off", "on" } },
-        { "pictures", new[] { "shown", "blocked" } }
+        { "pictures", new[] { "shown", "blocked" } },
+        { "size", new[] { "normal", "small", "large", "larger", "largest" } },
+        { "width", new[] { "normal", "wide", "full" } }
     };
     static readonly object prefLock = new object();
 

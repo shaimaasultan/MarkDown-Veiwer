@@ -489,6 +489,72 @@
     .ins-table code { font-size: .8rem; background: var(--code-bg); padding: .1em .35em; border-radius: 4px; white-space: nowrap; }
     @media (max-width: 520px) { .ins-dl { grid-template-columns: 1fr; } .ins-dl dd { margin-bottom: .4rem; } }
 
+    /* ---- Text size and page width (screen only; printing keeps its own) ---- */
+    @media screen {
+      :root[data-size="small"] .markdown-body { font-size: 14px; }
+      :root[data-size="large"] .markdown-body { font-size: 18px; }
+      :root[data-size="larger"] .markdown-body { font-size: 20px; }
+      :root[data-size="largest"] .markdown-body { font-size: 23px; }
+      :root[data-width="wide"] .markdown-body { max-width: 1320px; }
+      :root[data-width="full"] .markdown-body { max-width: none; }
+    }
+
+    /* ---- Footnotes ---- */
+    .markdown-body .fn-ref a { text-decoration: none; padding: 0 .12em; }
+    .markdown-body .footnotes { margin-top: 2.5rem; padding-top: .75rem; border-top: 1px solid var(--border); font-size: .88em; color: var(--muted); }
+    .markdown-body .footnotes::before { content: 'Footnotes'; display: block; font-weight: 600; color: var(--fg); margin-bottom: .4rem; }
+    .markdown-body .fn-back { text-decoration: none; margin-inline-start: .3em; }
+    .markdown-body .fn-back::after { content: '↩'; }
+
+    /* ---- Table tools ---- */
+    .table-tools { position: relative; padding-top: 1.75rem; width: fit-content; max-width: 100%; }
+    .table-bar { position: absolute; top: 0; right: 0; display: flex; gap: .35rem; }
+    .table-bar button {
+      border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--muted);
+      font: 600 .72rem/1 system-ui, sans-serif; padding: .3rem .5rem; cursor: pointer; opacity: .7;
+    }
+    .table-bar button:hover { opacity: 1; color: var(--accent); border-color: var(--accent); }
+    .table-copy::before { content: '⧉ Copy'; }
+    .table-csv::before { content: '⬇ CSV'; }
+    .markdown-body th.sortable { cursor: pointer; user-select: none; }
+    .markdown-body th.sortable::after { content: ' ⇅'; color: var(--muted); font-weight: 400; font-size: .8em; }
+    .markdown-body th[data-sort="asc"]::after { content: ' ▲'; color: var(--accent); }
+    .markdown-body th[data-sort="desc"]::after { content: ' ▼'; color: var(--accent); }
+    @media print { .table-bar { display: none !important; } .table-tools { padding-top: 0; } .markdown-body th.sortable::after { content: none; } }
+
+    /* ---- Compare two versions ---- */
+    dialog#compare {
+      width: min(1200px, calc(100vw - 32px)); height: calc(100vh - 48px); padding: 1rem 1.25rem;
+      border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--fg);
+    }
+    dialog#compare[open] { display: flex; flex-direction: column; }
+    dialog#compare::backdrop { background: rgba(0, 0, 0, .55); }
+    .cmp-head h2 { margin: 0 0 .5rem; font-size: 1.15rem; }
+    .cmp-pick { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; font-size: .88rem; }
+    .cmp-pick select { max-width: 360px; padding: .3rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); }
+    .cmp-vs { color: var(--muted); }
+    .cmp-opt { color: var(--muted); }
+    .cmp-summary { margin: .6rem 0; padding: .45rem .7rem; border-radius: 6px; font-size: .88rem; background: var(--panel); }
+    .cmp-summary.ok { color: var(--ok); background: var(--ok-bg); }
+    .cmp-summary.warn { color: var(--warn-fg); background: var(--warn-bg2); }
+    .cmp-summary.bad { color: var(--bad); background: var(--bad-bg); }
+    #cmpBody { flex: 1; overflow: auto; border: 1px solid var(--border); border-radius: 6px; font: .8rem/1.55 ui-monospace, Consolas, monospace; }
+    .cmp-row { display: grid; grid-template-columns: 3.4rem 3.4rem 1.4rem 1fr; }
+    .cmp-n { color: var(--muted); text-align: right; padding-right: .5rem; user-select: none; }
+    .cmp-mark { text-align: center; user-select: none; font-weight: 700; }
+    .cmp-text { white-space: pre-wrap; word-break: break-all; padding-right: .6rem; unicode-bidi: plaintext; }
+    .cmp-row.del { background: rgba(207, 34, 46, .1); }
+    .cmp-row.add { background: rgba(26, 127, 55, .1); }
+    .cmp-row.del .cmp-mark { color: var(--bad); }
+    .cmp-row.add .cmp-mark { color: var(--ok); }
+    .cmp-w-del { background: rgba(207, 34, 46, .3); border-radius: 2px; text-decoration: line-through; }
+    .cmp-w-add { background: rgba(26, 127, 55, .3); border-radius: 2px; }
+    .cmp-row.cmp-current { box-shadow: inset 3px 0 0 var(--accent); }
+    .cmp-fold { display: block; width: 100%; border: 0; border-block: 1px dashed var(--border); background: var(--panel); color: var(--muted); padding: .2rem; font: .75rem system-ui, sans-serif; cursor: pointer; }
+    .cmp-fold:hover { color: var(--accent); }
+    dialog#compare .actions { display: flex; align-items: center; gap: .5rem; justify-content: flex-end; margin-top: .75rem; }
+    #cmpPos { margin-right: auto; color: var(--muted); font-size: .85rem; }
+
     /* ---- A picture's text (like Notepad) ---- */
     dialog#textView {
       width: min(1100px, calc(100vw - 32px)); height: calc(100vh - 48px); padding: 1rem 1.25rem;
@@ -626,6 +692,7 @@
     <button id="imgBtn" class="btn secondary" disabled title="Show/hide the list of pictures in this document (Ctrl+Shift+G)">🖼️ Images</button>
     <button id="linkBtn" class="btn secondary" disabled title="Show/hide the list of links in this document (Ctrl+Shift+L)">🔗 Links</button>
     <button id="srcBtn" class="btn secondary" disabled title="Show the Markdown source next to the document (Ctrl+Shift+U)">&lt;/&gt; Source</button>
+    <button id="cmpBtn" class="btn secondary" disabled title="Compare this document with another version">⇄ Compare</button>
     <div class="menu-wrap">
       <button id="copyBtn" class="btn secondary" disabled aria-haspopup="menu" aria-expanded="false"
               title="Save or copy the document without hidden characters">💾 Export ▾</button>
@@ -643,6 +710,9 @@
     </div>
     <button id="hiddenBtn" class="btn secondary" title="Show invisible characters in the document (Ctrl+Shift+H)">¶ Hidden</button>
     <button id="picBtn" class="btn secondary" aria-pressed="true">🖼️ Pictures on</button>
+    <button id="sizeDown" class="btn secondary icon" aria-label="Smaller text">A−</button>
+    <button id="sizeUp" class="btn secondary icon" aria-label="Larger text">A+</button>
+    <button id="widthBtn" class="btn secondary icon">↔</button>
     <button id="themeBtn" class="btn secondary" title="Theme: follow Windows, light or dark">🖥️ Auto</button>
     <button id="aboutBtn" class="btn secondary" title="Versions and sources of the libraries used">ℹ️ About</button>
   </header>
@@ -707,6 +777,28 @@
     <div class="actions">
       <button id="insHighlight" class="btn secondary" title="Turn on ¶ Hidden: label every invisible character in the document">¶ Highlight in document</button>
       <button id="insClose" class="btn">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="compare" aria-labelledby="cmpTitle">
+    <div class="cmp-head">
+      <h2 id="cmpTitle">⇄ Compare</h2>
+      <div class="cmp-pick">
+        <span>This document: <b id="cmpThis"></b></span>
+        <span class="cmp-vs">compared with</span>
+        <select id="cmpOther" aria-label="The other version"></select>
+        <button id="cmpBrowse" class="btn secondary" type="button">📄 Other file…</button>
+        <input type="file" id="cmpFile" accept=".md,.markdown,.mdown,.mkd,.txt" hidden>
+        <label class="cmp-opt"><input type="checkbox" id="cmpSpaces"> Ignore spaces</label>
+      </div>
+      <div id="cmpSummary" class="cmp-summary"></div>
+    </div>
+    <div id="cmpBody"></div>
+    <div class="actions">
+      <span id="cmpPos"></span>
+      <button id="cmpPrev" class="btn secondary" type="button">↑ Previous change</button>
+      <button id="cmpNext" class="btn secondary" type="button">↓ Next change</button>
+      <button id="cmpClose" class="btn" type="button">Close</button>
     </div>
   </dialog>
 

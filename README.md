@@ -31,6 +31,10 @@ and never goes online.
 - **Open pictures, video and audio directly**: right-click a file › Open with › Markdown Viewer (WebView2) shows it on its own page (the installer adds it to Open with only, never as the default app)
 - **Pictures on / off** (Ctrl+Shift+B, remembered): with pictures off, documents open without loading any picture - each shows its text (or file name) instead; right-click a placeholder › Load picture (or Load all pictures) to show it
 - **Picture as text**: "</> Text" in the picture viewer shows the picture file the way Notepad would open it (SVG as its text, PNG/JPG as their bytes)
+- **Text size and page width**: A− / A+ (small to largest) and ↔ (normal, wide, full window), remembered; printing keeps its own size
+- **Footnotes**: `[^1]` in the text and `[^1]: note` anywhere - numbered in order of use and listed at the end with links both ways, as on GitHub
+- **Table tools**: click a column header to sort (numbers sort as numbers; again to reverse, a third time for the original order); ⧉ Copy pastes the table into Excel or Word as cells; ⬇ CSV saves it
+- **Compare two versions** (⇄ Compare): this document against another Markdown file from the folder or anywhere on the PC - lines only in one version in red or green, changed words marked inside changed lines, unchanged stretches folded, Previous / Next change, optional "ignore spaces"
 - Light / dark / automatic theme; view settings are remembered
 
 ## Security
