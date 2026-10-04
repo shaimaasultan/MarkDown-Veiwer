@@ -371,6 +371,7 @@ async function openDoc(path, anchor) {
   currentInfo = entry.info;
   resetEdits();
   renderDoc({ anchor });
+  alertBlockedCode();
 }
 
 // Renders currentSource (the file as read, or as edited by Find & Replace).
@@ -1426,6 +1427,56 @@ function showSafety() {
   dlg.scrollTop = 0;          // start at the verdict, not at the focused Close button
 }
 document.getElementById('sfClose').addEventListener('click', () => document.getElementById('safety').close());
+
+// ---------------------------------------------------------------- blocked-code alert
+// Code in a document never runs here (preview only). When a file contains code, the viewer says so
+// once, when the file is opened. And if the window's security policy ever has to stop something, code
+// got past the sanitizer: that is shown too, as a viewer bug to report.
+const CODE_FINDINGS = new Set(['active', 'handlers', 'codelink', 'scheme']);
+
+function showCodeAlert(text, items, policy) {
+  const dlg = document.getElementById('codeAlert');
+  document.getElementById('caTitle').textContent = policy
+    ? '⚠ The security policy stopped code from running'
+    : '⚠ This file contains code — it was blocked';
+  document.getElementById('caFile').textContent = currentPath || '';
+  document.getElementById('caText').textContent = text;
+  document.getElementById('caList').replaceChildren(...items.map(t => {
+    const li = document.createElement('li');
+    li.textContent = t;
+    return li;
+  }));
+  document.getElementById('caReport').hidden = !lastSafety;
+  if (!dlg.open) dlg.showModal();
+}
+
+function alertBlockedCode() {
+  const found = (lastSafety?.findings || [])
+    .filter(f => CODE_FINDINGS.has(f.id) || (f.id === 'diagramcmd' && f.level === 'risk'));
+  if (!found.length) return;
+  showCodeAlert('Nothing in it ran here: the code was removed before the file was shown. ' +
+    'In a browser or another Markdown viewer it could run, so be careful where else you open this file.',
+    found.map(f => `${f.title} (${fmt(f.count)})`), false);
+}
+
+// The browser's own report when the security policy blocks something. Only code-related blocks count;
+// eval inside the bundled libraries is not something a document can cause.
+const CODE_DIRECTIVES = /^(script-src|script-src-elem|script-src-attr|object-src|frame-src|child-src|worker-src|form-action|base-uri)$/;
+const policyBlocks = [];
+document.addEventListener('securitypolicyviolation', e => {
+  const directive = e.effectiveDirective || e.violatedDirective || '';
+  if (!CODE_DIRECTIVES.test(directive) || /^(wasm-)?eval$/.test(e.blockedURI)) return;
+  policyBlocks.push(`${directive}: ${e.blockedURI || 'code written into the page'}` +
+                    (e.sample ? ` — “${e.sample.slice(0, 60)}”` : ''));
+  showCodeAlert('The window refused to run it, so nothing happened. It should already have been removed ' +
+    'before display, so this is a gap in the viewer worth reporting (with the file).', policyBlocks.slice(-8), true);
+});
+
+document.getElementById('caOk').addEventListener('click', () => document.getElementById('codeAlert').close());
+document.getElementById('caReport').addEventListener('click', () => {
+  document.getElementById('codeAlert').close();
+  showSafety();
+});
 
 // ---------------------------------------------------------------- ¶ Hidden: show invisible characters in place
 const SHORT_NAMES = {
