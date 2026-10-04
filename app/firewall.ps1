@@ -5,6 +5,10 @@
 # The app needs no network access, so the rules change nothing in how it works. They do not cover the
 # WebView2 engine (msedgewebview2.exe), which Windows shares with other apps.
 param([switch]$Remove, [string]$Exe, [string]$Log)
+# Run with administrator rights, PowerShell would otherwise look for commands such as New-NetFirewallRule
+# in the user's own module folder (Documents) first: a look-alike module there would run as administrator.
+# Only Windows PowerShell's own modules, from its system folder (set before any command is used).
+$env:PSModulePath = "$PSHOME\Modules"
 $ErrorActionPreference = 'Stop'
 $group = 'Markdown Viewer (WebView2)'
 if (-not $Exe) {
@@ -23,7 +27,9 @@ if (-not $admin) {
     Set-Content -Path $Log -Value "$(Get-Date -Format s)  $(if ($Remove) { 'remove' } else { 'add' }) block rules" -Encoding UTF8
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-Exe', "`"$Exe`"", '-Log', "`"$Log`"")
     if ($Remove) { $argList += '-Remove' }
-    try { $p = Start-Process powershell.exe -Verb RunAs -ArgumentList $argList -PassThru -Wait }
+    # Windows PowerShell by its full path, not whichever powershell.exe comes first on PATH.
+    $psExe = Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
+    try { $p = Start-Process $psExe -Verb RunAs -ArgumentList $argList -PassThru -Wait }
     catch { Write-Host 'Administrator rights were not granted; nothing was changed.'; exit 1 }
     exit $p.ExitCode
 }

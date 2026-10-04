@@ -4,6 +4,10 @@
 # asks for a different administrator account. Output also goes to -Log, which install.ps1 shows.
 param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$Scripts,
       [Parameter(Mandatory)][string]$Dest, [string]$Log)
+# Run with administrator rights, PowerShell would otherwise look for commands such as Copy-Item in the
+# user's own module folder (Documents) first: a look-alike module there would run as administrator.
+# Only Windows PowerShell's own modules, from its system folder (set before any command is used).
+$env:PSModulePath = "$PSHOME\Modules"
 $ErrorActionPreference = 'Stop'
 $name = 'Markdown Viewer (WebView2)'
 $exeName = 'MarkdownViewerWebView2.exe'

@@ -5,6 +5,9 @@
 #   Start menu entries, Settings > Apps entry and the .md / .markdown / .mdown / .mkd file association.
 # Once installed in Program Files, later runs (Install.cmd too) update it there.
 param([switch]$ProgramFiles)
+# Only Windows PowerShell's own modules, from its system folder: a look-alike command in the user's module
+# folder (Documents) could otherwise run in place of Start-Process and change what the UAC prompt starts.
+$env:PSModulePath = "$PSHOME\Modules"
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
 $name = 'Markdown Viewer (WebView2)'
@@ -51,7 +54,10 @@ if ($machine) {
     Write-Host "Copying the program to $dest (Windows asks for administrator rights)..."
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$(Join-Path $here 'place.ps1')`"",
                  '-Source', "`"$dist`"", '-Scripts', "`"$here`"", '-Dest', "`"$dest`"", '-Log', "`"$log`"")
-    try { $p = Start-Process powershell.exe -Verb RunAs -ArgumentList $argList -WindowStyle Hidden -PassThru -Wait }
+    # Windows PowerShell by its full path (not whichever powershell.exe comes first on PATH); place.ps1
+    # itself only uses Windows PowerShell's own modules.
+    $psExe = Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
+    try { $p = Start-Process $psExe -Verb RunAs -ArgumentList $argList -WindowStyle Hidden -PassThru -Wait }
     catch { Write-Host 'Administrator rights were not granted; nothing was installed.'; exit 1 }
     Get-Content $log | Where-Object { $_ } | ForEach-Object { Write-Host $_ }
     Remove-Item $log -ErrorAction SilentlyContinue

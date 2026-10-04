@@ -80,7 +80,10 @@ and signs the app as you, then asks once for administrator rights to copy it to
 `C:\Program Files\MarkdownViewerWebView2`, where only an administrator can change the program's files: no
 program running as you can replace them or put a DLL or `.config` file next to them. Everything else
 (file types, Start menu, Settings › Apps) stays in your own account, and an earlier per-user copy is removed.
-Existing firewall block rules are moved to the new location. From then on `Install.cmd` updates the
+Existing firewall block rules are moved to the new location. The installer, uninstaller and firewall
+scripts use only Windows PowerShell's own modules (never look-alikes from your Documents module folder) and
+start PowerShell and cmd by their full paths, so nothing planted in your account runs with the
+administrator rights you grant. From then on `Install.cmd` updates the
 Program Files copy (one UAC prompt each time).
 
 To remove it: Settings › Apps › Markdown Viewer (WebView2) › Uninstall, or run `app\Uninstall.cmd` (a Program

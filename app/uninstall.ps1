@@ -1,4 +1,7 @@
 # Removes Markdown Viewer (WebView2) for the current user and restores the previous .md defaults.
+# Only Windows PowerShell's own modules, from its system folder: a look-alike command in the user's module
+# folder (Documents) could otherwise change what the UAC prompts below start.
+$env:PSModulePath = "$PSHOME\Modules"
 $ErrorActionPreference = 'Continue'
 $name = 'Markdown Viewer (WebView2)'
 $key = 'MarkdownViewerWebView2'
@@ -60,7 +63,7 @@ Add-Type -Namespace Win32 -Name Shell -MemberDefinition '[DllImport("shell32.dll
 
 # The running script may live inside the program folder, so delete it after this process exits.
 # A Program Files folder needs administrator rights to delete (one UAC prompt).
-$rmdir = @{ FilePath = 'cmd.exe'; WindowStyle = 'Hidden' }
+$rmdir = @{ FilePath = (Join-Path ([Environment]::SystemDirectory) 'cmd.exe'); WindowStyle = 'Hidden' }   # full path, not PATH
 if (Test-Path $userDest) { Start-Process @rmdir -ArgumentList "/c timeout /t 2 >nul & rmdir /s /q `"$userDest`"" }
 if ($machine) {
     try { Start-Process @rmdir -Verb RunAs -ArgumentList "/c timeout /t 2 >nul & rmdir /s /q `"$machineDest`"" }
