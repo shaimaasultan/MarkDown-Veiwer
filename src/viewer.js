@@ -3319,6 +3319,90 @@ async function saveDiagramPng() {
 document.getElementById('lbSvg').addEventListener('click', saveDiagramSvg);
 document.getElementById('lbPng').addEventListener('click', saveDiagramPng);
 
+// ---- A picture's own text, as if the file were opened in Notepad: "</> Text" in the picture viewer.
+// SVG pictures are text; other pictures (PNG, JPG…) are binary, shown the way Notepad shows them - read as
+// UTF-8, or as Windows (ANSI) text when that fails - with control bytes as small symbols (␀ …) so they stay
+// visible. Line numbers, invisible characters as ⟨markers⟩, read-only, with a button to copy the text.
+const TEXT_PICTURE = /\.svg$/i;
+const PICTURE_TEXT_MAX = 2 << 20;      // a large photo: only its first 2 MB, so the window stays responsive
+const isTextPicture = img => !!img && TEXT_PICTURE.test((img.dataset.origSrc || '').split(/[?#]/)[0]);
+const hasPictureFile = img => !!img && !!img.dataset.origSrc && !img.classList.contains('web') && !img.classList.contains('missing');
+let pictureText = '';
+
+// Bytes → text the way Notepad reads a file it is given.
+function bytesAsNotepad(bytes) {
+  let text;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+  catch { text = new TextDecoder('windows-1252').decode(bytes); }
+  return text.replace(/^\uFEFF/, '').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g,
+    c => String.fromCharCode(c === '\x7F' ? 0x2421 : 0x2400 + c.charCodeAt(0)));
+}
+
+function appendWithMarkers(el, text) {
+  let last = 0;
+  for (const m of text.matchAll(INVISIBLE)) {
+    el.append(text.slice(last, m.index));
+    const mark = document.createElement('span');
+    mark.className = 'inv';
+    mark.textContent = `⟨${SHORT_NAMES[m[0].codePointAt(0)] || uPlus(m[0].codePointAt(0))}⟩`;
+    el.append(mark);
+    last = m.index + m[0].length;
+  }
+  el.append(text.slice(last) || (last ? '' : ' '));
+}
+
+async function showPictureText(img) {
+  if (!hasPictureFile(img)) return;
+  const svg = isTextPicture(img);
+  let text, total = 0, shown = 0;
+  try {
+    // Binary pictures: only the first part of a large file (the app hands out pieces on request).
+    const res = await fetch(img.currentSrc || img.src, svg ? { cache: 'no-store' }
+      : { cache: 'no-store', headers: { Range: `bytes=0-${PICTURE_TEXT_MAX - 1}` } });
+    if (!res.ok) throw new Error(res.status === 404 ? 'file not found' : `error ${res.status}`);
+    const bytes = new Uint8Array(await res.arrayBuffer()).subarray(0, svg ? undefined : PICTURE_TEXT_MAX);
+    shown = bytes.length;
+    total = +((res.headers.get('Content-Range') || '').split('/')[1]) || shown;
+    text = svg ? new TextDecoder('utf-8').decode(bytes) : bytesAsNotepad(bytes);
+  } catch (e) { showToast(`Could not read the picture's text: ${e.message}`); return; }
+  pictureText = text;
+  const lines = text.replace(/\r\n|\r/g, '\n').split('\n');
+  if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+  const frag = document.createDocumentFragment();
+  lines.slice(0, SRC_MAX_LINES).forEach((l, i) => {
+    const row = document.createElement('div');
+    row.className = 'sl';
+    row.dataset.n = i + 1;
+    const st = document.createElement('span');
+    st.className = 'st';
+    appendWithMarkers(st, l);
+    row.append(st);
+    frag.append(row);
+  });
+  const body = document.getElementById('tvBody');
+  body.replaceChildren(frag);
+  if (lines.length > SRC_MAX_LINES) {
+    const more = document.createElement('div');
+    more.className = 'src-more';
+    more.textContent = `… ${fmt(lines.length - SRC_MAX_LINES)} more lines not shown`;
+    body.append(more);
+  }
+  document.getElementById('tvTitle').textContent = imageFile(img) || 'Picture';
+  document.getElementById('tvInfo').textContent =
+    `${plural(lines.length, 'line')} · ${fmt(charCount(text))} characters · ` +
+    (svg ? 'SVG picture (text)' : `binary picture shown as text, as Notepad would${shown < total ? ` — first ${fmt(shown)} of ${fmt(total)} bytes` : ''}`) +
+    ' — read-only';
+  const dlg = document.getElementById('textView');
+  dlg.showModal();
+  body.scrollTop = 0;
+}
+
+document.getElementById('lbText').addEventListener('click', () => showPictureText(lbImages[lbIndex]));
+document.getElementById('tvClose').addEventListener('click', () => document.getElementById('textView').close());
+document.getElementById('tvCopy').addEventListener('click', async () => {
+  showToast(await copyToClipboard(pictureText) ? 'Copied the picture’s text.' : 'Could not copy the text.');
+});
+
 // Pictures open in the viewer one after another: ‹ › buttons and the ← → keys.
 const lbPos = document.getElementById('lbPos');
 let lbImages = [], lbIndex = -1;
@@ -3351,6 +3435,7 @@ function showLightboxImage() {
   const many = lbImages.length > 1;
   document.getElementById('lbPrev').hidden = document.getElementById('lbNext').hidden = !many;
   document.getElementById('lbSvg').hidden = document.getElementById('lbPng').hidden = true;
+  document.getElementById('lbText').hidden = !hasPictureFile(img);
   lbDiagram = null;
   lbPos.textContent = many ? `${lbIndex + 1} / ${lbImages.length}` : '';
   openLightbox(copy, w, h, imageLabel(img), false);
@@ -3470,6 +3555,7 @@ output.addEventListener('click', ev => {
     lbDiagram = pre;
     document.getElementById('lbPrev').hidden = document.getElementById('lbNext').hidden = true;
     document.getElementById('lbSvg').hidden = document.getElementById('lbPng').hidden = false;
+    document.getElementById('lbText').hidden = true;
     lbPos.textContent = '';
     openLightbox(copy, w, h, 'Diagram', true);
   }
@@ -3477,7 +3563,7 @@ output.addEventListener('click', ev => {
 
 // ---------------------------------------------------------------- keyboard
 document.addEventListener('keydown', ev => {
-  if (!lightbox.hidden) {
+  if (!lightbox.hidden && !document.querySelector('dialog[open]')) {
     if (ev.key === 'Escape') closeLightbox();
     else if (ev.key === '+' || ev.key === '=') zoomLightbox(1.25);
     else if (ev.key === '-' || ev.key === '_') zoomLightbox(0.8);
@@ -3775,8 +3861,9 @@ function builtWith() {
         feature('Fetch', 'loading documents from the app', typeof fetch === 'function')
       ] },
     { name: 'Made using', detail: 'AI coding assistants',
-      use: 'Who wrote the code',
-      items: ['Original viewer: made using GPT-5 (as noted in the footer)',
+      use: 'Who made it',
+      items: ['Created by Shaimaa Soltan',
+              'Original viewer: made using GPT-5 (as noted in the footer)',
               'This version: extended and tested with Claude Code (Anthropic)'] }
   ];
 }
@@ -3856,7 +3943,9 @@ function showAbout() {
     dl.append(el('dt', '', 'Firewall rules'), fwDd);
     fetchFirewall();
   }
-  document.getElementById('about').showModal();
+  const about = document.getElementById('about');
+  about.showModal();
+  about.scrollTop = 0;          // start at the top (title and author), not at the focused Close button
 }
 document.getElementById('aboutBtn').addEventListener('click', showAbout);
 document.getElementById('aboutClose').addEventListener('click', () => document.getElementById('about').close());

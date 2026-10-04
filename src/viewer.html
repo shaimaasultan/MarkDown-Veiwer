@@ -481,6 +481,24 @@
     .ins-table code { font-size: .8rem; background: var(--code-bg); padding: .1em .35em; border-radius: 4px; white-space: nowrap; }
     @media (max-width: 520px) { .ins-dl { grid-template-columns: 1fr; } .ins-dl dd { margin-bottom: .4rem; } }
 
+    /* ---- A picture's text (like Notepad) ---- */
+    dialog#textView {
+      width: min(1100px, calc(100vw - 32px)); height: calc(100vh - 48px); padding: 1rem 1.25rem;
+      border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--fg);
+    }
+    dialog#textView[open] { display: flex; flex-direction: column; }
+    dialog#textView::backdrop { background: rgba(0, 0, 0, .55); }
+    .tv-head { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; margin-bottom: .6rem; }
+    .tv-head h2 { margin: 0; font-size: 1.1rem; word-break: break-all; }
+    #tvInfo { color: var(--muted); font-size: .82rem; }
+    #tvBody {
+      flex: 1; overflow: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--panel);
+      padding: .4rem 0; font: .8rem/1.55 ui-monospace, Consolas, monospace;
+    }
+    #tvBody .sl { cursor: text; }
+    #tvBody .sl:hover { background: none; }
+    dialog#textView .actions { display: flex; gap: .5rem; justify-content: flex-end; margin-top: .75rem; }
+
     /* ---- Blocked-code alert ---- */
     dialog#codeAlert {
       width: min(560px, calc(100vw - 32px)); border: 1px solid var(--border); border-left: 4px solid var(--bad);
@@ -629,6 +647,7 @@
 
   <dialog id="about">
     <h2>About Markdown Viewer</h2>
+    <p class="note">Created by <strong>Shaimaa Soltan</strong></p>
     <p class="safe">🔒 <strong>Preview only.</strong> Markdown files are displayed, never executed:
       scripts, <code>on…=</code> event handlers, <code>javascript:</code> links, frames, forms and plugins
       in a document are removed before display and also blocked by the browser's security policy.</p>
@@ -679,6 +698,15 @@
     <div class="actions">
       <button id="insHighlight" class="btn secondary" title="Turn on ¶ Hidden: label every invisible character in the document">¶ Highlight in document</button>
       <button id="insClose" class="btn">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="textView" aria-labelledby="tvTitle">
+    <div class="tv-head"><h2 id="tvTitle">Picture</h2><span id="tvInfo"></span></div>
+    <div id="tvBody"></div>
+    <div class="actions">
+      <button id="tvCopy" class="btn secondary">⧉ Copy text</button>
+      <button id="tvClose" class="btn">Close</button>
     </div>
   </dialog>
 
@@ -768,6 +796,7 @@
       <button class="btn secondary" id="lbPrev" title="Previous picture (←)" hidden>‹</button>
       <span id="lbPos"></span>
       <button class="btn secondary" id="lbNext" title="Next picture (→)" hidden>›</button>
+      <button class="btn secondary" id="lbText" title="Show this picture file as text, the way Notepad would open it" hidden>&lt;/&gt; Text</button>
       <button class="btn secondary" id="lbSvg" title="Save this diagram as an SVG picture" hidden>⬇ SVG</button>
       <button class="btn secondary" id="lbPng" title="Save this diagram as a PNG picture" hidden>⬇ PNG</button>
       <button class="btn secondary" id="lbOut" title="Zoom out (−)">−</button>
@@ -779,7 +808,7 @@
   </div>
 
   <footer>
-    Made using GPT5 · Markdown Viewer · <span id="year"></span>
+    Created by Shaimaa Soltan · Made using GPT5, extended with Claude · Markdown Viewer · <span id="year"></span>
   </footer>
 
 <script src="./viewer.js"></script>

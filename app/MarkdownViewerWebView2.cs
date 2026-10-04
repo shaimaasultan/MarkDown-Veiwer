@@ -360,6 +360,7 @@ static class Program
     {
         StringBuilder sb = new StringBuilder();
         sb.AppendLine(AppName + " " + AppVersion);
+        sb.AppendLine("Created by Shaimaa Soltan");
         sb.AppendLine();
         sb.AppendLine("PREVIEW ONLY: Markdown files are displayed, never executed. Scripts, event handlers,");
         sb.AppendLine("javascript: links, frames, forms and plugins in a document are removed before display");
@@ -406,6 +407,7 @@ static class Program
                       ", WebView2 SDK " + (wvSdk ?? "?") + " (Microsoft.Web.WebView2)");
         sb.AppendLine("- Installer: PowerShell scripts (build, install, uninstall); per-user file association, no admin rights");
         sb.AppendLine("- Viewer: HTML, CSS and JavaScript, no frameworks");
+        sb.AppendLine("- Created by: Shaimaa Soltan");
         sb.AppendLine("- Made using: GPT-5 (original viewer); extended and tested with Claude Code (Anthropic)");
         sb.AppendLine();
         FirewallStatus fw = GetFirewallStatus();
