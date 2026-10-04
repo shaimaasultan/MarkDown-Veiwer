@@ -3305,12 +3305,25 @@ function showLightboxImage() {
   const copy = new Image();
   copy.src = img.currentSrc || img.src;
   copy.alt = img.alt;
+  // Vector pictures, and pictures that don't say how big they are (e.g. an SVG with only a viewBox), keep
+  // the shape they have in the document, drawn large enough to stay sharp when zoomed.
+  let w = img.naturalWidth, h = img.naturalHeight;
+  const svg = /\.svgz?$/i.test((img.dataset.origSrc || '').split(/[?#]/)[0]) || /^data:image\/svg/i.test(copy.src);
+  if (svg || !w || !h) {
+    const r = img.getBoundingClientRect();
+    const rw = r.width || w || 300, rh = r.height || h || 150;
+    const k = Math.max(1, 1600 / Math.max(rw, rh));
+    w = rw * k;
+    h = rh * k;
+  }
+  copy.width = Math.round(w);
+  copy.height = Math.round(h);
   const many = lbImages.length > 1;
   document.getElementById('lbPrev').hidden = document.getElementById('lbNext').hidden = !many;
   document.getElementById('lbSvg').hidden = document.getElementById('lbPng').hidden = true;
   lbDiagram = null;
   lbPos.textContent = many ? `${lbIndex + 1} / ${lbImages.length}` : '';
-  openLightbox(copy, img.naturalWidth || img.width, img.naturalHeight || img.height, imageLabel(img), false);
+  openLightbox(copy, w, h, imageLabel(img), false);
 }
 
 function stepLightbox(dir) {
