@@ -17,6 +17,16 @@ and never goes online.
 - **Breakdown** that reconciles the source file with what is shown, and a **Characters** inspector (encoding, escapes, zero-width and hidden characters, leftover placeholders)
 - **Safety check**: a ✓ Safe / ⚠ / ✗ Unsafe badge for every document, with a report of tricks aimed at you, at AI assistants or at other apps. It looks for scripts and active content, links whose text shows another address, look-alike addresses and letters, links to programs, network-share links, tracking pixels, hidden text and copy-paste traps, hidden instructions for AI tools, commands that download and run code, and Trojan Source text-direction tricks
 - **¶ Hidden** highlighting, **Find & Replace**, **Export** (save or copy without hidden characters), **Save as PDF**
+- **Auto-reload**: when another program saves the open file, the new version is shown at the same place (unsaved replacements are never thrown away)
+- **Back / Forward** (← → buttons, Alt+← / Alt+→, mouse side buttons) between documents reached through links or the file list
+- **Source view** (`</> Source`, Ctrl+Shift+U): the Markdown with line numbers beside the document, scrolling together; invisible characters show as markers, and the line numbers in the safety report open it there
+- **Right-to-left text**: Arabic, Hebrew and other paragraphs, lists, headings and tables follow their own direction; code and math stay left to right
+- **GitHub-style callouts**: `> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]`
+- **Copy buttons** on code blocks, and **click an equation to copy its LaTeX**
+- **Broken links**: links to missing files or sections are underlined and marked in the Links list
+- **Diagram export**: save a Mermaid diagram as SVG or PNG from the figure viewer
+- **Save as web page**: one self-contained .html file with pictures, math fonts and diagrams embedded, and no scripts
+- **Save as PDF** with a contents page, the file name at the top and page numbers ("2 / 5") at the bottom of every page
 - Light / dark / automatic theme; view settings are remembered
 
 ## Security

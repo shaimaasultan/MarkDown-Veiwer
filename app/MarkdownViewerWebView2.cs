@@ -30,15 +30,15 @@ using Microsoft.Win32.SafeHandles;
 [assembly: AssemblyProduct("Markdown Viewer (WebView2)")]
 [assembly: AssemblyDescription("Previews Markdown files with figures, math and diagrams. Never runs code from a document.")]
 [assembly: AssemblyCopyright("Markdown Viewer")]
-[assembly: AssemblyVersion("1.7.0.0")]
-[assembly: AssemblyFileVersion("1.7.0.0")]
-[assembly: AssemblyInformationalVersion("1.7.0")]
+[assembly: AssemblyVersion("1.8.0.0")]
+[assembly: AssemblyFileVersion("1.8.0.0")]
+[assembly: AssemblyInformationalVersion("1.8.0")]
 
 static class Program
 {
     const string AppName = "Markdown Viewer (WebView2)";
     const string DataFolder = "MarkdownViewerWebView2";     // %APPDATA% (settings) and %LOCALAPPDATA% (browser data)
-    const string AppVersion = "1.7.0";
+    const string AppVersion = "1.8.0";
     // Exists only inside this program's windows. Not a .local name: Windows would first spend ~2 s
     // looking for a device called "mdviewer" on the local network before the page could load.
     const string PrivateHost = "https://mdviewer.example";
@@ -840,12 +840,18 @@ static class Program
         try { full = Path.GetFullPath(webPath.Replace('/', '\\')); }
         catch { NotFound(s); return; }
 
-        if (allowRoot == null || !IsUnder(full, allowRoot) || !ServedTypes.Contains(Path.GetExtension(full)))
+        if (allowRoot == null || !IsUnder(full, allowRoot))
         {
             Send(s, 403, "text/plain", Encoding.UTF8.GetBytes("Forbidden"), null, headOnly);
             return;
         }
+        // Missing first, so the page can tell a broken link from a file type it is not given.
         if (!File.Exists(full)) { NotFound(s); return; }
+        if (!ServedTypes.Contains(Path.GetExtension(full)))
+        {
+            Send(s, 403, "text/plain", Encoding.UTF8.GetBytes("Forbidden"), null, headOnly);
+            return;
+        }
         // A folder link (junction, symbolic link) inside the allowed folder could lead anywhere: the file's
         // real location must be inside the allowed folder too.
         string real = RealPath(full), realRoot = RealPath(allowRoot);
@@ -854,7 +860,8 @@ static class Program
             Send(s, 403, "text/plain", Encoding.UTF8.GetBytes("Forbidden"), null, headOnly);
             return;
         }
-        if (new FileInfo(full).Length > (TextTypes.Contains(Path.GetExtension(full)) ? MaxTextBytes : MaxMediaBytes))
+        FileInfo info = new FileInfo(full);
+        if (info.Length > (TextTypes.Contains(Path.GetExtension(full)) ? MaxTextBytes : MaxMediaBytes))
         {
             Send(s, 413, "text/plain", Encoding.UTF8.GetBytes("File too large"), null, headOnly);
             return;
@@ -863,7 +870,10 @@ static class Program
         // Every file from disk is sandboxed with no script permission, so even an SVG opened
         // on its own (not as an <img>) can never run code.
         const string csp = "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; font-src 'self'";
-        Send(s, 200, Mime(full), File.ReadAllBytes(full), csp, headOnly);
+        // The version stamp lets the page notice when the file is saved again (auto-reload); a HEAD
+        // request only asks for it, so the file itself is not read.
+        string etag = "\"" + info.LastWriteTimeUtc.Ticks.ToString("x") + "-" + info.Length.ToString("x") + "\"";
+        Send(s, 200, Mime(full), headOnly ? new byte[0] : File.ReadAllBytes(full), csp, headOnly, etag);
     }
 
     static void SendInfo(Stream s, bool headOnly)
@@ -925,7 +935,7 @@ static class Program
         Send(s, 404, "text/plain", Encoding.UTF8.GetBytes("Not found"), null, false);
     }
 
-    static void Send(Stream s, int status, string mime, byte[] body, string csp, bool headOnly)
+    static void Send(Stream s, int status, string mime, byte[] body, string csp, bool headOnly, string etag = null)
     {
         string reason = status == 200 ? "OK" : status == 204 ? "No Content" : status == 403 ? "Forbidden"
                       : status == 404 ? "Not Found" : status == 405 ? "Method Not Allowed"
@@ -937,6 +947,7 @@ static class Program
         h.Append("X-Content-Type-Options: nosniff\r\n");
         h.Append("Referrer-Policy: no-referrer\r\n");
         if (csp != null) h.Append("Content-Security-Policy: ").Append(csp).Append("\r\n");
+        if (etag != null) h.Append("ETag: ").Append(etag).Append("\r\n");
         h.Append("\r\n");
         byte[] hb = Encoding.ASCII.GetBytes(h.ToString());
         s.Write(hb, 0, hb.Length);

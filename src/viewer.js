@@ -316,7 +316,7 @@ async function readDoc(path) {
       ? `Can't open files outside the document's folder: ${path}`
       : res.status === 413 ? `File is too large to show: ${path}`
       : `File not found: ${path}`);
-    return { path, ...decodeBytes(await res.arrayBuffer()) };
+    return { path, stamp: res.headers.get('ETag'), ...decodeBytes(await res.arrayBuffer()) };
   }
   const entry = fileMap.get(key(path));
   if (!entry) throw new Error(`File not found: ${path}`);
@@ -359,20 +359,89 @@ function decodeBytes(buf) {
   }
 }
 
-async function openDoc(path, anchor) {
+// Documents visited by following links or the file list, for Back / Forward.
+const navBack = [], navFwd = [];
+let fileStamp = null;          // version of the open file on disk (auto-reload)
+
+async function openDoc(path, anchor, { fromHistory = false, scroll = null } = {}) {
   if (isEdited() && key(path) !== key(currentPath || '') &&
-      !confirm('This document has unsaved replacements. Open another document and discard them?')) return;
+      !confirm('This document has unsaved replacements. Open another document and discard them?')) return false;
+  const from = currentPath ? { path: currentPath, scroll: content.scrollTop } : null;
   let entry;
   try { entry = await readDoc(path); }
-  catch (e) { alert(e.message); return; }
+  catch (e) { alert(e.message); return false; }
+  if (!fromHistory && from && key(from.path) !== key(entry.path)) { navBack.push(from); navFwd.length = 0; }
   currentPath = entry.path;
+  fileStamp = entry.stamp || null;
   if (source === 'app') history.replaceState(null, '', '?file=' + encodeURIComponent(entry.path));
   currentSource = entry.text;
   currentInfo = entry.info;
   resetEdits();
   renderDoc({ anchor });
+  if (scroll !== null) content.scrollTop = scroll;
+  updateNavButtons();
   alertBlockedCode();
+  return true;
 }
+
+// ---------------------------------------------------------------- back / forward
+const backBtn = document.getElementById('backBtn');
+const fwdBtn = document.getElementById('fwdBtn');
+const fileName = p => p.split('/').pop();
+
+function updateNavButtons() {
+  backBtn.disabled = !navBack.length;
+  fwdBtn.disabled = !navFwd.length;
+  backBtn.title = navBack.length ? `Back to ${fileName(navBack[navBack.length - 1].path)} (Alt+←)` : 'Back (Alt+←)';
+  fwdBtn.title = navFwd.length ? `Forward to ${fileName(navFwd[navFwd.length - 1].path)} (Alt+→)` : 'Forward (Alt+→)';
+}
+
+async function goHistory(from, to) {
+  if (!from.length) return;
+  const target = from.pop();
+  const here = currentPath ? { path: currentPath, scroll: content.scrollTop } : null;
+  if (await openDoc(target.path, null, { fromHistory: true, scroll: target.scroll })) { if (here) to.push(here); }
+  else from.push(target);
+  updateNavButtons();
+}
+const goBack = () => goHistory(navBack, navFwd);
+const goForward = () => goHistory(navFwd, navBack);
+backBtn.addEventListener('click', goBack);
+fwdBtn.addEventListener('click', goForward);
+// The mouse's own back / forward buttons.
+window.addEventListener('mouseup', ev => {
+  if (ev.button === 3) { ev.preventDefault(); goBack(); }
+  else if (ev.button === 4) { ev.preventDefault(); goForward(); }
+});
+
+// ---------------------------------------------------------------- auto-reload
+// When another program saves the open file, show the new version and keep the reading position.
+// Unsaved Find & Replace edits are never thrown away: the viewer only says the file changed.
+let reloadBusy = false, reloadWarned = null;
+setInterval(async () => {
+  if (source !== 'app' || !currentPath || reloadBusy || document.hidden || !fileStamp) return;
+  reloadBusy = true;
+  try {
+    const res = await fetch(fsURL(currentPath), { method: 'HEAD', cache: 'no-store' });
+    const stamp = res.ok ? res.headers.get('ETag') : null;
+    if (!stamp || stamp === fileStamp) return;
+    if (isEdited()) {
+      if (reloadWarned !== stamp) {
+        reloadWarned = stamp;
+        showToast('The file was changed on disk. Your unsaved replacements are kept — open it again to see the new version.');
+      }
+      return;
+    }
+    const entry = await readDoc(currentPath);
+    fileStamp = entry.stamp || stamp;
+    currentSource = entry.text;
+    currentInfo = entry.info;
+    resetEdits();
+    renderDoc({ keepScroll: true });
+    showToast('Updated — the file was changed on disk.');
+  } catch { /* file gone or app closing: try again next time */ }
+  finally { reloadBusy = false; }
+}, 1500);
 
 // Renders currentSource (the file as read, or as edited by Find & Replace).
 function renderDoc({ anchor = null, keepScroll = false } = {}) {
@@ -384,12 +453,18 @@ function renderDoc({ anchor = null, keepScroll = false } = {}) {
   output.replaceChildren(sanitize(md.parse(text)));
 
   fixResources(output, dirOf(currentPath));
+  markCallouts(output);
+  setDirections(output);
   renderLeftoverMath(output);
   highlightCode(output);
   markHiddenChars(output);
+  addCopyButtons(output);
+  output.querySelectorAll('.katex').forEach(k => { k.title = 'Click to copy the LaTeX'; });
   markZoomable(output);
   buildToc();
   buildImageList();
+  mapSourceLines();
+  if (srcIsOpen()) buildSource(); else srcDirty = true;
 
   document.getElementById('docPath').textContent = currentPath + (isEdited() ? '  •  edited (unsaved)' : '');
   updateStats();
@@ -407,6 +482,7 @@ function renderDoc({ anchor = null, keepScroll = false } = {}) {
   pdfBtn.title = 'Print or save this document as a PDF';
   copyBtn.disabled = false;
   findBtn.disabled = false;
+  srcBtn.disabled = false;
   for (const li of fileList.children) li.classList.toggle('active', key(li.dataset.path) === key(currentPath));
 
   if (keepScroll) content.scrollTop = scroll;
@@ -463,6 +539,56 @@ function fixResources(root, baseDir) {
         ? 'Opening this type of file is disabled in preview mode'
         : 'Link target not available');
     }
+  });
+}
+
+// GitHub-style callouts: a quote whose first line is [!NOTE], [!TIP], [!IMPORTANT], [!WARNING] or [!CAUTION].
+// The marker is removed and the title is drawn by CSS (so it is not counted as document text).
+const CALLOUT_RE = /^[ \t]*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*(?:\n|$)/i;
+function markCallouts(root) {
+  root.querySelectorAll('blockquote').forEach(bq => {
+    const p = bq.firstElementChild;
+    const first = p && p.tagName === 'P' ? p.firstChild : null;
+    if (!first || first.nodeType !== Node.TEXT_NODE) return;
+    const m = CALLOUT_RE.exec(first.data);
+    if (!m) return;
+    first.data = first.data.slice(m[0].length);
+    if (p.firstChild && p.firstChild.nodeName === 'BR') p.firstChild.remove();
+    if (!p.textContent.trim() && !p.querySelector('img, svg, .katex, input')) p.remove();
+    bq.classList.add('callout', 'callout-' + m[1].toLowerCase());
+  });
+}
+
+// Each block follows its own language: Arabic, Hebrew… right to left, others left to right.
+function setDirections(root) {
+  root.querySelectorAll('p, ul, ol, li, h1, h2, h3, h4, h5, h6, blockquote, table, th, td, dl, dt, dd, figcaption, details, summary, caption')
+    .forEach(el => { if (!el.hasAttribute('dir')) el.dir = 'auto'; });
+}
+
+// A copy button on every code block.
+function addCopyButtons(root) {
+  root.querySelectorAll('pre > code').forEach(code => {
+    const pre = code.parentElement;
+    if (pre.parentElement.classList.contains('code-wrap')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'code-wrap';
+    pre.replaceWith(wrap);
+    wrap.append(pre);
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'code-copy';
+    b.title = 'Copy the code';
+    b.setAttribute('aria-label', 'Copy the code');
+    b.addEventListener('click', async ev => {
+      ev.stopPropagation();
+      const clean = code.cloneNode(true);
+      clean.querySelectorAll('.hc-badge').forEach(x => x.remove());   // ¶ Hidden labels are not part of the code
+      const ok = await copyToClipboard(clean.textContent);
+      b.classList.toggle('done', ok);
+      if (!ok) showToast('Could not copy the code.');
+      setTimeout(() => b.classList.remove('done'), 1500);
+    });
+    wrap.append(b);
   });
 }
 
@@ -1388,7 +1514,15 @@ function showSafety() {
     const t = el('table', 'ins-table sf-table');
     for (const it of f.items) {
       const tr = el('tr');
-      tr.append(el('td', 'n', it.line ? `line ${fmt(it.line)}` : ''));
+      const lineCell = el('td', 'n');
+      if (it.line) {
+        const go = el('button', 'sf-line', `line ${fmt(it.line)}`);
+        go.type = 'button';
+        go.title = 'Show this line in the Markdown source';
+        go.addEventListener('click', () => { document.getElementById('safety').close(); showSourceLine(it.line); });
+        lineCell.append(go);
+      }
+      tr.append(lineCell);
       const td = el('td');
       td.append(el('code', '', it.what));
       tr.append(td);
@@ -1847,13 +1981,14 @@ async function saveEdited() {
   if (window.showSaveFilePicker) {
     let handle = null;
     try { handle = await window.showSaveFilePicker({ suggestedName: name, types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md', '.markdown'] } }] }); }
-    catch (e) { if (e.name === 'AbortError') return; }
-    if (handle) {
-      try { const w = await handle.createWritable(); await w.write(blob); await w.close(); }
-      catch (e) { showToast(`Saving failed: ${e.message}`); return; }
-      done(`Saved “${handle.name}” (UTF-8).` + (currentInfo && !/UTF-8|ASCII/.test(currentInfo.name) ? ` The original was ${currentInfo.name}.` : ''));
+    catch (e) {                     // cancelled → nothing to do; failed → say so (never download silently)
+      if (e.name !== 'AbortError') showToast('The Save As window could not open — close any other Save As window and try again.');
       return;
     }
+    try { const w = await handle.createWritable(); await w.write(blob); await w.close(); }
+    catch (e) { showToast(`Saving failed: ${e.message}`); return; }
+    done(`Saved “${handle.name}” (UTF-8).` + (currentInfo && !/UTF-8|ASCII/.test(currentInfo.name) ? ` The original was ${currentInfo.name}.` : ''));
+    return;
   }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -1970,17 +2105,18 @@ async function saveClean(what) {
   if (window.showSaveFilePicker) {
     let handle;
     try { handle = await window.showSaveFilePicker({ suggestedName: name, types: [type] }); }
-    catch (e) { if (e.name === 'AbortError') return; handle = null; }      // cancelled → nothing to do
-    if (handle) {
-      try {
-        const w = await handle.createWritable();
-        await w.write(blob);
-        await w.close();
-        savedAs = handle.name;
-      } catch (e) { showToast(`Saving failed: ${e.message}`); return; }
-      showToast(`Saved “${savedAs}” (UTF-8, ${fmt(charCount(r.text))} characters). ${cleanSummary(r)}`);
+    catch (e) {                     // cancelled → nothing to do; failed → say so (never download silently)
+      if (e.name !== 'AbortError') showToast('The Save As window could not open — close any other Save As window and try again.');
       return;
     }
+    try {
+      const w = await handle.createWritable();
+      await w.write(blob);
+      await w.close();
+      savedAs = handle.name;
+    } catch (e) { showToast(`Saving failed: ${e.message}`); return; }
+    showToast(`Saved “${savedAs}” (UTF-8, ${fmt(charCount(r.text))} characters). ${cleanSummary(r)}`);
+    return;
   }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -1997,7 +2133,13 @@ const copyMenu = document.getElementById('copyMenu');
 function setCopyMenu(open) {
   copyMenu.hidden = !open;
   copyBtn.setAttribute('aria-expanded', String(open));
-  if (open) copyMenu.querySelector('button').focus();
+  if (open) {
+    // Open towards the side with room: under the button's right edge, or its left edge when the
+    // button sits near the left of the window (e.g. when the toolbar wraps).
+    copyMenu.classList.remove('align-left');
+    if (copyMenu.getBoundingClientRect().left < 8) copyMenu.classList.add('align-left');
+    copyMenu.querySelector('button').focus();
+  }
 }
 copyBtn.addEventListener('click', ev => { ev.stopPropagation(); setCopyMenu(copyMenu.hidden); });
 copyMenu.addEventListener('click', ev => {
@@ -2005,6 +2147,7 @@ copyMenu.addEventListener('click', ev => {
   if (!item) return;
   setCopyMenu(false);
   if (item.dataset.action === 'save') saveClean(item.dataset.what);
+  else if (item.dataset.action === 'html') exportHtml();
   else copyClean(item.dataset.what);
 });
 document.addEventListener('click', ev => { if (!copyMenu.hidden && !ev.target.closest('.menu-wrap')) setCopyMenu(false); });
@@ -2025,6 +2168,7 @@ copyMenu.addEventListener('keydown', ev => {
 
 const CAT = {
   frontMatter: 'Front matter (--- YAML ---)',
+  callout: 'Callout markers ([!NOTE] …)',
   blankLines: 'Empty lines',
   blankSpaces: 'Spaces on empty lines',
   softBreaks: 'Wrapped lines joined into one paragraph',
@@ -2253,7 +2397,13 @@ function analyzeDocument(source) {
       }
       case 'mathBlock': return leaf(t, noWords(measureHtml(renderMath(t.text, true))), CAT.math, c0, l0, w0, CAT.math);
       case 'blockquote': {
-        bookContainer(CAT.quoteMarks, raw, (t.tokens || []).map(c => c.raw).join(''));
+        const inner = (t.tokens || []).map(c => c.raw).join('');
+        bookContainer(CAT.quoteMarks, raw, inner);
+        const callout = CALLOUT_RE.exec(inner);
+        if (callout) {        // [!NOTE] … : the marker line is not shown (the title is drawn by CSS)
+          book(CAT.callout, 1, len(callout[0].trim()), W(callout[0]));
+          return blocks(md.lexer(inner.slice(callout[0].length)));
+        }
         return blocks(t.tokens);
       }
       case 'list': {
@@ -2374,18 +2524,22 @@ function highlightCode(root) {
 const diagramSource = new WeakMap();
 let diagramCounter = 0;
 
+function mermaidConfig(theme) {
+  return {
+    startOnLoad: false,
+    securityLevel: 'strict',   // no click handlers / links that run code inside diagrams
+    // A diagram's %%{init}%% line may not change these (no CSS of its own for the page).
+    secure: ['secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'suppressErrorRendering', 'maxEdges',
+             'themeCSS', 'themeVariables', 'fontFamily', 'altFontFamily'],
+    theme
+  };
+}
+
 async function renderDiagrams(root, forceTheme) {
   const nodes = root.querySelectorAll('pre.mermaid');
   if (!nodes.length || typeof window.mermaid?.render !== 'function') return;
   try {
-    mermaid.initialize({
-      startOnLoad: false,
-      securityLevel: 'strict',   // no click handlers / links that run code inside diagrams
-      // A diagram's %%{init}%% line may not change these (no CSS of its own for the page).
-      secure: ['secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'suppressErrorRendering', 'maxEdges',
-               'themeCSS', 'themeVariables', 'fontFamily', 'altFontFamily'],
-      theme: forceTheme || (isDark() ? 'dark' : 'default')
-    });
+    mermaid.initialize(mermaidConfig(forceTheme || (isDark() ? 'dark' : 'default')));
   } catch (e) { console.warn('Mermaid:', e); return; }
   for (const n of nodes) {
     if (!diagramSource.has(n)) diagramSource.set(n, n.textContent);
@@ -2537,6 +2691,7 @@ content.addEventListener('scroll', () => {
 
 function updateTocButton() {
   const open = !('imgsOpen' in document.documentElement.dataset) && !('linksOpen' in document.documentElement.dataset) &&
+    !('srcOpen' in document.documentElement.dataset) &&
     (narrowScreen.matches ? 'tocOpen' in document.documentElement.dataset : loadPrefLive('toc') === 'shown');
   tocBtn.classList.toggle('on', open && !tocBtn.disabled);
 }
@@ -2544,9 +2699,10 @@ function updateTocButton() {
 function toggleToc() {
   if (tocBtn.disabled) return;
   const root = document.documentElement;
-  if ('imgsOpen' in root.dataset || 'linksOpen' in root.dataset) {   // these lists take the same place: back to Contents
+  if ('imgsOpen' in root.dataset || 'linksOpen' in root.dataset || 'srcOpen' in root.dataset) {   // same place: back to Contents
     closeImages();
     closeLinks();
+    closeSource();
     if (narrowScreen.matches ? 'tocOpen' in root.dataset : loadPrefLive('toc') === 'shown') { updateTocButton(); updateTocActive(); return; }
   }
   if (narrowScreen.matches) {
@@ -2685,6 +2841,7 @@ function toggleImages() {
     root.dataset.imgsOpen = '';
     delete root.dataset.tocOpen;
     closeLinks();
+    closeSource();
     updateImgButton();
     updateTocButton();
     updateImagesActive();
@@ -2762,9 +2919,48 @@ function buildLinkList() {
   });
   updateLinkButton();
   updateLinksActive();
+  checkBrokenLinks();
 }
 
 let linkPin = null, linkPinUntil = 0;     // the entry just clicked stays highlighted while the view scrolls to it
+// Does a link lead somewhere? Sections must exist in this document; local files on disk (asked of the
+// app, which answers "not found" for missing files); web addresses are not checked (never online).
+function findAnchor(id) {
+  try { id = decodeURIComponent(id); } catch { }
+  const uid = 'user-content-' + id.replace(/^user-content-/, '');
+  return document.getElementById(uid) || output.querySelector(`a[name="${CSS.escape(uid)}"]`);
+}
+
+let linkCheckRun = 0;
+async function checkBrokenLinks() {
+  const run = ++linkCheckRun, doc = currentPath;
+  let broken = 0;
+  for (const e of linkEntries) {
+    const href = e.a.dataset.origHref || e.a.getAttribute('href') || '';
+    let missing = false;
+    if (href.startsWith('#')) missing = href.length > 1 && !findAnchor(href.slice(1));
+    else if (!isExternal(href) && doc) {
+      const path = resolve(dirOf(doc), href);
+      if (source === 'app') {
+        try { missing = (await fetch(fsURL(path), { method: 'HEAD', cache: 'no-store' })).status === 404; } catch { }
+      } else missing = !fileMap.has(key(path));
+    }
+    if (run !== linkCheckRun) return;          // another document or a newer check took over
+    if (!missing) continue;
+    broken++;
+    e.a.classList.add('link-broken');
+    e.a.title = href.startsWith('#') ? 'This section does not exist in the document' : 'File not found';
+    const body = e.button.querySelector('.link-body');
+    if (body && !body.querySelector('.link-missing')) {
+      const note = document.createElement('span');
+      note.className = 'link-flag link-missing';
+      note.textContent = href.startsWith('#') ? '⚠ section not found' : '⚠ file not found';
+      body.append(note);
+    }
+  }
+  if (broken) document.getElementById('linkTitle').textContent += ` · ${fmt(broken)} broken`;
+}
+
 function goToLink(a) {
   linkPin = a;
   linkPinUntil = performance.now() + 1500;
@@ -2815,6 +3011,7 @@ function toggleLinks() {
   if ('linksOpen' in root.dataset) closeLinks();
   else {
     closeImages();
+    closeSource();
     root.dataset.linksOpen = '';
     delete root.dataset.tocOpen;
     updateLinkButton();
@@ -2823,6 +3020,165 @@ function toggleLinks() {
   }
 }
 linkBtn.addEventListener('click', toggleLinks);
+
+// ---------------------------------------------------------------- source view (right)
+// The Markdown file with line numbers next to the document. Both scroll together: each top-level block
+// of the document knows the source line it starts on. Invisible characters show as ⟨markers⟩.
+const srcPanel = document.getElementById('srcPanel');
+const srcView = document.getElementById('srcView');
+const srcBtn = document.getElementById('srcBtn');
+const SRC_MAX_LINES = 30000;
+let srcDirty = true;
+const srcIsOpen = () => 'srcOpen' in document.documentElement.dataset;
+
+// Top-level blocks → the source line they start on (front matter counted).
+const BLOCK_TAGS = {
+  heading: /^H[1-6]$/, paragraph: /^(P|DIV)$/, code: /^(PRE|DIV)$/, mathBlock: /^DIV$/, list: /^(UL|OL)$/,
+  table: /^TABLE$/, blockquote: /^BLOCKQUOTE$/, hr: /^HR$/
+};
+function mapSourceLines() {
+  const text = currentSource.replace(/\r\n|\r/g, '\n');
+  const fm = /^\uFEFF?---\n[\s\S]*?\n---\n/.exec(text);
+  let line = 1 + (fm ? fm[0].split('\n').length - 1 : 0);
+  let tokens;
+  try { tokens = md.lexer(fm ? text.slice(fm[0].length) : text.replace(/^\uFEFF/, '')); } catch { return; }
+  const kids = [...output.children];
+  let j = 0;
+  for (const t of tokens) {
+    const want = BLOCK_TAGS[t.type];
+    if (want) {
+      for (let k = j; k < Math.min(kids.length, j + 4); k++) {
+        if (want.test(kids[k].tagName)) { kids[k].dataset.srcLine = line; j = k + 1; break; }
+      }
+    }
+    line += ((t.raw || '').match(/\n/g) || []).length;
+  }
+}
+
+const INVISIBLE = /[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/g;
+function buildSource() {
+  srcDirty = false;
+  const lines = currentSource.replace(/\r\n|\r/g, '\n').split('\n');
+  if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+  const frag = document.createDocumentFragment();
+  lines.slice(0, SRC_MAX_LINES).forEach((l, i) => {
+    const row = document.createElement('div');
+    row.className = 'sl';
+    row.dataset.n = i + 1;
+    const st = document.createElement('span');
+    st.className = 'st';
+    let last = 0;
+    for (const m of l.matchAll(INVISIBLE)) {
+      st.append(l.slice(last, m.index));
+      const mark = document.createElement('span');
+      mark.className = 'inv';
+      mark.textContent = `⟨${SHORT_NAMES[m[0].codePointAt(0)] || uPlus(m[0].codePointAt(0))}⟩`;
+      st.append(mark);
+      last = m.index + m[0].length;
+    }
+    st.append(l.slice(last) || (last ? '' : ' '));
+    row.append(st);
+    frag.append(row);
+  });
+  srcView.replaceChildren(frag);
+  if (lines.length > SRC_MAX_LINES) {
+    const more = document.createElement('div');
+    more.className = 'src-more';
+    more.textContent = `… ${fmt(lines.length - SRC_MAX_LINES)} more lines not shown`;
+    srcView.append(more);
+  }
+  document.getElementById('srcTitle').textContent = `Source · ${plural(lines.length, 'line')}`;
+  syncSourceFromView();
+}
+
+// Programmatic scrolling of one side must not scroll the other side back.
+let quietView = 0, quietSrc = 0;
+const now = () => performance.now();
+
+function syncSourceFromView() {
+  if (!srcIsOpen() || now() < quietView) return;
+  const blocks = [...output.querySelectorAll(':scope > [data-src-line]')];
+  if (!blocks.length || !srcView.children.length) return;
+  const top = content.getBoundingClientRect().top + 8;
+  let cur = blocks[0], next = null;
+  for (const b of blocks) {
+    if (b.getBoundingClientRect().top <= top) cur = b; else { next = b; break; }
+  }
+  const start = +cur.dataset.srcLine, end = next ? +next.dataset.srcLine : srcView.children.length + 1;
+  const r = cur.getBoundingClientRect();
+  const frac = r.height ? Math.min(1, Math.max(0, (top - r.top) / r.height)) : 0;
+  srcView.querySelectorAll('.sl.cur').forEach(x => x.classList.remove('cur'));
+  for (let n = start; n < end && n <= srcView.children.length; n++) srcView.children[n - 1]?.classList.add('cur');
+  const lineF = start + frac * (end - start);
+  const el = srcView.children[Math.max(0, Math.floor(lineF) - 1)];
+  if (!el) return;
+  quietSrc = now() + 150;
+  srcPanel.scrollTop = srcView.offsetTop + el.offsetTop + (lineF % 1) * el.offsetHeight - 40;
+}
+
+function lineAtTopOfSource() {
+  const rows = srcView.children, y = srcPanel.scrollTop - srcView.offsetTop + 40;
+  let lo = 0, hi = rows.length - 1;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (rows[mid].offsetTop <= y) lo = mid; else hi = mid - 1; }
+  return lo + 1;
+}
+
+function scrollViewToLine(line, smooth) {
+  const blocks = [...output.querySelectorAll(':scope > [data-src-line]')];
+  if (!blocks.length) return;
+  let cur = blocks[0], next = null;
+  for (const b of blocks) { if (+b.dataset.srcLine <= line) cur = b; else { next = b; break; } }
+  const start = +cur.dataset.srcLine, end = next ? +next.dataset.srcLine : start + 1;
+  const frac = Math.min(1, Math.max(0, (line - start) / Math.max(1, end - start)));
+  const r = cur.getBoundingClientRect(), c = content.getBoundingClientRect();
+  quietView = now() + (smooth ? 800 : 150);
+  content.scrollTo({ top: content.scrollTop + r.top - c.top + frac * r.height - 8, behavior: smooth ? 'smooth' : 'auto' });
+}
+
+content.addEventListener('scroll', () => { if (srcIsOpen()) requestAnimationFrame(syncSourceFromView); });
+srcPanel.addEventListener('scroll', () => {
+  if (!srcIsOpen() || now() < quietSrc) return;
+  requestAnimationFrame(() => scrollViewToLine(lineAtTopOfSource(), false));
+});
+srcView.addEventListener('click', ev => {
+  const row = ev.target.closest('.sl');
+  if (row && window.getSelection().isCollapsed) scrollViewToLine(+row.dataset.n, true);
+});
+
+// Open the source at a line (e.g. from the safety report) and point it out.
+function showSourceLine(n) {
+  if (!srcIsOpen()) toggleSource();
+  const row = srcView.children[n - 1];
+  if (!row) return;
+  quietSrc = now() + 300;
+  srcPanel.scrollTop = srcView.offsetTop + row.offsetTop - srcPanel.clientHeight / 3;
+  srcView.querySelectorAll('.sl.hit').forEach(x => x.classList.remove('hit'));
+  row.classList.add('hit');
+  setTimeout(() => row.classList.remove('hit'), 2500);
+  scrollViewToLine(n, true);
+}
+
+function updateSrcButton() {
+  srcBtn.classList.toggle('on', srcIsOpen() && !srcBtn.disabled);
+}
+function closeSource() {
+  delete document.documentElement.dataset.srcOpen;
+  updateSrcButton();
+  updateTocButton();
+}
+function toggleSource() {
+  if (srcBtn.disabled) return;
+  const root = document.documentElement;
+  if (srcIsOpen()) { closeSource(); return; }
+  closeImages();
+  closeLinks();
+  root.dataset.srcOpen = '';
+  delete root.dataset.tocOpen;
+  if (srcDirty) buildSource(); else syncSourceFromView();
+  updateSrcButton();
+  updateTocButton();
+}
+srcBtn.addEventListener('click', toggleSource);
 
 // ---------------------------------------------------------------- figure viewer (zoom & pan)
 const lightbox = document.getElementById('lightbox');
@@ -2844,6 +3200,95 @@ function openLightbox(node, width, height, caption, isDiagram) {
   if (wasHidden) document.getElementById('lbClose').focus();
 }
 
+// ---- Saving files: Windows' Save As dialog. Only where there is no such dialog at all is the file
+// downloaded instead; if the dialog fails (e.g. another one is still open) nothing is saved silently.
+async function saveFileAs(blob, name, type) {
+  if (window.showSaveFilePicker) {
+    let handle;
+    try { handle = await window.showSaveFilePicker({ suggestedName: name, types: [type] }); }
+    catch (e) {
+      if (e.name !== 'AbortError') showToast('The Save As window could not open — close any other Save As window and try again.');
+      return null;
+    }
+    const w = await handle.createWritable();
+    await w.write(blob);
+    await w.close();
+    return handle.name;
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  return name;
+}
+
+// ---- Diagram export: SVG as drawn; PNG from a copy drawn without HTML labels (a picture that contains
+// HTML cannot be turned into pixels by the browser).
+let lbDiagram = null;
+const diagramBase = () => (currentPath ? currentPath.split('/').pop().replace(MD_RE, '') : 'diagram') +
+  `-diagram-${[...output.querySelectorAll('pre.mermaid')].indexOf(lbDiagram) + 1}`;
+
+function standaloneSvg(svg) {
+  const copy = svg.cloneNode(true);
+  const vb = (copy.getAttribute('viewBox') || '').split(/[\s,]+/).map(Number);
+  const [x, y, w, h] = vb.length === 4 && vb.every(isFinite) ? vb : [0, 0, svg.getBoundingClientRect().width, svg.getBoundingClientRect().height];
+  copy.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  copy.setAttribute('width', w);
+  copy.setAttribute('height', h);
+  copy.removeAttribute('style');
+  // A background in the theme's colour, so light text on a dark diagram stays readable anywhere.
+  const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  bg.setAttribute('x', x); bg.setAttribute('y', y); bg.setAttribute('width', w); bg.setAttribute('height', h);
+  bg.setAttribute('fill', getComputedStyle(document.body).backgroundColor || '#ffffff');
+  copy.insertBefore(bg, copy.firstChild);
+  return { text: new XMLSerializer().serializeToString(copy), w, h };
+}
+
+async function saveDiagramSvg() {
+  const svg = lbDiagram && lbDiagram.querySelector('svg');
+  if (!svg) return;
+  const { text } = standaloneSvg(svg);
+  const saved = await saveFileAs(new Blob([text], { type: 'image/svg+xml' }), diagramBase() + '.svg',
+    { description: 'SVG picture', accept: { 'image/svg+xml': ['.svg'] } }).catch(e => { showToast(`Saving failed: ${e.message}`); return null; });
+  if (saved) showToast(`Saved “${saved}”.`);
+}
+
+async function saveDiagramPng() {
+  const src = lbDiagram && diagramSource.get(lbDiagram);
+  if (!src) return;
+  const theme = isDark() ? 'dark' : 'default';
+  try {
+    mermaid.initialize({ ...mermaidConfig(theme), htmlLabels: false, flowchart: { htmlLabels: false } });
+    const { svg } = await mermaid.render(`mermaid-export-${++diagramCounter}`, src);
+    const doc = new DOMParser().parseFromString(svg, 'image/svg+xml');     // inert: only drawn as a picture
+    const { text, w, h } = standaloneSvg(doc.documentElement);
+    const scale = 2;
+    const url = URL.createObjectURL(new Blob([text], { type: 'image/svg+xml' }));
+    let blob;
+    try {
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.ceil(w * scale);
+      canvas.height = Math.ceil(h * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      blob = await new Promise((resolve, reject) => canvas.toBlob(b => b ? resolve(b) : reject(new Error('no picture')), 'image/png'));
+    } finally { URL.revokeObjectURL(url); }
+    const saved = await saveFileAs(blob, diagramBase() + '.png', { description: 'PNG picture', accept: { 'image/png': ['.png'] } });
+    if (saved) showToast(`Saved “${saved}” (${fmt(Math.ceil(w * scale))} × ${fmt(Math.ceil(h * scale))} pixels).`);
+  } catch (e) {
+    showToast(e.name === 'SecurityError' ? 'This kind of diagram cannot be saved as PNG — save it as SVG instead.' : `Saving the PNG failed: ${e.message}`);
+  } finally {
+    mermaid.initialize(mermaidConfig(theme));
+  }
+}
+document.getElementById('lbSvg').addEventListener('click', saveDiagramSvg);
+document.getElementById('lbPng').addEventListener('click', saveDiagramPng);
+
 // Pictures open in the viewer one after another: ‹ › buttons and the ← → keys.
 const lbPos = document.getElementById('lbPos');
 let lbImages = [], lbIndex = -1;
@@ -2862,6 +3307,8 @@ function showLightboxImage() {
   copy.alt = img.alt;
   const many = lbImages.length > 1;
   document.getElementById('lbPrev').hidden = document.getElementById('lbNext').hidden = !many;
+  document.getElementById('lbSvg').hidden = document.getElementById('lbPng').hidden = true;
+  lbDiagram = null;
   lbPos.textContent = many ? `${lbIndex + 1} / ${lbImages.length}` : '';
   openLightbox(copy, img.naturalWidth || img.width, img.naturalHeight || img.height, imageLabel(img), false);
 }
@@ -2951,6 +3398,15 @@ function markZoomable(root) {
 }
 
 output.addEventListener('click', ev => {
+  const math = ev.target.closest('.katex');
+  if (math && !ev.target.closest('a') && window.getSelection().isCollapsed) {
+    const tex = math.querySelector('annotation[encoding="application/x-tex"]')?.textContent;
+    if (tex) {
+      copyToClipboard(tex).then(ok => showToast(ok
+        ? `Copied the LaTeX: ${tex.length > 70 ? tex.slice(0, 70) + '…' : tex}` : 'Could not copy the LaTeX.'));
+      return;
+    }
+  }
   const img = ev.target.closest('img.zoomable');
   if (img) {
     openImage(img);
@@ -2968,7 +3424,9 @@ output.addEventListener('click', ev => {
     copy.setAttribute('height', h);
     lbImages = [];
     lbIndex = -1;
+    lbDiagram = pre;
     document.getElementById('lbPrev').hidden = document.getElementById('lbNext').hidden = true;
+    document.getElementById('lbSvg').hidden = document.getElementById('lbPng').hidden = false;
     lbPos.textContent = '';
     openLightbox(copy, w, h, 'Diagram', true);
   }
@@ -2997,9 +3455,12 @@ document.addEventListener('keydown', ev => {
   else if (ev.key === 'F3') { ev.preventDefault(); if (findBar.hidden) openFind(); else stepFind(ev.shiftKey ? -1 : 1); }
   else if (ev.key === 'Escape' && !findBar.hidden && !document.querySelector('dialog[open]')) closeFind();
   else if (mod && !ev.shiftKey && ev.key.toLowerCase() === 'b') { ev.preventDefault(); toggleSidebar(); }
+  else if (ev.altKey && !mod && ev.key === 'ArrowLeft') { ev.preventDefault(); goBack(); }
+  else if (ev.altKey && !mod && ev.key === 'ArrowRight') { ev.preventDefault(); goForward(); }
   else if (mod && ev.shiftKey && ev.key.toLowerCase() === 'o') { ev.preventDefault(); toggleToc(); }
   else if (mod && ev.shiftKey && ev.key.toLowerCase() === 'g') { ev.preventDefault(); toggleImages(); }
   else if (mod && ev.shiftKey && ev.key.toLowerCase() === 'l') { ev.preventDefault(); toggleLinks(); }
+  else if (mod && ev.shiftKey && ev.key.toLowerCase() === 'u') { ev.preventDefault(); toggleSource(); }
   else if (mod && ev.shiftKey && ev.key.toLowerCase() === 'h') { ev.preventDefault(); toggleHidden(); }
   else if (ev.key === 'Escape' && 'tocOpen' in document.documentElement.dataset) {
     delete document.documentElement.dataset.tocOpen;
@@ -3007,7 +3468,102 @@ document.addEventListener('keydown', ev => {
   }
   else if (ev.key === 'Escape' && 'imgsOpen' in document.documentElement.dataset && !document.querySelector('dialog[open]')) closeImages();
   else if (ev.key === 'Escape' && 'linksOpen' in document.documentElement.dataset && !document.querySelector('dialog[open]')) closeLinks();
+  else if (ev.key === 'Escape' && srcIsOpen() && !document.querySelector('dialog[open]')) closeSource();
 });
+
+// ---------------------------------------------------------------- export as a web page
+// One self-contained .html file: the document as shown (light theme), with its pictures, math fonts and
+// diagrams embedded. No scripts, and a security policy in the file that forbids them; web pictures are
+// left out (this app never goes online).
+const toDataURL = blob => new Promise((resolve, reject) => {
+  const r = new FileReader();
+  r.onload = () => resolve(r.result);
+  r.onerror = () => reject(r.error);
+  r.readAsDataURL(blob);
+});
+
+async function inlineKatexCss() {
+  const css = await (await fetch('lib/katex/katex.min.css')).text();
+  const fonts = new Map();
+  for (const m of css.matchAll(/url\((fonts\/[^)]+\.woff2)\)/g)) {
+    if (!fonts.has(m[1])) fonts.set(m[1], await toDataURL(await (await fetch('lib/katex/' + m[1])).blob()));
+  }
+  return css.replace(/,\s*url\(fonts\/[^)]+\.(woff|ttf)\)\s*format\("[^"]+"\)/g, '')
+            .replace(/url\((fonts\/[^)]+\.woff2)\)/g, (all, f) => `url(${fonts.get(f)})`);
+}
+
+async function exportHtml() {
+  if (!currentPath) return;
+  const base = currentPath.split('/').pop().replace(MD_RE, '');
+  const dark = isDark();
+  showToast('Preparing the web page…');
+  try {
+    if (dark) await renderDiagrams(output, 'default');
+    const clone = output.cloneNode(true);
+    if (dark) await renderDiagrams(output);
+    clone.querySelectorAll('.code-copy, .hc-badge, .print-toc').forEach(e => e.remove());
+    let pictures = 0, left = 0;
+    for (const img of clone.querySelectorAll('img')) {
+      const src = img.getAttribute('src');
+      if (!src || img.classList.contains('web') || img.classList.contains('missing')) {
+        const note = document.createElement('span');
+        note.textContent = `[picture not included: ${img.dataset.webSrc || img.dataset.origSrc || img.alt || ''}]`;
+        img.replaceWith(note);
+        left++;
+        continue;
+      }
+      try { img.src = await toDataURL(await (await fetch(src)).blob()); img.removeAttribute('srcset'); pictures++; }
+      catch { img.remove(); left++; }
+    }
+    clone.querySelectorAll('video, audio').forEach(m => {
+      const note = document.createElement('span');
+      note.textContent = `[${m.tagName.toLowerCase()} not included: ${m.dataset.origSrc || ''}]`;
+      m.replaceWith(note);
+    });
+    clone.querySelectorAll('a').forEach(a => {
+      if (a.dataset.origHref && !a.classList.contains('link-disabled')) a.setAttribute('href', a.dataset.origHref);
+      a.removeAttribute('target');
+    });
+    clone.querySelectorAll('*').forEach(el => {
+      for (const attr of [...el.attributes]) if (attr.name.startsWith('data-')) el.removeAttribute(attr.name);
+      el.classList.remove('zoomable', 'img-flash', 'link-broken');
+      if (/^(Click to enlarge|Click to copy the LaTeX)$/.test(el.getAttribute('title') || '')) el.removeAttribute('title');
+    });
+
+    let katexCss = '', hlCss = '';
+    try { katexCss = await inlineKatexCss(); } catch { }
+    try { hlCss = await (await fetch('lib/highlight/styles/github.min.css')).text(); } catch { }
+    const appCss = document.querySelector('head style').textContent;
+    const html = `<!DOCTYPE html>
+<html lang="${document.documentElement.lang || 'en'}" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="Markdown Viewer (WebView2)">
+<title>${esc(base)}</title>
+<style>${katexCss}</style>
+<style>${hlCss}</style>
+<style>${appCss}</style>
+<style>
+html, body { height: auto !important; overflow: visible !important; display: block !important; background: #fff; }
+body > .markdown-body { contain: none; max-width: 980px; margin: 0 auto; padding: 2rem 2rem 4rem; }
+.code-copy { display: none !important; }
+</style>
+</head>
+<body>
+<article class="markdown-body">
+${clone.innerHTML}
+</article>
+</body>
+</html>
+`;
+    const saved = await saveFileAs(new Blob([html], { type: 'text/html;charset=utf-8' }), base + '.html',
+      { description: 'Web page', accept: { 'text/html': ['.html', '.htm'] } });
+    if (saved) showToast(`Saved “${saved}” — one file with ${plural(pictures, 'picture')}, no scripts.` +
+      (left ? ` ${plural(left, 'web or missing picture')} left out.` : ''));
+  } catch (e) { showToast(`Saving the web page failed: ${e.message}`); }
+}
 
 // ---------------------------------------------------------------- PDF
 const pdfBtn = document.getElementById('pdfBtn');
@@ -3022,14 +3578,59 @@ pdfBtn.addEventListener('click', async () => {
       img.complete ? null : new Promise(r => { img.onload = img.onerror = r; })));
     if (dark) await renderDiagrams(output, 'default');
     // The browser uses the page title as the suggested PDF file name.
-    document.title = currentPath.split('/').pop().replace(MD_RE, '');
+    const name = currentPath.split('/').pop().replace(MD_RE, '');
+    document.title = name;
+    const contents = addPrintContents();
+    // File name at the top of every page, "page / pages" at the bottom.
+    const css = s => '"' + s.replace(/[\\"]/g, m => '\\' + m).replace(/[\r\n]/g, ' ') + '"';
+    const pageStyle = document.createElement('style');
+    pageStyle.textContent = `@page { margin: 16mm 14mm 18mm;
+      @top-center { content: ${css(name)}; font: 9pt system-ui, sans-serif; color: #666; }
+      @bottom-center { content: counter(page) " / " counter(pages); font: 9pt system-ui, sans-serif; color: #666; } }`;
+    document.head.append(pageStyle);
+    let done = false;
+    const cleanup = async () => {
+      if (done) return;
+      done = true;
+      contents?.remove();
+      pageStyle.remove();
+      document.title = oldTitle;
+      if (dark) await renderDiagrams(output);
+      pdfBtn.disabled = false;
+    };
+    window.addEventListener('afterprint', cleanup, { once: true });
     window.print();
-  } finally {
+  } catch (e) {
     document.title = oldTitle;
-    if (dark) await renderDiagrams(output);
     pdfBtn.disabled = false;
+    showToast(`Printing failed: ${e.message}`);
   }
 });
+
+// A contents page at the start of the PDF (documents with 3 or more headings), with links to each part.
+function addPrintContents() {
+  const heads = [...output.querySelectorAll('h1[id], h2[id], h3[id]')];
+  if (heads.length < 3) return null;
+  const top = Math.min(...heads.map(h => +h.tagName[1]));
+  const nav = document.createElement('nav');
+  nav.className = 'print-toc';
+  const title = document.createElement('div');
+  title.className = 'print-toc-title';
+  title.textContent = 'Contents';
+  const ol = document.createElement('ol');
+  for (const h of heads) {
+    const li = document.createElement('li');
+    li.style.setProperty('--lvl', +h.tagName[1] - top);
+    const a = document.createElement('a');
+    a.href = '#' + h.id;
+    a.textContent = h.textContent.trim();
+    li.append(a);
+    ol.append(li);
+  }
+  nav.append(title, ol);
+  output.prepend(nav);
+  return nav;
+}
 
 // ---------------------------------------------------------------- inputs
 picker.addEventListener('change', () => {

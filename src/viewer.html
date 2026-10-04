@@ -109,7 +109,9 @@
     #crumb { padding: .5rem 2rem 0; color: var(--muted); font-size: .8rem; }
     #docPath { word-break: break-all; }
     #stats { display: flex; flex-wrap: wrap; gap: .1rem 1rem; margin-top: .15rem; }
-    #stats .group { white-space: nowrap; }
+    /* A group moves to its own row first; only a group wider than the whole area (e.g. next to the source
+       view) wraps inside, instead of making the page scroll sideways. */
+    #stats .group { white-space: normal; }
     .app-tag {
       font-size: .7rem; font-weight: 600; vertical-align: .2em; padding: .1rem .45rem; border-radius: 999px;
       color: var(--ok); background: var(--ok-bg); border: 1px solid currentColor;
@@ -147,7 +149,7 @@
     .sentences-only h1, .sentences-only h2, .sentences-only h3, .sentences-only h4, .sentences-only h5,
     .sentences-only h6, .sentences-only table { display: none !important; }   /* root signs, fraction bars, slashes: drawings, no text */
     .measuring .katex .katex-mathml, .measuring .katex .katex-mathml * { display: none !important; }
-    #toc .toc-title, #imgPanel .toc-title, #linkPanel .toc-title { font-weight: 600; padding: 0 1rem .4rem; color: var(--muted); text-transform: uppercase; font-size: .72rem; letter-spacing: .05em; }
+    #toc .toc-title, #imgPanel .toc-title, #linkPanel .toc-title, #srcPanel .toc-title { font-weight: 600; padding: 0 1rem .4rem; color: var(--muted); text-transform: uppercase; font-size: .72rem; letter-spacing: .05em; }
     #toc ol { list-style: none; margin: 0; padding: 0; }
     #toc a {
       display: block; padding: .22rem 1rem .22rem calc(1rem + var(--lvl, 0) * .85rem); color: var(--fg);
@@ -194,6 +196,7 @@
     .markdown-body .img-flash { outline: 3px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
     #lbPos { font-size: .8rem; opacity: .85; min-width: 3.5rem; text-align: center; font-variant-numeric: tabular-nums; }
     #lbPos:empty { display: none; }
+    .lb-bar [hidden] { display: none !important; }
 
     /* ---- Figures open in the viewer ---- */
     .markdown-body img.zoomable, .markdown-body pre.mermaid.zoomable svg { cursor: zoom-in; }
@@ -238,7 +241,72 @@
     .markdown-body pre { background: var(--code-bg); padding: 1rem; border-radius: 6px; overflow: auto; }
     .markdown-body pre code { background: none; padding: 0; font-size: 85%; }
     .markdown-body pre code.hljs { background: none; padding: 0; }
-    .markdown-body blockquote { margin: 0; padding: 0 1em; color: var(--muted); border-left: .25em solid var(--border); }
+    .markdown-body blockquote { margin: 0; padding: 0 1em; color: var(--muted); border-inline-start: .25em solid var(--border); }
+    /* Code, math and diagrams always read left to right, also inside Arabic or Hebrew text. */
+    .markdown-body pre, .markdown-body code, .markdown-body .katex, .markdown-body .math-display { direction: ltr; unicode-bidi: isolate; }
+    .markdown-body pre { text-align: left; }
+    .markdown-body .katex { cursor: copy; }
+    .markdown-body a.link-broken { text-decoration: underline wavy var(--bad); }
+
+    /* Copy button on code blocks (its label is drawn by CSS, so it is not part of the document's text). */
+    .code-wrap { position: relative; }
+    .code-copy {
+      position: absolute; top: .45rem; right: .45rem; z-index: 1; border: 1px solid var(--border); border-radius: 6px;
+      background: var(--bg); color: var(--muted); font: 600 .72rem/1 system-ui, sans-serif; padding: .3rem .5rem; cursor: pointer;
+      opacity: .55; transition: opacity .15s;
+    }
+    .code-copy::before { content: '⧉ Copy'; }
+    .code-copy.done::before { content: '✓ Copied'; }
+    .code-wrap:hover .code-copy, .code-copy:focus-visible { opacity: 1; }
+    .code-copy:hover { color: var(--accent); border-color: var(--accent); }
+    @media print { .code-copy { display: none !important; } .markdown-body a.link-broken { text-decoration: none; } }
+
+    /* ---- Source view (right) ---- */
+    #srcPanel {
+      position: relative; width: 45%; min-width: 320px; flex-shrink: 0; border-left: 1px solid var(--border);
+      background: var(--panel); overflow: auto; padding: .75rem 0 2rem;
+    }
+    :root:not([data-src-open]) #srcPanel { display: none; }
+    :root[data-src-open] #toc { display: none; }
+    #srcView { position: relative; font: .8rem/1.55 ui-monospace, Consolas, monospace; color: var(--fg); }
+    .sl { display: block; direction: ltr; padding: 0 .9rem 0 3.6rem; white-space: pre-wrap; word-break: break-all; cursor: pointer; }
+    .sl::before { content: attr(data-n); display: inline-block; width: 2.8rem; margin-left: -3.2rem; margin-right: .4rem; text-align: right; color: var(--muted); user-select: none; }
+    .sl .st { unicode-bidi: plaintext; }
+    .sl:hover { background: var(--active); }
+    .sl.cur { background: var(--active); box-shadow: inset 3px 0 0 var(--accent); }
+    .sl.hit { background: var(--warn-bg2); }
+    .sl .inv { color: var(--warn-fg); background: var(--warn-bg2); border-radius: 3px; font-size: .9em; }
+    .src-more { color: var(--muted); padding: .5rem 1rem; font-size: .8rem; }
+    @media print { #srcPanel { display: none !important; } }
+
+    /* ---- Contents page for Save as PDF ---- */
+    .print-toc { display: none; }
+    @media print {
+      .print-toc { display: block; break-after: page; }
+      .print-toc-title { font-size: 1.7em; font-weight: 600; margin: 0 0 .7em; }
+      .print-toc ol { list-style: none; margin: 0; padding: 0; }
+      .print-toc li { padding-inline-start: calc(var(--lvl, 0) * 1.3em); margin: .3em 0; }
+      .print-toc a { color: inherit !important; text-decoration: none; }
+    }
+
+    /* GitHub-style callouts: > [!NOTE], [!TIP], [!IMPORTANT], [!WARNING], [!CAUTION] */
+    .markdown-body blockquote.callout { color: var(--fg); border-inline-start-color: var(--c); padding: .45rem 1em; margin: 1rem 0; }
+    .markdown-body blockquote.callout::before { content: var(--t); display: block; font-weight: 600; color: var(--c); margin-bottom: .2rem; }
+    .markdown-body blockquote.callout > :last-child { margin-bottom: 0; }
+    .markdown-body blockquote.callout > :first-child { margin-top: 0; }
+    .callout-note { --c: #0969da; --t: 'ⓘ Note'; }
+    .callout-tip { --c: #1a7f37; --t: '💡 Tip'; }
+    .callout-important { --c: #8250df; --t: '❗ Important'; }
+    .callout-warning { --c: #9a6700; --t: '⚠ Warning'; }
+    .callout-caution { --c: #cf222e; --t: '⛔ Caution'; }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) .callout-note { --c: #4493f8; } :root:not([data-theme="light"]) .callout-tip { --c: #3fb950; }
+      :root:not([data-theme="light"]) .callout-important { --c: #ab7df8; } :root:not([data-theme="light"]) .callout-warning { --c: #d29922; }
+      :root:not([data-theme="light"]) .callout-caution { --c: #f85149; }
+    }
+    :root[data-theme="dark"] .callout-note { --c: #4493f8; } :root[data-theme="dark"] .callout-tip { --c: #3fb950; }
+    :root[data-theme="dark"] .callout-important { --c: #ab7df8; } :root[data-theme="dark"] .callout-warning { --c: #d29922; }
+    :root[data-theme="dark"] .callout-caution { --c: #f85149; }
     .markdown-body table { border-collapse: collapse; display: block; overflow: auto; }
     .markdown-body th, .markdown-body td { border: 1px solid var(--border); padding: .4rem .8rem; }
     .markdown-body tr:nth-child(2n) { background: var(--panel); }
@@ -337,8 +405,9 @@
     .menu {
       position: absolute; right: 0; top: calc(100% + 4px); z-index: 60; min-width: 270px;
       background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: .3rem;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, .18); max-width: calc(100vw - 16px);
     }
+    .menu.align-left { right: auto; left: 0; }
     .menu[hidden] { display: none; }
     .menu button {
       display: block; width: 100%; text-align: left; border: 0; background: transparent; color: var(--fg);
@@ -437,6 +506,7 @@
     .sf-finding.risk h4 { color: var(--bad); }
     .sf-finding.caution h4 { color: var(--warn-fg); }
     .sf-why { color: var(--muted); }
+    .sf-line { border: 0; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; text-decoration: underline; white-space: nowrap; }
     .sf-tag { font-size: .72rem; font-weight: 600; margin-left: .5rem; padding: .05rem .4rem; border-radius: 10px;
               background: var(--ok-bg); color: var(--ok); vertical-align: .1em; }
     .sf-table td:first-child { width: 5.5rem; white-space: nowrap; }
@@ -500,7 +570,7 @@
     @media (max-width: 1000px) {
       #toc { position: fixed; right: 0; top: 0; bottom: 0; z-index: 40; width: min(300px, 85vw); box-shadow: -8px 0 24px rgba(0,0,0,.25); }
       :root:not([data-toc-open]) #toc { display: none; }
-      #imgPanel, #linkPanel { position: fixed; right: 0; top: 0; bottom: 0; z-index: 40; width: min(320px, 85vw); box-shadow: -8px 0 24px rgba(0,0,0,.25); }
+      #imgPanel, #linkPanel, #srcPanel { position: fixed; right: 0; top: 0; bottom: 0; z-index: 40; width: min(320px, 85vw); box-shadow: -8px 0 24px rgba(0,0,0,.25); }
     }
     @media (max-width: 760px) {
       main { flex-direction: column; }
@@ -513,6 +583,8 @@
 <body>
   <header>
     <button id="sidebarBtn" class="btn secondary icon" disabled title="Show/hide the file list (Ctrl+B)" aria-label="Show or hide the file list">☰</button>
+    <button id="backBtn" class="btn secondary icon" disabled title="Back (Alt+←)" aria-label="Back">←</button>
+    <button id="fwdBtn" class="btn secondary icon" disabled title="Forward (Alt+→)" aria-label="Forward">→</button>
     <h1>📁 Markdown Folder Viewer</h1>
     <label for="picker" class="btn">📁 Choose Folder</label>
     <input type="file" id="picker" webkitdirectory directory multiple />
@@ -523,6 +595,7 @@
     <button id="tocBtn" class="btn secondary" disabled title="Show/hide the table of contents (Ctrl+Shift+O)">📑 Contents</button>
     <button id="imgBtn" class="btn secondary" disabled title="Show/hide the list of pictures in this document (Ctrl+Shift+G)">🖼️ Images</button>
     <button id="linkBtn" class="btn secondary" disabled title="Show/hide the list of links in this document (Ctrl+Shift+L)">🔗 Links</button>
+    <button id="srcBtn" class="btn secondary" disabled title="Show the Markdown source next to the document (Ctrl+Shift+U)">&lt;/&gt; Source</button>
     <div class="menu-wrap">
       <button id="copyBtn" class="btn secondary" disabled aria-haspopup="menu" aria-expanded="false"
               title="Save or copy the document without hidden characters">💾 Export ▾</button>
@@ -533,6 +606,9 @@
         <hr>
         <button role="menuitem" data-action="copy" data-what="source"><b>📋 Copy clean Markdown</b><span>To paste back into an editor</span></button>
         <button role="menuitem" data-action="copy" data-what="text"><b>📋 Copy clean text</b><span>To paste into an email or document</span></button>
+        <hr>
+        <div class="menu-label">As shown</div>
+        <button role="menuitem" data-action="html"><b>🌐 Save as web page (.html)</b><span>One self-contained file with pictures, math and diagrams — no scripts</span></button>
       </div>
     </div>
     <button id="hiddenBtn" class="btn secondary" title="Show invisible characters in the document (Ctrl+Shift+H)">¶ Hidden</button>
@@ -669,6 +745,10 @@
       <div class="toc-title" id="imgTitle">Images</div>
       <ol id="imgList"></ol>
     </nav>
+    <section id="srcPanel" aria-label="Markdown source">
+      <div class="toc-title" id="srcTitle">Source</div>
+      <div id="srcView"></div>
+    </section>
     <nav id="linkPanel" aria-label="Links in this document">
       <div class="toc-title" id="linkTitle">Links</div>
       <ol id="linkList"></ol>
@@ -684,6 +764,8 @@
       <button class="btn secondary" id="lbPrev" title="Previous picture (←)" hidden>‹</button>
       <span id="lbPos"></span>
       <button class="btn secondary" id="lbNext" title="Next picture (→)" hidden>›</button>
+      <button class="btn secondary" id="lbSvg" title="Save this diagram as an SVG picture" hidden>⬇ SVG</button>
+      <button class="btn secondary" id="lbPng" title="Save this diagram as a PNG picture" hidden>⬇ PNG</button>
       <button class="btn secondary" id="lbOut" title="Zoom out (−)">−</button>
       <button class="btn secondary" id="lbLevel" title="Fit to window (0)">100%</button>
       <button class="btn secondary" id="lbIn" title="Zoom in (+)">+</button>
