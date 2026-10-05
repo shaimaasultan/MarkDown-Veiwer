@@ -35,15 +35,15 @@ using Microsoft.Win32.SafeHandles;
 // The program's own calls into Windows DLLs (user32, kernel32, advapi32, wintrust) load them from System32
 // only, never from the program's folder or anywhere else on the search path.
 [assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
-[assembly: AssemblyVersion("1.8.7.0")]
-[assembly: AssemblyFileVersion("1.8.7.0")]
-[assembly: AssemblyInformationalVersion("1.8.7")]
+[assembly: AssemblyVersion("1.8.8.0")]
+[assembly: AssemblyFileVersion("1.8.8.0")]
+[assembly: AssemblyInformationalVersion("1.8.8")]
 
 static class Program
 {
     const string AppName = "Markdown Viewer (WebView2)";
     const string DataFolder = "MarkdownViewerWebView2";     // %APPDATA% (settings) and %LOCALAPPDATA% (browser data)
-    const string AppVersion = "1.8.7";
+    const string AppVersion = "1.8.8";
     // Exists only inside this program's windows. Not a .local name: Windows would first spend ~2 s
     // looking for a device called "mdviewer" on the local network before the page could load.
     const string PrivateHost = "https://mdviewer.example";
@@ -170,7 +170,9 @@ static class Program
 
     // Windows' DLL-loading rules for this process, from here on: system DLLs from System32 before any copy
     // in the program's folder, never from a network share or from files written by low-integrity
-    // (sandboxed) processes, and never from the current folder or PATH.
+    // (sandboxed) processes, and never from the current folder or PATH. The legacy ways other programs push
+    // a DLL into every process are switched off too: AppInit_DLLs, global window hooks, legacy (non-TSF)
+    // input methods and Winsock layered providers.
     static void ProtectDllLoading()
     {
         try { SetDefaultDllDirectories(0x1000); } catch { }        // LOAD_LIBRARY_SEARCH_DEFAULT_DIRS
@@ -179,6 +181,13 @@ static class Program
             // ProcessImageLoadPolicy: NoRemoteImages | NoLowMandatoryLabelImages | PreferSystem32Images
             int flags = 0x1 | 0x2 | 0x4;
             SetProcessMitigationPolicy(10, ref flags, (IntPtr)4);
+        }
+        catch { }
+        try
+        {
+            // ProcessExtensionPointDisablePolicy: DisableExtensionPoints
+            int flags = 0x1;
+            SetProcessMitigationPolicy(6, ref flags, (IntPtr)4);
         }
         catch { }
     }
@@ -1371,11 +1380,22 @@ static class Program
                     if (Array.IndexOf(PrefValues[p.Key], p.Value) > 0) sb.Append(p.Key).Append('=').Append(p.Value).Append("\r\n");
                 // Written to a temporary file first and then swapped in, so a crash or power cut while saving
                 // can never leave a half-written settings.ini (which would silently reset e.g. Pictures off).
-                string file = PrefsFile(), temp = file + "." + RandomHex(4) + ".new";
+                // The temporary file has a random name and must not exist yet (CreateNew): nothing can place a
+                // file or link there beforehand to redirect the write.
+                string file = PrefsFile(), temp = file + "." + RandomHex(8) + ".new";
                 Directory.CreateDirectory(Path.GetDirectoryName(file));
-                File.WriteAllText(temp, sb.ToString());
-                if (File.Exists(file)) File.Replace(temp, file, null);
-                else File.Move(temp, file);
+                try
+                {
+                    using (FileStream fs = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                    using (StreamWriter w = new StreamWriter(fs, new UTF8Encoding(false)))
+                        w.Write(sb.ToString());
+                    if (File.Exists(file)) File.Replace(temp, file, null);
+                    else File.Move(temp, file);
+                }
+                finally
+                {
+                    if (File.Exists(temp)) File.Delete(temp);
+                }
             }
             catch { }
         }

@@ -14,7 +14,9 @@ $key = 'MarkdownViewerWebView2'
 $exeName = "$key.exe"
 $progId = "$key.md"
 $dist = Join-Path $here 'dist'
-$userDest = Join-Path $env:LOCALAPPDATA "Programs\$key"     # where earlier versions installed it
+# Where earlier versions installed it - from Windows' own record of the folder, not the LOCALAPPDATA
+# environment variable (which any program running as you can change).
+$userDest = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) "Programs\$key"
 # Program Files as Windows records it (not the ProgramFiles environment variable, which can be set per user).
 $dest = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) $key
 $exe = Join-Path $dest $exeName

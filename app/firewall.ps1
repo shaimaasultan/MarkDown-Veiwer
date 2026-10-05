@@ -4,19 +4,18 @@
 #   firewall.ps1 -Remove   remove them
 # The app needs no network access, so the rules change nothing in how it works. They do not cover the
 # WebView2 engine (msedgewebview2.exe), which Windows shares with other apps.
-param([switch]$Remove, [string]$Exe)
+[CmdletBinding()]   # unknown parameters (e.g. a program path) are refused, never silently ignored
+param([switch]$Remove)
 # Run with administrator rights, PowerShell would otherwise look for commands such as New-NetFirewallRule
 # in the user's own module folder (Documents) first: a look-alike module there would run as administrator.
 # Only Windows PowerShell's own modules, from its system folder (set before any command is used).
 $env:PSModulePath = "$PSHOME\Modules"
 $ErrorActionPreference = 'Stop'
 $group = 'Markdown Viewer (WebView2)'
-if (-not $Exe) {
-    # The installed program in Program Files (as Windows records it, not the ProgramFiles environment variable),
-    # or for this user only (earlier versions).
-    $Exe = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'MarkdownViewerWebView2\MarkdownViewerWebView2.exe'
-    if (-not (Test-Path $Exe)) { $Exe = Join-Path $env:LOCALAPPDATA 'Programs\MarkdownViewerWebView2\MarkdownViewerWebView2.exe' }
-}
+# The program the rules are for: always the copy installed in Program Files, worked out here (also in the
+# administrator step) from Windows' own record of that folder. No path is taken from outside, so nothing can
+# get a rule made for some other program.
+$Exe = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'MarkdownViewerWebView2\MarkdownViewerWebView2.exe'
 
 # Results are shown in the administrator window itself: no log file, so no file in the user's folders can be
 # made to point this administrator step at a system file.
@@ -26,12 +25,11 @@ $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 if (-not $admin) {
     # Run again with administrator rights - always the copy installed in Program Files, which only an
     # administrator can change, never this file if it sits elsewhere (e.g. the project folder, where another
-    # program could swap it between the UAC prompt and its start). The program path is passed on, so it
-    # stays this user's even if Windows asks for a different administrator account. (The rules only ever
-    # block that program.)
+    # program could swap it between the UAC prompt and its start). Only -Remove is passed on; the
+    # administrator step works out the program path itself.
     $installed = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'MarkdownViewerWebView2\firewall.ps1'
     if (-not (Test-Path -LiteralPath $installed)) { Write-Host 'Install the app first (Install.cmd): the firewall rules are set by its installed copy.'; exit 1 }
-    $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$installed`"", '-Exe', "`"$Exe`"")
+    $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$installed`"")
     if ($Remove) { $argList += '-Remove' }
     # Windows PowerShell by its full path, not whichever powershell.exe comes first on PATH.
     $psExe = Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'

@@ -55,7 +55,7 @@ $trust = Join-Path $PSScriptRoot 'trust.ps1'
 if ((Test-Path -LiteralPath $exe) -and (Test-Path -LiteralPath $trust)) {
     $thumb = (Get-AuthenticodeSignature $exe).SignerCertificate.Thumbprint
     if ($thumb -and (Get-ChildItem Cert:\CurrentUser\TrustedPublisher, Cert:\CurrentUser\Root | Where-Object Thumbprint -eq $thumb)) {
-        & $trust -Remove -Exe $exe
+        & $trust -Remove
     }
 }
 

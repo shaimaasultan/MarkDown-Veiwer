@@ -29,6 +29,7 @@ tamper tests described under each section.
 - [x] Web and mail links open outside only after a question showing the real address (1.5.0)
 - [x] Only `http:`, `https:` and `mailto:` addresses are ever handed to Windows; any other scheme is ignored (`AskOpenOutside`)
 - [x] Settings saved through a temporary file and an atomic replace, so a crash while saving cannot corrupt `settings.ini` and silently reset choices such as Pictures off (1.8.6) — tested: saved value present, no temporary file left
+- [x] The temporary settings file gets a random name and is created with `CreateNew`, so nothing can place a file or link there beforehand to redirect the write (1.8.8) — tested: two saves, no temporary file left
 - [x] InPrivate window; camera, microphone, location, notifications, clipboard reading refused; downloads only from the viewer; trimmed right-click menu (1.5.0)
 - [x] Developer tools off; documents refused if WebView2 remote debugging is on or cannot be checked (fail closed) (1.5.0)
 - [x] `WEBVIEW2_*` environment variables cleared before the engine starts
@@ -53,12 +54,14 @@ tamper tests described under each section.
 - [x] **Checked files stay locked** (read sharing only) until the app closes; the folder cannot be renamed (1.8.1) — tested: write and rename refused while running
 - [x] **Safe DLL loading:** System32 first, no network-share or low-integrity images, no current folder/PATH (`SetProcessMitigationPolicy`, `SetDefaultDllDirectories`) (1.8.1) — confirmed ON with `Get-ProcessMitigation`
 - [x] The app's own calls into Windows DLLs load from System32 only (`DefaultDllImportSearchPaths`) (1.8.3)
+- [x] **Legacy injection points off:** AppInit_DLLs, global window hooks, legacy (non-TSF) input methods and Winsock layered providers are disabled for the process (`ProcessExtensionPointDisablePolicy`) (1.8.8) — confirmed ON with `Get-ProcessMitigation`; documents still open normally
 - [x] **No startup hooks:** `COR_ENABLE_PROFILING`, `COR_PROFILER*`, `APPDOMAIN_MANAGER_*` refuse the start (`DOTNET_STARTUP_HOOKS` does not apply to .NET Framework) (1.8.2) — tested with profiler variables set
   - Note: .NET has already loaded a profiler when this check runs, so it limits the damage rather than preventing it
 - [x] **Not as administrator by accident:** started elevated while a normal start is possible, the app refuses (1.8.2)
   - [ ] Confirm on a real run: open a `.md` from an administrator prompt → refusal message
 - [x] **Genuine engine:** the started `msedgewebview2.exe` must be Microsoft-signed and under Program Files (1.8.1) — tested with the real engine and with `powershell.exe` as a stand-in
 - [x] Unexpected errors on the window thread and in background tasks are caught and logged to `%LOCALAPPDATA%\MarkdownViewerWebView2\errors.log` (type and stack only, never the message, which can quote document text) instead of crashing - a crash hands Windows Error Reporting a memory dump that can hold the open document; an error on another thread ends the app without a dump (1.8.6) — tested: type logged, message not
+  - Verified against Windows Error Reporting (1.8.8 review): without the handler a background-thread crash started WerFault and logged crash events 1000/1026; with it the process ended with code 3, no WerFault, no crash events
 - [x] DLL planting checked for 28 DLL names: 25 caught by the folder check; `cryptbase`, `cryptsp`, `profapi` are loaded by .NET before any app code → only the Program Files install fully protects (documented)
 
 ## 5. Windows entries (file types, Open with)
@@ -78,6 +81,7 @@ tamper tests described under each section.
 - [x] Generated source written next to the build, not into the shared Temp folder (1.8.4)
 - [x] `build.ps1` run on its own refuses an administrator window (as `Install.cmd` already does), so the compiler never runs elevated (1.8.6)
 - [x] **Trust-Certificate adds Trusted Roots only**, not Trusted Publishers (Office macros / AllSigned scripts) (1.8.3)
+- [x] **Trust-Certificate takes the right certificate:** only from the program installed in Program Files (no per-user or `dist\` copy, no environment variable), only if it is intact and signed by your own signing certificate (the one with its private key on this PC), added straight from memory with no temporary file (1.8.8) — tested: not installed, unsigned and Microsoft-signed programs all refused; nothing added
 
 ## 7. Install in Program Files (one installer)
 
@@ -106,6 +110,7 @@ tamper tests described under each section.
 - [x] Program Files from `GetFolderPath`, never from an environment variable — also for the elevated folder delete in uninstall (1.8.4)
 - [x] Firewall script: results in its own window, no log file (1.8.4)
 - [x] **Firewall launchers elevate only the installed copy:** `firewall.ps1` relaunches the copy in Program Files (only an administrator can change it), never the project-folder file, which could be swapped between the prompt and its start (1.8.7)
+- [x] **The firewall step takes no program path from outside:** both sides work out the Program Files path themselves; an unknown `-Exe` is refused before anything runs (1.8.8) — tested: `-Exe <other program>` refused in 0.3 s, no prompt
   - [ ] Confirm on a real run: `Firewall-Block.cmd` / `Firewall-Unblock.cmd`
 - [x] Uninstall removes the Program Files copy, per-user leftovers, entries, settings, browser data, firewall rules and certificate trust; restores the previous `.md` default
 - [x] **Uninstall removes only its own entries** (file types, Open with, shortcuts, Settings › Apps entry that start the installed copy or a program that no longer exists; others are kept and listed) and uses **one administrator prompt** - a readable command, no script file - for the firewall rules and the folder together (1.8.7) — tested: 7 ownership cases
@@ -118,6 +123,8 @@ tamper tests described under each section.
 - [x] Line endings fixed per file type (`.gitattributes`), so a checkout or pull never rewrites a file and causes false alarms — fresh clone compared byte for byte
   - [ ] After the next install, run `Check-Source.cmd` → "No changes"
 - [x] `check-source.ps1` is installed in Program Files with the record, and `Check-Source.cmd` runs that copy (found through Windows' own Program Files lookup) - not the copy in the project folder, which a program running as you could change to always report "No changes" (1.8.6) — tested: installed checker with -Root and with the recorded folder; "not installed yet" message
+- [x] `Check-Source.cmd` passes the project folder through an environment variable, so a folder name with quotes or apostrophes cannot break the command or add PowerShell (1.8.8) — tested with `it's a test` and `x'; Write-Host INJECTED; '` folders
+- [x] No script builds a path from `$env:LOCALAPPDATA` (the installer's per-user leftover path now comes from `GetFolderPath`) (1.8.8)
 - [x] The record is taken before the build and compared again after it; the install is refused if the sources changed while building (1.8.6) — tested: unchanged → 0, changed → 1
 
 ## 10. Clean-up after testing
