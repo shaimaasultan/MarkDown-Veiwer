@@ -24,6 +24,33 @@ $exts = '.md', '.markdown', '.mdown', '.mkd'
 $mediaExts = '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.bmp', '.svg', '.mp4', '.webm', '.mp3', '.wav', '.ogg'
 $mediaProgId = "$key.media"
 
+function Quote($s) { "'" + $s.Replace("'", "''") + "'" }
+
+# One command-line argument, quoted by Windows' rules (CommandLineToArgvW), so PowerShell receives the text
+# exactly as written: backslashes are literal unless a double quote follows them.
+function ConvertTo-NativeArgument([string]$text) {
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append('"')
+    $backslashes = 0
+    foreach ($ch in $text.ToCharArray()) {
+        if ($ch -eq '\') { $backslashes++; continue }
+        if ($ch -eq '"') { [void]$sb.Append('\' * (2 * $backslashes + 1)).Append('"') }
+        else { [void]$sb.Append('\' * $backslashes).Append($ch) }
+        $backslashes = 0
+    }
+    [void]$sb.Append('\' * (2 * $backslashes)).Append('"')
+    $sb.ToString()
+}
+
+# A question needs a console keyboard: in PowerShell ISE, or with input redirected, it would wait forever.
+function Read-YesNo([string]$question) {
+    if ([Console]::IsInputRedirected -or $Host.Name -ne 'ConsoleHost') {
+        Write-Host 'This window cannot answer the question. Run Install.cmd by double-clicking it. Nothing was changed.' -ForegroundColor Yellow
+        exit 1
+    }
+    (Read-Host "$question [Y/N]").Trim() -match '^(y|yes)$'
+}
+
 # Started normally, not as administrator: run as administrator, the build would sign with another account's
 # certificate and the registrations could land in another account's profile. Only the copy to Program Files
 # asks for administrator rights. (With User Account Control off there is no other way.)
@@ -41,6 +68,23 @@ if ($running.Count) {
     Write-Host "Closing $($running.Count) open $name window(s) to update the program; reopen your documents afterwards."
     $running | Stop-Process -Force
     Start-Sleep -Milliseconds 500
+}
+
+# Before building: has the project folder changed since the last install? The installed checker and its
+# record sit in Program Files, where only an administrator can change them. Changes nobody meant to make
+# should not get built and signed unnoticed; changes you made or pulled yourself just need a Y.
+$installedChecker = Join-Path $dest 'check-source.ps1'
+if ((Test-Path -LiteralPath $installedChecker) -and (Test-Path -LiteralPath (Join-Path $dest 'source-manifest.txt'))) {
+    $projectRoot = Split-Path $here -Parent
+    & $installedChecker -Root $projectRoot -Quiet
+    if ($LASTEXITCODE -eq 0) { Write-Host 'Project folder unchanged since the last install.' }
+    elseif ($LASTEXITCODE -eq 1) {
+        & $installedChecker -Root $projectRoot | Out-Host
+        if (-not (Read-YesNo 'Build and install these changes?')) { Write-Host 'Nothing was built or installed.'; exit 1 }
+    }
+    else { Write-Host 'The project folder could not be compared with the last install (see above); this install makes a new record.' -ForegroundColor Yellow }
+} else {
+    Write-Host 'No record from an earlier install yet; this install makes one.'
 }
 
 # Record the SHA-256 of every project file before the build; the record is installed in Program Files with
@@ -72,32 +116,42 @@ if ($installedExe) {
         Write-Host "  installed: $oldThumb"
         Write-Host "  new build: $newThumb"
         Write-Host 'That is expected only right after a new signing certificate was made on this PC.'
-        # Without a console keyboard (e.g. PowerShell ISE, or input redirected) the question would wait forever.
-        if ([Console]::IsInputRedirected -or $Host.Name -ne 'ConsoleHost') {
-            Write-Host 'This window cannot answer the question. Run Install.cmd by double-clicking it. Nothing was changed.' -ForegroundColor Yellow
-            exit 1
-        }
-        if ((Read-Host 'Install the new build? [Y/N]').Trim() -notmatch '^(y|yes)$') { Write-Host 'Nothing was changed.'; exit 1 }
+        if (-not (Read-YesNo 'Install the new build?')) { Write-Host 'Nothing was changed.'; exit 1 }
         $accept = $newThumb
     }
 }
 
 # Copy the program with place.ps1 - the only step that runs with administrator rights. It copies into a
 # staging folder in Program Files, checks the files there and then swaps the folders (see place.ps1).
-Write-Host "Copying the program to $dest (Windows asks for administrator rights)..."
+Write-Host "Copying the program to $dest (Windows asks for administrator rights; 'Show more details' shows place.ps1, its SHA-256 and every file's SHA-256)..."
 # The SHA-256 of every file as built, taken now: the administrator step compares each copy with it.
 $installFiles = @($exeName, "$key.Content.dll", 'MarkdownViewer.ico', 'source-manifest.txt', 'Microsoft.Web.WebView2.Core.dll',
                   'Microsoft.Web.WebView2.WinForms.dll', 'WebView2Loader.dll' | ForEach-Object { Join-Path $dist $_ }) +
                 @('uninstall.ps1', 'firewall.ps1', 'trust.ps1', 'check-source.ps1' | ForEach-Object { Join-Path $here $_ })
 $expected = ($installFiles | ForEach-Object { "$(Split-Path $_ -Leaf)=$((Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash)" }) -join ';'
-# place.ps1's text goes to the elevated PowerShell inline (-EncodedCommand): no file is run that another
-# program could swap between the prompt and the start.
-function Quote($s) { "'" + $s.Replace("'", "''") + "'" }
-$command = "& {`n$([IO.File]::ReadAllText((Join-Path $here 'place.ps1')))`n} -Source $(Quote $dist) -Scripts $(Quote $here) -Expected $(Quote $expected)"
-if ($accept) { $command += " -AcceptThumbprint $(Quote $accept)" }
-$encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
-if ($encoded.Length -gt 30000) { Write-Host 'Internal error: the administrator step is too long to pass inline; nothing was installed.'; exit 1 }
-$argList = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded)
+# What runs as administrator is a short, readable bootstrap - which is what the UAC prompt's "Show more
+# details" shows: place.ps1's path and SHA-256, then the data (folders, every file's SHA-256, an accepted
+# certificate). As administrator it first limits module loading to PowerShell's own folder (a plain string,
+# no command used before that), reads place.ps1's bytes once, checks them against that SHA-256 and runs
+# exactly those bytes from memory: a place.ps1 swapped at any moment after this point never runs (exit 8).
+$placeFile = Join-Path $here 'place.ps1'
+$placeHash = (Get-FileHash -LiteralPath $placeFile -Algorithm SHA256).Hash
+$bootstrap = @(
+    '$env:PSModulePath = $PSHOME + ''\Modules'''
+    '$ErrorActionPreference = ''Stop'''
+    "`$codeFile = $(Quote $placeFile)"
+    "`$codeHash = '$placeHash'"
+    '$bytes = [IO.File]::ReadAllBytes($codeFile)'
+    'if (([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($bytes)) -replace ''-'', '''') -ne $codeHash) { exit 8 }'
+    "`$Source = $(Quote $dist)"
+    "`$Scripts = $(Quote $here)"
+    "`$Expected = $(Quote $expected)"
+    "`$AcceptThumbprint = $(Quote $accept)"
+    '& ([scriptblock]::Create([Text.Encoding]::UTF8.GetString($bytes).TrimStart([char]0xFEFF))) -Source $Source -Scripts $Scripts -Expected $Expected -AcceptThumbprint $AcceptThumbprint'
+) -join '; '
+$argLine = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ' + (ConvertTo-NativeArgument $bootstrap)
+if ($argLine.Length -gt 30000) { Write-Host 'Internal error: the administrator step is too long for one command line; nothing was installed.'; exit 1 }
+$argList = $argLine
 # Windows PowerShell by its full path (not whichever powershell.exe comes first on PATH); place.ps1
 # itself only uses Windows PowerShell's own modules.
 $psExe = Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
@@ -110,6 +164,7 @@ if ($p.ExitCode -ne 0) {
         4 { 'a WebView2 file does not carry a valid Microsoft signature' }
         5 { 'a file in app\dist is a link, not a plain file' }
         7 { 'a copied file differs from the build (changed while installing?)' }
+        8 { 'place.ps1 changed after the installer checked it' }
         default { 'the files could not be copied (is the viewer open in another account?)' }
     }
     Write-Host "Not installed: $why. The installed copy was left as it was."

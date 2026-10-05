@@ -1,7 +1,8 @@
 # Installs the built program in C:\Program Files\MarkdownViewerWebView2. Run by install.ps1 with
-# administrator rights (one UAC prompt); everything else in the install runs as the user. install.ps1 hands
-# this script's text to the elevated PowerShell inline (-EncodedCommand), so it is never run from a file
-# another program could swap between the prompt and the start.
+# administrator rights (one UAC prompt); everything else in the install runs as the user. The elevated
+# PowerShell gets a short readable bootstrap (what the UAC details show): this file's path and SHA-256 and the
+# data below. It reads this file's bytes once, checks the SHA-256 and runs exactly those bytes from memory,
+# so a copy swapped between the prompt and the start never runs.
 #   -Source            the built program (app\dist)
 #   -Scripts           the folder with uninstall.ps1, firewall.ps1, trust.ps1 and check-source.ps1 (app)
 #   -Expected          name=SHA-256;... of every file as built: each copy is compared with it

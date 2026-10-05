@@ -24,9 +24,14 @@ function Say($text) { Write-Host $text }
 
 $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $admin) {
-    # Run again with administrator rights. The program path is passed on, so it stays this user's even if
-    # Windows asks for a different administrator account. (The rules only ever block that program.)
-    $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-Exe', "`"$Exe`"")
+    # Run again with administrator rights - always the copy installed in Program Files, which only an
+    # administrator can change, never this file if it sits elsewhere (e.g. the project folder, where another
+    # program could swap it between the UAC prompt and its start). The program path is passed on, so it
+    # stays this user's even if Windows asks for a different administrator account. (The rules only ever
+    # block that program.)
+    $installed = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'MarkdownViewerWebView2\firewall.ps1'
+    if (-not (Test-Path -LiteralPath $installed)) { Write-Host 'Install the app first (Install.cmd): the firewall rules are set by its installed copy.'; exit 1 }
+    $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$installed`"", '-Exe', "`"$Exe`"")
     if ($Remove) { $argList += '-Remove' }
     # Windows PowerShell by its full path, not whichever powershell.exe comes first on PATH.
     $psExe = Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'

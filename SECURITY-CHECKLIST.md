@@ -85,7 +85,9 @@ tamper tests described under each section.
 - [x] Build, signing and registrations run as you; **only the copy** (`place.ps1`) runs as administrator
 - [x] `Install.cmd` refuses to be started as administrator (1.8.2)
 - [x] The installer never starts the app, so it can never leave a copy running with administrator rights
-- [x] The administrator step is passed to the elevated PowerShell inline (`-EncodedCommand`, read from `place.ps1` at that moment) instead of running a file from the project folder, so no file can be swapped between the UAC prompt and its start (1.8.6) — tested: inline step installs all 11 files
+- [x] The administrator step is passed to the elevated PowerShell inline (`-EncodedCommand`, read from `place.ps1` at that moment) instead of running a file from the project folder, so no file can be swapped between the UAC prompt and its start (1.8.6) — tested: inline step installs all 11 files — replaced in 1.8.7 by the readable bootstrap below
+- [x] **Readable administrator prompt:** the elevated PowerShell gets a short readable command - what "Show more details" shows: `place.ps1`'s path and SHA-256, every file's SHA-256 and an accepted certificate. Elevated, it reads `place.ps1` once, checks the SHA-256 and runs exactly those bytes (a swapped file → exit 8) (1.8.7) — tested: install 0, swapped after hashing 8, refusal inside passed back 3, byte-order mark accepted
+- [x] **Source checked before building:** `Install.cmd` runs the installed checker against the project folder first; changes since the last install are listed and built only after you answer Y (1.8.7)
 - [x] Every copied file is compared, inside the administrator step, with the SHA-256 taken from the build just before; a difference or an unlisted file removes the staging folder and stops the install with the installed copy untouched (exit 7) (1.8.6) — tested: wrong hash, unlisted file
 - [x] The installer stops with a message instead of waiting forever when it cannot read the keyboard for the certificate question (e.g. PowerShell ISE, redirected input) (1.8.6) — tested with redirected input
 - [x] **Updates keep the certificate:** a build signed by another certificate is refused unless you confirm both thumbprints with Y (1.8.3) — tested exit 3 / accept
@@ -103,8 +105,10 @@ tamper tests described under each section.
 - [x] PowerShell and cmd started by full path in scripts, all `.cmd` launchers and the uninstall entry (1.8.2–1.8.4)
 - [x] Program Files from `GetFolderPath`, never from an environment variable — also for the elevated folder delete in uninstall (1.8.4)
 - [x] Firewall script: results in its own window, no log file (1.8.4)
+- [x] **Firewall launchers elevate only the installed copy:** `firewall.ps1` relaunches the copy in Program Files (only an administrator can change it), never the project-folder file, which could be swapped between the prompt and its start (1.8.7)
   - [ ] Confirm on a real run: `Firewall-Block.cmd` / `Firewall-Unblock.cmd`
 - [x] Uninstall removes the Program Files copy, per-user leftovers, entries, settings, browser data, firewall rules and certificate trust; restores the previous `.md` default
+- [x] **Uninstall removes only its own entries** (file types, Open with, shortcuts, Settings › Apps entry that start the installed copy or a program that no longer exists; others are kept and listed) and uses **one administrator prompt** - a readable command, no script file - for the firewall rules and the folder together (1.8.7) — tested: 7 ownership cases
   - [ ] Confirm on a real run (only when you want to uninstall)
 
 ## 9. Checking the project folder

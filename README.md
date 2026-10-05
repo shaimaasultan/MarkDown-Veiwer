@@ -65,9 +65,9 @@ Every point below, with where it is implemented and how it was tested, is listed
 - **Windows entries stay pointed at the installed copy.** At start, an installed copy corrects the entries that open `.md` files, pictures and media when they point to a deleted copy (a place any program running as you could fill with its own program); the Program Files copy also corrects them when they point to any other copy. Development builds and copies run from other folders never touch them, and the installer reads them back and warns if a change did not stick.
 - **Genuine engine.** After the WebView2 engine starts, the app checks that it is Microsoft's `msedgewebview2.exe`, signed and under Program Files (which only an administrator can change); otherwise no document is shown.
 - **No developer access.** Developer tools are off; the app refuses to show documents if WebView2 remote debugging has been switched on, or if it cannot check.
-- **Safe install.** The app is installed in Program Files, where only an administrator can change it. Only the copy itself runs with administrator rights, handed to PowerShell inline (never as a file that could be swapped), and it trusts nothing it is handed: it works out the folder itself, compares every copy with the SHA-256 taken from the build and checks the signatures in a staging folder only administrators can change, and writes nothing into your folders. All scripts use only Windows PowerShell's own modules and start PowerShell and cmd by full path; neither the build nor the installer runs from an administrator window. See [Install](#install).
-- **Optional firewall rules.** `Firewall-Block.cmd` blocks all traffic in and out of `MarkdownViewerWebView2.exe` (needs administrator rights; the result is shown in its own window); `Firewall-Unblock.cmd` removes the rules. Updates keep the rules on the installed copy.
-- **Check the project folder.** Every install records the SHA-256 of every project file (all except `.git\` and `app\dist\`) in Program Files, next to the program, where only an administrator can change the record. `app\Check-Source.cmd` runs the checker installed beside the record (so it cannot be altered either) and lists every file changed, added or removed since the last install - also changes made by another program running as you, which can change neither the record nor the checker to hide them. The record is taken before the build and compared again after it: if the sources change while building, nothing is installed. Run it before installing an update you did not expect: changes you made or pulled yourself show up too, so only unexplained ones are a warning.
+- **Safe install.** The app is installed in Program Files, where only an administrator can change it. Only the copy itself runs with administrator rights, through a short readable command - what the administrator prompt's "Show more details" shows: `place.ps1`'s path and SHA-256 and every file's SHA-256. The elevated side runs exactly the `place.ps1` bytes it checked, so a swapped file never runs; and it trusts nothing it is handed: it works out the folder itself, compares every copy with the SHA-256 taken from the build and checks the signatures in a staging folder only administrators can change, and writes nothing into your folders. All scripts use only Windows PowerShell's own modules and start PowerShell and cmd by full path; neither the build nor the installer runs from an administrator window. See [Install](#install).
+- **Optional firewall rules.** `Firewall-Block.cmd` blocks all traffic in and out of `MarkdownViewerWebView2.exe` (needs administrator rights; the result is shown in its own window); `Firewall-Unblock.cmd` removes the rules. Updates keep the rules on the installed copy. The administrator step always runs the firewall script installed in Program Files (only an administrator can change it), never the copy in the project folder.
+- **Check the project folder.** Every install records the SHA-256 of every project file (all except `.git\` and `app\dist\`) in Program Files, next to the program, where only an administrator can change the record. `app\Check-Source.cmd` runs the checker installed beside the record (so it cannot be altered either) and lists every file changed, added or removed since the last install - also changes made by another program running as you, which can change neither the record nor the checker to hide them. `Install.cmd` runs the same installed checker before it builds: if the folder changed since the last install, it lists the changes and builds only after you answer Y. The new record is taken before the build and compared again after it: if the sources change while building, nothing is installed. Run it before installing an update you did not expect: changes you made or pulled yourself show up too, so only unexplained ones are a warning.
 
 **What this does not cover.** Windows' administrator prompt is not a security boundary against programs
 already running as you: they could change this repository's scripts or sources before you run
@@ -98,7 +98,9 @@ in `%LOCALAPPDATA%\Programs\MarkdownViewerWebView2` is removed, and existing fir
 the Program Files copy. The installer, uninstaller and firewall scripts use only Windows PowerShell's own
 modules (never look-alikes from your Documents module folder) and start PowerShell and cmd by their full
 paths, so nothing planted in your account runs with the administrator rights you grant. The administrator
-step is handed to the elevated PowerShell inline, never as a file that could be swapped before it starts. It
+step is a short readable command - the prompt's "Show more details" shows `place.ps1`'s path and SHA-256,
+every file's SHA-256 and any certificate you accepted. Elevated, it reads `place.ps1` once, checks that
+SHA-256 and runs exactly those bytes, so a file swapped after you started the install never runs. It
 works out the Program Files folder itself (not from an environment variable), copies into a staging folder
 there that only administrators can change, compares every copy with the SHA-256 taken from the build and
 checks the signatures in that folder, and only then swaps it in - a difference stops the install, a copy in
@@ -107,10 +109,11 @@ from an administrator window, and stops with a message if it cannot ask you a qu
 installer checks, as you, that Program Files holds exactly the files that were built.
 
 To remove it: Settings › Apps › Markdown Viewer (WebView2) › Uninstall, or run `app\Uninstall.cmd`. It removes
-the Program Files copy (one administrator prompt) and any per-user copy from earlier versions, the file-type
-entries (your previous `.md` default comes back), shortcuts, saved settings, browser data and the error log, the firewall
-block rules (a second administrator prompt, only if you added them) and the certificate trust (if you added
-it). The signing certificate stays in your certificate store for later builds.
+the Program Files copy and the firewall block rules (if you added them) with one administrator prompt - a
+short readable command, no script file - and any per-user copy from earlier versions, the file-type entries
+(your previous `.md` default comes back), shortcuts, the Settings › Apps entry, saved settings, browser data,
+the error log and the certificate trust (if you added it). Entries that start another copy of the viewer are
+left alone and listed. The signing certificate stays in your certificate store for later builds.
 
 ## Build only
 
