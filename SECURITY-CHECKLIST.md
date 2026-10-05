@@ -3,7 +3,7 @@
 Every hardening point added to this app, where it lives and how it was checked. `[x]` = done and tested;
 `[ ]` = done, but still to be confirmed on a real run (these steps need a Windows administrator or signing
 prompt, which the automated tests cannot click). Version numbers show when each point was added.
-`[ ] To do:` = not done yet. (The points found by comparing with the CloClo widget's hardening history were all done in 1.8.6.)
+`[ ] To do:` = not done yet. (The points found by comparing with the CloClo widget were all done in 1.8.6–1.8.8; none are open.)
 
 **How to re-check:** `app\Check-Source.cmd` (project files unchanged since the last install) and the
 tamper tests described under each section.
@@ -74,7 +74,7 @@ tamper tests described under each section.
 ## 6. Signing key and builds
 
 - [x] **Protected signing key:** a new certificate whose key needs your confirmation for every signing (`-KeyProtection Protect`); unprotected certificates are no longer used (1.8.3) — new key confirmed at `ForceHighProtection`
-  - [ ] Delete the old unprotected certificate `56EB660C…D72F` in certmgr.msc › Personal › Certificates
+  - [ ] Delete the old unprotected certificate `56EB660C…D72F` in certmgr.msc › Personal › Certificates (still present on 2026-10-05)
 - [x] **Only fresh files are signed:** the build signs just the program and Content DLL it has compiled; WebView2 files are never signed by the build (1.8.4)
 - [x] **Tampered SDK stops the build** before anything is compiled or signed: Microsoft signature + pinned SHA-256 in `build.ps1` (1.8.4) — tested: one byte changed in `WebView2Loader.dll`, other Microsoft DLL as `Core.dll`
 - [x] Compiler found via Windows' own folder (not `WINDIR`) and must be Microsoft-signed (1.8.4)
@@ -101,16 +101,18 @@ tamper tests described under each section.
 - [x] No log files from administrator steps in your folders (exit codes instead) (1.8.4)
 - [x] After the copy, the installer checks as you that Program Files holds exactly the built files (1.8.4)
 - [x] Firewall block rules moved to the new path on update
-- [ ] Confirm on a real run: `app\Install.cmd` → signing confirmation → UAC prompt → "Copied to … and checked"
+- [x] Confirmed on a real run: version 1.8.7 installed through `Install.cmd` with the readable UAC prompt - Program Files holds exactly the 11 expected files, signed with the protected certificate `3406AF05…1A18` (checked 2026-10-05)
 
 ## 8. Admin-step hygiene (all scripts)
 
 - [x] **Only Windows PowerShell's own modules** (`PSModulePath` = `$PSHOME\Modules`, set before any command) in every script — reproduced the look-alike module attack first, then fixed (1.8.2+)
+- [x] The limit is set with plain text (`$PSHOME + '\Modules'`), never with a command such as `Join-Path`, which would itself be looked up before the limit applies (1.8.2+) — verified in the 1.8.8 review: no command before the limit in any of the 7 scripts; 31 look-alike commands planted first on the module path, none ran
 - [x] PowerShell and cmd started by full path in scripts, all `.cmd` launchers and the uninstall entry (1.8.2–1.8.4)
 - [x] Program Files from `GetFolderPath`, never from an environment variable — also for the elevated folder delete in uninstall (1.8.4)
 - [x] Firewall script: results in its own window, no log file (1.8.4)
 - [x] **Firewall launchers elevate only the installed copy:** `firewall.ps1` relaunches the copy in Program Files (only an administrator can change it), never the project-folder file, which could be swapped between the prompt and its start (1.8.7)
 - [x] **The firewall step takes no program path from outside:** both sides work out the Program Files path themselves; an unknown `-Exe` is refused before anything runs (1.8.8) — tested: `-Exe <other program>` refused in 0.3 s, no prompt
+- [x] `firewall.ps1` and `trust.ps1` refuse unknown parameters (`[CmdletBinding()]`), so a stray path is rejected before anything runs, never silently ignored (1.8.8)
   - [ ] Confirm on a real run: `Firewall-Block.cmd` / `Firewall-Unblock.cmd`
 - [x] Uninstall removes the Program Files copy, per-user leftovers, entries, settings, browser data, firewall rules and certificate trust; restores the previous `.md` default
 - [x] **Uninstall removes only its own entries** (file types, Open with, shortcuts, Settings › Apps entry that start the installed copy or a program that no longer exists; others are kept and listed) and uses **one administrator prompt** - a readable command, no script file - for the firewall rules and the folder together (1.8.7) — tested: 7 ownership cases
@@ -121,7 +123,7 @@ tamper tests described under each section.
 - [x] **Install record:** every install records the SHA-256 of every project file (except `.git\`, `app\dist\`; links not followed) in Program Files, where only an administrator can change it (1.8.5)
 - [x] `app\Check-Source.cmd` lists files changed, added or removed since the last install (1.8.5) — tested unchanged / changed / added / removed
 - [x] Line endings fixed per file type (`.gitattributes`), so a checkout or pull never rewrites a file and causes false alarms — fresh clone compared byte for byte
-  - [ ] After the next install, run `Check-Source.cmd` → "No changes"
+  - [x] Confirmed on the real install: the checker installed in Program Files runs against the project folder and lists exactly the files changed since that install (the 1.8.8 work) (checked 2026-10-05)
 - [x] `check-source.ps1` is installed in Program Files with the record, and `Check-Source.cmd` runs that copy (found through Windows' own Program Files lookup) - not the copy in the project folder, which a program running as you could change to always report "No changes" (1.8.6) — tested: installed checker with -Root and with the recorded folder; "not installed yet" message
 - [x] `Check-Source.cmd` passes the project folder through an environment variable, so a folder name with quotes or apostrophes cannot break the command or add PowerShell (1.8.8) — tested with `it's a test` and `x'; Write-Host INJECTED; '` folders
 - [x] No script builds a path from `$env:LOCALAPPDATA` (the installer's per-user leftover path now comes from `GetFolderPath`) (1.8.8)
