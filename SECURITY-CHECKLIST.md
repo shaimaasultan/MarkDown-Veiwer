@@ -144,6 +144,14 @@ tamper tests described under each section.
 - [x] **Requests are narrow:** one path, at most 8 KB, read within 3 seconds; it must be an existing file of a type the viewer shows; at most 5 requests in 5 seconds and 20 windows (1.8.9) — tested: `run.cmd` refused with a message, nothing opened
 - [x] **Never blocked:** if the running viewer cannot be verified (or something else holds the name), the second copy runs on its own; a refusal from the verified viewer ends the second copy with a message (1.8.9)
 - [x] `--about` stays a short-lived window of its own and never touches the running viewer (1.8.9)
+## 12. Update check (WebView2 SDK and libraries)
+
+- [x] **`Check-Updates.cmd`:** reports newer stable versions of the WebView2 SDK (nuget.org) and of marked, KaTeX, highlight.js and Mermaid (npm registry), plus the local WebView2 Runtime (1.9.0) — first run: SDK 1.0.4258.31 up to date; marked 18.1.0, KaTeX 0.19.0, highlight.js 11.12.0, Mermaid 12.1.0 available
+- [x] **The viewer never goes online;** only this script does, and only when you run it (1.9.0)
+- [x] HTTPS only, to two fixed hosts; redirects not followed; 15-second time limit and a size limit on every answer; only plain version numbers are accepted (1.9.0) — tested: other host refused before any request, plain http refused, unreachable host and oversized answer reported as "could not check", `12.0.0-beta.1` and `<script>` rejected
+- [x] **Report only:** nothing is downloaded or installed; the SDK stays pinned by SHA-256, so an update is a deliberate step (README › Updating the WebView2 SDK and libraries) (1.9.0)
+- [x] Same script rules as the others: module limit first, refuses an administrator window, folders from `GetFolderPath` (1.9.0)
+- [x] **Install reminder without going online:** `Install.cmd` reads the last result and lists found updates, or suggests a check when the last one is over 30 days old (1.9.0) — tested: updates found / 40 days old / fresh and clean (quiet)
 ---
 
 ## Known limits (by design)
@@ -157,6 +165,7 @@ tamper tests described under each section.
   2036; after that the start-up check refuses the program, so install a build signed with a new
   certificate before then.
 - One viewer at a time is per program file: a test build in `app\dist` and the installed copy are different files, so each runs as its own viewer.
+- The update check trusts what nuget.org and the npm registry report as the latest version; it only reports, and every update is still checked (Microsoft signature, pinned hashes, the build's version checks) before it is built.
 - Not applicable from the CloClo comparison (this app has no such feature): weather and network requests,
   clipboard and selection reading, screen-capture exclusion, dictation, colour picker, HTTP limits,
   notification logos, `.pfx` signing.

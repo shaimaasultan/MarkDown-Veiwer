@@ -48,7 +48,7 @@ Every point below, with where it is implemented and how it was tested, is listed
 
 - **Preview only.** Scripts, event handlers, `javascript:` links, frames, forms and plugins in a document are removed before display and also blocked by the window's Content-Security-Policy. Only Markdown, text, images, audio and video files are read from disk.
 - **No network port.** The page lives at a private address (`https://mdviewer.example`) that exists only inside the app window; every request is answered by the program itself.
-- **Never goes online.** All libraries are bundled (`src\lib\`) and packed into the signed Content DLL. The WebView2 engine is started so that it cannot look up any internet address, without background networking, component updates, pings, SmartScreen checks or Microsoft-account sign-in. Pictures a document links to on the web are shown as *not loaded*.
+- **Never goes online.** All libraries are bundled (`src\lib\`) and packed into the signed Content DLL. The WebView2 engine is started so that it cannot look up any internet address, without background networking, component updates, pings, SmartScreen checks or Microsoft-account sign-in. Pictures a document links to on the web are shown as *not loaded*. (Only the optional `Check-Updates.cmd`, when you run it, asks two fixed sites for version numbers - see [Checking for updates](#checking-for-updates).)
 - **Links ask first.** Web and mail links open outside the app only after a question that shows the real address.
 - **Private.** The window runs InPrivate, so no history of the documents you view is kept. Camera, microphone, location, notifications and clipboard reading are refused; downloads come only from the viewer itself; the right-click menu has no Share, web capture or other browser extras.
 - **Stays in the document's folder.** Folder links (junctions, symbolic links) cannot lead outside it, and very large files (over 50 MB of text or 200 MB of media) are not opened. A document cannot draw over the viewer's own controls, and a diagram cannot add CSS of its own.
@@ -167,6 +167,37 @@ certificate (the one on this PC with its private key), and adds it straight from
 that could be swapped.
 `Untrust-Certificate.cmd` undoes that, and so does uninstalling the app.
 
+## Checking for updates
+
+```bash
+app\Check-Updates.cmd
+```
+
+Shows whether a newer stable WebView2 SDK is out on nuget.org, and newer releases of the bundled libraries
+(marked, KaTeX, highlight.js, Mermaid) on the npm registry, next to the versions this project builds with -
+plus the WebView2 Runtime installed on your PC (which Windows keeps up to date). It only reports: nothing is
+downloaded or installed. The viewer itself never goes online; this script does only when you run it - HTTPS
+to `api.nuget.org` and `registry.npmjs.org` only, no redirects, a time and size limit on every answer, and
+only version numbers are read from them. `Install.cmd` reminds you (without going online) when the last check
+found updates, or when it is more than 30 days old.
+
+### Updating the WebView2 SDK and libraries
+
+The SDK files are pinned by SHA-256, so an update is a deliberate step:
+
+1. **WebView2 SDK:** download the `Microsoft.Web.WebView2` package of the new version from nuget.org (a
+   `.nupkg` is a zip file). Take `lib\net462\Microsoft.Web.WebView2.Core.dll`,
+   `lib\net462\Microsoft.Web.WebView2.WinForms.dll` and `runtimes\win-x64\native\WebView2Loader.dll` and
+   replace the three files in `webview2\`. Check that each carries Microsoft's valid signature (file
+   Properties › Digital Signatures), then put their SHA-256 (`Get-FileHash`) into `$sdkHashes` in
+   `app\build.ps1` and the new version in its comment and in the table below.
+2. **Libraries:** replace the library's files under `src\` (`marked.min.js`, `src\lib\katex\…`,
+   `src\lib\highlight\…`, `src\lib\mermaid\…`) with those of the new release and change its version in
+   `viewer.js`; the build checks that the files match. A new major version can change how documents look -
+   check a few before installing.
+3. Run `Install.cmd`. It lists the changed files since the last install and asks for Y; then run
+   `Check-Updates.cmd` again.
+
 ## Project layout
 
 | Path | Contents |
@@ -179,7 +210,8 @@ that could be swapped.
 | `app\install.ps1`, `app\place.ps1` | Install for your account; `place.ps1` is the one administrator step (copy into Program Files) |
 | `app\uninstall.ps1`, `app\firewall.ps1`, `app\trust.ps1` | Uninstall, optional firewall block rules, optional certificate trust (also copied next to the program) |
 | `app\check-source.ps1` | Records the project files' SHA-256 at install time; installed in Program Files with the record, where `Check-Source.cmd` runs it to compare the folder with that record |
-| `app\*.cmd` | Double-click launchers: `Install`, `Uninstall`, `Check-Source`, `Firewall-Block` / `-Unblock`, `Trust-` / `Untrust-Certificate` |
+| `app\check-updates.ps1` | Reports newer versions of the WebView2 SDK and the bundled libraries (only when you run it) |
+| `app\*.cmd` | Double-click launchers: `Install`, `Uninstall`, `Check-Source`, `Check-Updates`, `Firewall-Block` / `-Unblock`, `Trust-` / `Untrust-Certificate` |
 | `webview2\` | Microsoft WebView2 SDK files needed to build the app, with their license |
 | `docs\` | Promo video and its poster picture |
 

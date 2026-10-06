@@ -310,6 +310,21 @@ if ($userChoice) {
 }
 if (Get-NetFirewallRule -Group $name -ErrorAction SilentlyContinue) { Write-Host 'Firewall: the block rules for this app are in place.' }
 else { Write-Host 'Optional: run Firewall-Block.cmd (as administrator) to block all network traffic of the program.' }
+# Update reminder, from the last Check-Updates.cmd result (the installer itself never goes online).
+$updateState = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) "$key\update-check.txt"
+$checked = $null; $updatesFound = @()
+if (Test-Path -LiteralPath $updateState) {
+    foreach ($line in Get-Content -LiteralPath $updateState) {
+        if ($line -like 'checked=*') { try { $checked = [datetime]::Parse($line.Substring(8)) } catch { } }
+        elseif ($line -like 'update=*') { $updatesFound += $line.Substring(7) }
+    }
+}
+if ($updatesFound.Count) {
+    Write-Host "Updates were available at the last check ($($checked.ToString('yyyy-MM-dd'))): $($updatesFound -join '; ')" -ForegroundColor Yellow
+    Write-Host 'See README > Updating the WebView2 SDK and libraries. Run Check-Updates.cmd again after updating.'
+} elseif (-not $checked -or ((Get-Date) - $checked).TotalDays -gt 30) {
+    Write-Host "Tip: run Check-Updates.cmd to see whether a newer WebView2 SDK or library version is out$(if ($checked) { " (last check $($checked.ToString('yyyy-MM-dd')))" } else { ' (never checked)' })."
+}
 $sig = Get-AuthenticodeSignature $exe
 Write-Host "Signed by $($sig.SignerCertificate.Subject) ($($sig.SignerCertificate.Thumbprint))."
 if ($sig.Status -ne 'Valid') { Write-Host 'Optional: run Trust-Certificate.cmd so Windows also shows this signature as valid.' }
