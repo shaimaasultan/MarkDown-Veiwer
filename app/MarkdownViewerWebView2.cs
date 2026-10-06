@@ -34,6 +34,7 @@ using Microsoft.Win32.SafeHandles;
 [assembly: AssemblyTitle("Markdown Viewer (WebView2, preview only)")]
 [assembly: AssemblyProduct("Markdown Viewer (WebView2)")]
 [assembly: AssemblyDescription("Previews Markdown files with figures, math and diagrams. Never runs code from a document.")]
+[assembly: AssemblyCompany("Markdown Viewer")]
 [assembly: AssemblyCopyright("Markdown Viewer")]
 // The program's own calls into Windows DLLs (user32, kernel32, advapi32, wintrust) load them from System32
 // only, never from the program's folder or anywhere else on the search path.

@@ -12,7 +12,8 @@ param([switch]$Remove)
 $env:PSModulePath = "$PSHOME\Modules"
 $ErrorActionPreference = 'Stop'
 $key = 'MarkdownViewerWebView2'
-$subject = 'CN=Markdown Viewer (WebView2) Code Signing'
+# This app's certificate names: the current one and the one earlier versions used.
+$subjects = 'CN=Markdown Viewer, O=Markdown Viewer', 'CN=Markdown Viewer (WebView2) Code Signing'
 $exe = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) "$key\$key.exe"
 
 function Open-Store([string]$name) {
@@ -30,10 +31,10 @@ if ($Remove) {
     foreach ($name in 'TrustedPublisher', 'Root') {
         $store = Open-Store $name
         try {
-            foreach ($c in @($store.Certificates | Where-Object { $thumbs -contains $_.Thumbprint -or $_.Subject -eq $subject })) { $store.Remove($c); $removed++ }
+            foreach ($c in @($store.Certificates | Where-Object { $thumbs -contains $_.Thumbprint -or $subjects -contains $_.Subject })) { $store.Remove($c); $removed++ }
         } finally { $store.Close() }
     }
-    Write-Host "Removed $removed trusted entr$(if ($removed -eq 1) { 'y' } else { 'ies' }) for $subject."
+    Write-Host "Removed $removed trusted entr$(if ($removed -eq 1) { 'y' } else { 'ies' }) for Markdown Viewer."
     exit 0
 }
 
@@ -52,7 +53,13 @@ if (-not $own.Count) {
 # macros and AllSigned PowerShell run code from those publishers without asking, which this app never needs.
 $public = New-Object Security.Cryptography.X509Certificates.X509Certificate2(, $signer.RawData)   # public part only
 $store = Open-Store 'Root'
-try { $store.Add($public) }
+try {
+    $store.Add($public)
+    # This app's earlier certificates (e.g. before a new one was made) no longer need to be trusted.
+    $stale = @($store.Certificates | Where-Object { $subjects -contains $_.Subject -and $_.Thumbprint -ne $signer.Thumbprint })
+    foreach ($c in $stale) { $store.Remove($c) }
+    if ($stale.Count) { Write-Host "Removed $($stale.Count) earlier certificate(s) of this app from your trusted roots." }
+}
 catch { throw "The certificate was not added (declined or failed): $($_.Exception.Message)" }
 finally { $store.Close() }
 Write-Host "Trusted $($signer.Subject) ($($signer.Thumbprint)) for your user account."

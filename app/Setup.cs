@@ -38,6 +38,7 @@ using Microsoft.Win32;
 [assembly: AssemblyTitle("Markdown Viewer (WebView2) Setup")]
 [assembly: AssemblyProduct("Markdown Viewer (WebView2)")]
 [assembly: AssemblyDescription("Installs or uninstalls Markdown Viewer (WebView2).")]
+[assembly: AssemblyCompany("Markdown Viewer")]
 [assembly: AssemblyCopyright("Markdown Viewer")]
 // Windows DLLs this file calls (kernel32, advapi32, wintrust) come from System32 only.
 [assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
@@ -579,7 +580,7 @@ sealed class SetupForm : Form
         };
         status.Location = new Point(24, 216); status.Size = new Size(592, 22); status.Font = new Font("Segoe UI Semibold", 10f);
         signer.Location = new Point(24, 240); signer.Size = new Size(592, 70); signer.ForeColor = SystemColors.GrayText;
-        signer.Text = "Signed by " + (sig.Signer ?? "?") + "  ·  certificate " + sig.Thumbprint +
+        signer.Text = "Publisher: " + (sig.Signer ?? "?") + "  ·  certificate " + sig.Thumbprint +
                       (sig.Trusted ? "" : "\r\nWindows does not know this certificate (a developer's own), so it may show the publisher as unknown. Compare the certificate with the one the developer gave you.");
 
         log.Multiline = true; log.ReadOnly = true; log.ScrollBars = ScrollBars.Vertical; log.WordWrap = true;

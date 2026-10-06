@@ -161,7 +161,7 @@ to confirm the signing). Run it from a normal window: it refuses to build with a
 The program and `MarkdownViewerWebView2.Content.dll` are Authenticode-signed by every build, and the program checks both signatures - plus Microsoft's on the WebView2 files and their exact SHA-256 - at every start (see [Security](#security)).
 
 The first build creates a code-signing certificate on your PC named
-"Markdown Viewer (WebView2) Code Signing". It is stored in your personal certificate store, its private
+"Markdown Viewer" (publisher; builds before 1.10 used "Markdown Viewer (WebView2) Code Signing"). It is stored in your personal certificate store, its private
 key cannot be exported, and the key is **protected**: Windows asks you to confirm every time something signs
 with it, so no other program running as you can quietly sign a changed program or Content DLL. Later builds
 reuse it (you confirm when a build signs). Certificates from earlier versions had no such protection; the build

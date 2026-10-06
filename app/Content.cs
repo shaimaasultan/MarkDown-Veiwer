@@ -9,6 +9,7 @@ using System.Reflection;
 [assembly: AssemblyTitle("Markdown Viewer (WebView2) - page and libraries")]
 [assembly: AssemblyProduct("Markdown Viewer (WebView2)")]
 [assembly: AssemblyDescription("The viewer page and its bundled libraries (marked, KaTeX, highlight.js, Mermaid) as signed resources.")]
+[assembly: AssemblyCompany("Markdown Viewer")]
 [assembly: AssemblyCopyright("Markdown Viewer")]
 [assembly: AssemblyVersion("1.10.0.0")]
 [assembly: AssemblyFileVersion("1.10.0.0")]
