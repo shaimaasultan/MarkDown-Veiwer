@@ -58,7 +58,7 @@ tamper tests described under each section.
 - [x] **No startup hooks:** `COR_ENABLE_PROFILING`, `COR_PROFILER*`, `APPDOMAIN_MANAGER_*` refuse the start (`DOTNET_STARTUP_HOOKS` does not apply to .NET Framework) (1.8.2) — tested with profiler variables set
   - Note: .NET has already loaded a profiler when this check runs, so it limits the damage rather than preventing it
 - [x] **Not as administrator by accident:** started elevated while a normal start is possible, the app refuses (1.8.2)
-  - [ ] Confirm on a real run: open a `.md` from an administrator prompt → refusal message
+  - [x] Confirmed on a real run: open a `.md` from an administrator prompt → refusal message (2026-10-06)
 - [x] **Genuine engine:** the started `msedgewebview2.exe` must be Microsoft-signed and under Program Files (1.8.1) — tested with the real engine and with `powershell.exe` as a stand-in
 - [x] Unexpected errors on the window thread and in background tasks are caught and logged to `%LOCALAPPDATA%\MarkdownViewerWebView2\errors.log` (type and stack only, never the message, which can quote document text) instead of crashing - a crash hands Windows Error Reporting a memory dump that can hold the open document; an error on another thread ends the app without a dump (1.8.6) — tested: type logged, message not
   - Verified against Windows Error Reporting (1.8.8 review): without the handler a background-thread crash started WerFault and logged crash events 1000/1026; with it the process ended with code 3, no WerFault, no crash events
@@ -81,6 +81,7 @@ tamper tests described under each section.
 - [x] Generated source written next to the build, not into the shared Temp folder (1.8.4)
 - [x] `build.ps1` run on its own refuses an administrator window (as `Install.cmd` already does), so the compiler never runs elevated (1.8.6)
 - [x] **Trust-Certificate adds Trusted Roots only**, not Trusted Publishers (Office macros / AllSigned scripts) (1.8.3)
+- [x] **Expiry warning a year ahead:** signatures carry no timestamp, so the viewer stops starting when the certificate expires; `Install.cmd` warns once less than 365 days are left and says what to do (1.9.0) — tested with 3650 / 200 / 10 days left: quiet / warning / warning
 - [x] **Trust-Certificate takes the right certificate:** only from the program installed in Program Files (no per-user or `dist\` copy, no environment variable), only if it is intact and signed by your own signing certificate (the one with its private key on this PC), added straight from memory with no temporary file (1.8.8) — tested: not installed, unsigned and Microsoft-signed programs all refused; nothing added
 
 ## 7. Install in Program Files (one installer)
@@ -113,10 +114,10 @@ tamper tests described under each section.
 - [x] **Firewall launchers elevate only the installed copy:** `firewall.ps1` relaunches the copy in Program Files (only an administrator can change it), never the project-folder file, which could be swapped between the prompt and its start (1.8.7)
 - [x] **The firewall step takes no program path from outside:** both sides work out the Program Files path themselves; an unknown `-Exe` is refused before anything runs (1.8.8) — tested: `-Exe <other program>` refused in 0.3 s, no prompt
 - [x] `firewall.ps1` and `trust.ps1` refuse unknown parameters (`[CmdletBinding()]`), so a stray path is rejected before anything runs, never silently ignored (1.8.8)
-  - [ ] Confirm on a real run: `Firewall-Block.cmd` / `Firewall-Unblock.cmd`
+  - [x] Confirmed on a real run: `Firewall-Block.cmd` / `Firewall-Unblock.cmd` (2026-10-06)
 - [x] Uninstall removes the Program Files copy, per-user leftovers, entries, settings, browser data, firewall rules and certificate trust; restores the previous `.md` default
 - [x] **Uninstall removes only its own entries** (file types, Open with, shortcuts, Settings › Apps entry that start the installed copy or a program that no longer exists; others are kept and listed) and uses **one administrator prompt** - a readable command, no script file - for the firewall rules and the folder together (1.8.7) — tested: 7 ownership cases
-  - [ ] Confirm on a real run (only when you want to uninstall)
+  - [x] Confirmed on a real run (2026-10-06)
 
 ## 9. Checking the project folder
 
@@ -153,7 +154,14 @@ tamper tests described under each section.
 - [x] Same script rules as the others: module limit first, refuses an administrator window, folders from `GetFolderPath` (1.9.0)
 - [x] **Install reminder without going online:** `Install.cmd` reads the last result and lists found updates, or suggests a check when the last one is over 30 days old (1.9.0) — tested: updates found / 40 days old / fresh and clean (quiet)
 - [x] **`Update-Libraries.cmd` / `update-libs.ps1`:** shows the plan first (version, exact download, files replaced) and asks before downloading; downloads from registry.npmjs.org only (HTTPS, no redirects, 60 MB limit), checks the SHA-512 the registry publishes, reads the archive itself and takes out only the expected files (never anything else, never outside `src\`), checks the new version string as the build does, then updates `viewer.js` and the README table; never builds, signs or installs (1.9.0) — used for KaTeX 0.19.0, highlight.js 11.12.0, Mermaid 12.1.0 and marked 18.1.0 (all SHA-512 matched); since marked 16 its browser file is `lib/marked.umd.js`, still saved as `src\marked.min.js`
-- [x] The updated libraries were checked in a test build (throwaway certificate, deleted afterwards): math, flowchart and sequence diagrams, code colouring, table; safety badge and Breakdown still pass (1.9.0)---
+- [x] The updated libraries were checked in a test build (throwaway certificate, deleted afterwards): math, flowchart and sequence diagrams, code colouring, table; safety badge and Breakdown still pass (1.9.0)
+- [x] **New releases are held back for 7 days:** `update-libs.ps1` reads each version's publish date from the registry and skips a release younger than 7 days (or with no date) unless `-AllowNew` is given; a release pushed through a hijacked npm account is usually withdrawn within days, which the SHA-512 check cannot see (1.9.0) — tested: marked 18.1.0 (1 day old) and Mermaid 12.1.0 (4 days) held, KaTeX 0.16.22 not held, `-AllowNew` takes them
+- [x] **Viewer test (`Test-Viewer.cmd` / `test-viewer.ps1`):** opens every document in `test\` (and optionally `-Folder`) in the viewer page, in Microsoft Edge without a window, and fails unless each one shows, its breakdown adds up and no script/iframe/object/embed/form/base/meta element, `on…` attribute, `javascript:` or `data:text/html` address or non-checkbox input reaches the page, and no payload in `test\attack.md` ran; all four libraries must load (1.9.0) — tested: 12 documents pass (`test\` plus `BAD\`); with the sanitizer switched off `attack.md` fails on four counts (and no payload ran even then: the page's security policy blocked them)
+  - [x] The test changes nothing: a copy of `src\` in a new folder under `%LOCALAPPDATA%\Temp` (removed afterwards), served on 127.0.0.1 only, on a free port, under a random 128-bit path, everything else refused; Edge by full path with a valid Microsoft signature, a new empty profile, no extensions, no host names resolved; the page gets the app's policy (no `file:`)
+  - [x] `update-libs.ps1` runs it after replacing files and says "Do not install this" (exit 1) when it fails — tested both ways
+- [x] **marked 18.1.0:** the viewer's breakdown handles the new task-box token (marked 17) and entities marked already decodes (marked 18); 11 documents compared before and after: viewed counts unchanged, no unsafe output (1.9.0)
+
+---
 
 ## Known limits (by design)
 
@@ -166,7 +174,7 @@ tamper tests described under each section.
   2036; after that the start-up check refuses the program, so install a build signed with a new
   certificate before then.
 - One viewer at a time is per program file: a test build in `app\dist` and the installed copy are different files, so each runs as its own viewer.
-- The library update checks each package against the SHA-512 published by the same registry: it catches a damaged or swapped download, not a release published through a compromised npm account. Check the changes (`git diff --stat src`) and test before installing.
+- The library update checks each package against the SHA-512 published by the same registry: it catches a damaged or swapped download, not a release published through a compromised npm account. The 7-day hold and the viewer test reduce that risk; still check the changes (`git diff --stat src`) before installing.
 - The update check trusts what nuget.org and the npm registry report as the latest version; it only reports, and every update is still checked (Microsoft signature, pinned hashes, the build's version checks) before it is built.
 - Not applicable from the CloClo comparison (this app has no such feature): weather and network requests,
   clipboard and selection reading, screen-capture exclusion, dictation, colour picker, HTTP limits,

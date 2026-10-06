@@ -15,3 +15,5 @@ src/** -text
 *.woff binary
 *.woff2 binary
 *.ttf binary
+# Saved as UTF-16 on purpose (encoding test): never convert.
+test/utf16.md -text

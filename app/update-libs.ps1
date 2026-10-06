@@ -4,6 +4,10 @@
 #   update-libs.ps1 -Library KaTeX -Version 0.19.0     a specific version instead of the latest
 #   update-libs.ps1 ... -Apply               download, check and replace the files (asks first)
 #   update-libs.ps1 ... -Apply -Yes          the same without the question (when already confirmed)
+#   update-libs.ps1 ... -AllowNew            also take a release published less than 7 days ago
+#
+# A release younger than 7 days is held back: a release pushed through a hijacked npm account is usually
+# found and withdrawn within days, and the SHA-512 check alone cannot tell (it comes from the same registry).
 #
 # What it does with -Apply, per library:
 # - downloads the package (.tgz) over HTTPS from registry.npmjs.org only - no redirects, a size limit;
@@ -13,14 +17,16 @@
 # - only if every expected file is there: replaces them in src\ and updates the version in viewer.js and in
 #   the README's table. A library whose new release lacks an expected file (e.g. no ready-made browser file)
 #   is left untouched, with an explanation.
-# It never builds, signs or installs: test the documents, then run Install.cmd (it lists the changed files
-# and asks for Y). Undo a library with git: git checkout -- src README.md
+# After replacing files it runs test-viewer.ps1 (the documents in test\ must still show correctly and run
+# nothing). It never builds, signs or installs: look at a few documents, then run Install.cmd (it lists the
+# changed files and asks for Y). Undo a library with git: git checkout -- src README.md
 [CmdletBinding()]
 param(
     [ValidateSet('marked', 'KaTeX', 'highlight.js', 'Mermaid')][string[]]$Library = @('marked', 'KaTeX', 'highlight.js', 'Mermaid'),
     [string]$Version,
     [switch]$Apply,
-    [switch]$Yes
+    [switch]$Yes,
+    [switch]$AllowNew
 )
 # Only Windows PowerShell's own modules (set before any command is used).
 $env:PSModulePath = $PSHOME + '\Modules'
@@ -34,6 +40,7 @@ $root = Split-Path $PSScriptRoot -Parent
 $src = Join-Path $root 'src'
 $registry = 'registry.npmjs.org'
 $maxPackage = 60MB
+$minAgeDays = 7
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 # Where each library's files come from (npm package, path inside it) and go (under src\). '*' = every
@@ -116,15 +123,28 @@ $plans = foreach ($name in $libs.Keys | Where-Object { $Library -contains $_ }) 
     $meta = Get-RegistryJson "$encoded/$target"
     $tarball = $meta.dist.tarball; $integrity = $meta.dist.integrity
     $size = $meta.dist.unpackedSize    # the registry's figure; the download itself is compressed and smaller
+    $needed = ([version]$target -gt [version]$current) -or [bool]$Version
+    # When this version was published (from the package's full record); unknown counts as too new.
+    $published = $null; $held = $false
+    if ($needed) {
+        $stamp = (Get-RegistryJson $encoded).time.$target
+        if ($stamp -is [datetime]) { $published = $stamp.ToUniversalTime() }
+        elseif ($stamp) { $d = [datetime]::MinValue; if ([datetime]::TryParse([string]$stamp, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]'AdjustToUniversal, AssumeUniversal', [ref]$d)) { $published = $d } }
+        $held = -not $AllowNew -and (-not $published -or ([datetime]::UtcNow - $published).TotalDays -lt $minAgeDays)
+    }
     [pscustomobject]@{ Name = $name; Package = $lib.Package; Current = $current; Target = $target; Tarball = $tarball
-                       Integrity = $integrity; Size = $size; Files = $lib.Files
-                       Needed = ([version]$target -gt [version]$current) -or [bool]$Version }
+                       Integrity = $integrity; Size = $size; Files = $lib.Files; Published = $published
+                       Held = $held; Needed = $needed -and -not $held }
 }
 
 Write-Host ''
 foreach ($p in $plans) {
-    $state = if (-not $p.Needed) { 'up to date' } else { "$($p.Current) -> $($p.Target)" }
+    $state = if ($p.Needed -or $p.Held) { "$($p.Current) -> $($p.Target)" } else { 'up to date' }
     Write-Host ("{0,-13} {1,-22} from npm '{2}'" -f $p.Name, $state, $p.Package)
+    if ($p.Held) {
+        $when = if ($p.Published) { "published $($p.Published.ToLocalTime().ToString('yyyy-MM-dd')), less than $minAgeDays days ago" } else { 'publish date unknown' }
+        Write-Host "              held back: $when. Try again later, or add -AllowNew to take it now." -ForegroundColor Yellow
+    }
     if ($p.Needed) {
         Write-Host ("              download: {0} (package {1:N1} MB unpacked; the download is smaller)" -f $p.Tarball, ($p.Size / 1MB))
         Write-Host ("              replaces: {0}" -f (($p.Files | ForEach-Object { 'src\' + $_[1] }) -join ', '))
@@ -191,7 +211,17 @@ foreach ($p in $todo) {
 Write-Host ''
 if ($done.Count) {
     Write-Host "Updated: $($done -join '; ')"
-    Write-Host 'Next: open a few documents that use them (math, diagrams, code, tables) in a test build or after'
-    Write-Host 'Install.cmd, which lists the changed files and asks for Y. Undo with: git checkout -- src README.md'
+    # The same test as Test-Viewer.cmd: every test document must still show correctly and run nothing.
+    Write-Host "`nTesting the page with the new files..."
+    & (Join-Path $PSScriptRoot 'test-viewer.ps1')
+    $tested = $LASTEXITCODE
+    Write-Host ''
+    if ($tested -eq 0) {
+        Write-Host 'Next: look at a few of your own documents, then run Install.cmd (it lists the changed files and asks for Y).'
+    } else {
+        Write-Host 'Do not install this. Undo with: git checkout -- src README.md' -ForegroundColor Red
+        exit 1
+    }
+    Write-Host 'Undo with: git checkout -- src README.md'
 } else { Write-Host 'Nothing was changed.' }
 exit 0

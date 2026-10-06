@@ -328,3 +328,10 @@ if ($updatesFound.Count) {
 $sig = Get-AuthenticodeSignature $exe
 Write-Host "Signed by $($sig.SignerCertificate.Subject) ($($sig.SignerCertificate.Thumbprint))."
 if ($sig.Status -ne 'Valid') { Write-Host 'Optional: run Trust-Certificate.cmd so Windows also shows this signature as valid.' }
+# Signatures carry no timestamp, so the viewer stops starting once the certificate expires. Warn a year ahead.
+$left = [int][Math]::Floor(($sig.SignerCertificate.NotAfter - (Get-Date)).TotalDays)
+if ($left -lt 365) {
+    Write-Host "The signing certificate expires on $($sig.SignerCertificate.NotAfter.ToString('yyyy-MM-dd')) ($left days); after that the installed viewer refuses to start." -ForegroundColor Yellow
+    Write-Host 'Within its last 30 days the build makes a new certificate: run Install.cmd then, answer Y to the certificate change,' -ForegroundColor Yellow
+    Write-Host 'and run Trust-Certificate.cmd again.' -ForegroundColor Yellow
+}

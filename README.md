@@ -77,7 +77,7 @@ already running as you: they could change this repository's scripts or sources b
 a build you started is running. A build in `app\dist` is for testing; only the installed copy in Program Files has the full protection.
 Signatures carry no timestamp (builds never go online): the signing certificate is valid until October 2036,
 after which the app's start-up check refuses the program - install a build signed with a new certificate
-before then.
+before then. `Install.cmd` warns once less than a year is left.
 
 ## Requirements
 
@@ -199,9 +199,21 @@ The SDK files are pinned by SHA-256, so an update is a deliberate step:
    replaces them and updates the version in `viewer.js` and in the table below. A release that lacks an
    expected file (e.g. no ready-made browser file) is left untouched with an explanation. For one library:
    `app\update-libs.ps1 -Library KaTeX` (plan) or add `-Apply`. Undo with `git checkout -- src README.md`.
-   A new major version can change how documents look - check a few before installing.
+   A release published less than 7 days ago is held back (a release pushed through a hijacked npm account
+   is usually withdrawn within days); add `-AllowNew` to take it anyway. After replacing files it runs the
+   viewer test (below) and says "Do not install this" if it fails. A new major version can change how
+   documents look - check a few before installing.
 3. Run `Install.cmd`. It lists the changed files since the last install and asks for Y; then run
    `Check-Updates.cmd` again.
+
+### Testing the viewer page
+
+Double-click `app\Test-Viewer.cmd` (it changes nothing). It opens every document in `test\` in the viewer
+page, in Microsoft Edge without a window, and fails unless each one is shown, its breakdown adds up (✓), no
+element, attribute or address that could run code reaches the page, no payload in `test\attack.md` ran and
+all four libraries load. Add your own documents with `Test-Viewer.cmd -Folder C:\path\to\folder`. The page
+runs from a temporary copy of `src\` (removed afterwards), served on 127.0.0.1 only under a random path, in
+a new empty Edge profile that cannot look up any host name.
 
 ## Project layout
 
@@ -216,8 +228,10 @@ The SDK files are pinned by SHA-256, so an update is a deliberate step:
 | `app\uninstall.ps1`, `app\firewall.ps1`, `app\trust.ps1` | Uninstall, optional firewall block rules, optional certificate trust (also copied next to the program) |
 | `app\check-source.ps1` | Records the project files' SHA-256 at install time; installed in Program Files with the record, where `Check-Source.cmd` runs it to compare the folder with that record |
 | `app\check-updates.ps1` | Reports newer versions of the WebView2 SDK and the bundled libraries (only when you run it) |
-| `app\update-libs.ps1` | Downloads, checks and replaces the bundled libraries in `src\` (plan first; asks before downloading) |
-| `app\*.cmd` | Double-click launchers: `Install`, `Uninstall`, `Check-Source`, `Check-Updates`, `Update-Libraries`, `Firewall-Block` / `-Unblock`, `Trust-` / `Untrust-Certificate` |
+| `app\update-libs.ps1` | Downloads, checks and replaces the bundled libraries in `src\` (plan first; asks before downloading; holds back releases under 7 days old) |
+| `app\test-viewer.ps1` | Tests the viewer page with the documents in `test\` (display, breakdown, nothing that could run code) |
+| `app\*.cmd` | Double-click launchers: `Install`, `Uninstall`, `Check-Source`, `Check-Updates`, `Update-Libraries`, `Test-Viewer`, `Firewall-Block` / `-Unblock`, `Trust-` / `Untrust-Certificate` |
+| `test\` | Test documents (formatting, lists, UTF-16, `attack.md` with harmless payloads) and `selftest.js`, which the test adds to its temporary copy of the page |
 | `webview2\` | Microsoft WebView2 SDK files needed to build the app, with their license |
 | `docs\` | Promo video and its poster picture |
 
