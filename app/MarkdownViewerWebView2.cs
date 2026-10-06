@@ -14,11 +14,14 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Pipes;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Security.AccessControl;
 using System.Security.Cryptography.X509Certificates;
+using System.Security.Principal;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -35,15 +38,15 @@ using Microsoft.Win32.SafeHandles;
 // The program's own calls into Windows DLLs (user32, kernel32, advapi32, wintrust) load them from System32
 // only, never from the program's folder or anywhere else on the search path.
 [assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
-[assembly: AssemblyVersion("1.8.8.0")]
-[assembly: AssemblyFileVersion("1.8.8.0")]
-[assembly: AssemblyInformationalVersion("1.8.8")]
+[assembly: AssemblyVersion("1.8.9.0")]
+[assembly: AssemblyFileVersion("1.8.9.0")]
+[assembly: AssemblyInformationalVersion("1.8.9")]
 
 static class Program
 {
     const string AppName = "Markdown Viewer (WebView2)";
     const string DataFolder = "MarkdownViewerWebView2";     // %APPDATA% (settings) and %LOCALAPPDATA% (browser data)
-    const string AppVersion = "1.8.8";
+    const string AppVersion = "1.8.9";
     // Exists only inside this program's windows. Not a .local name: Windows would first spend ~2 s
     // looking for a device called "mdviewer" on the local network before the page could load.
     const string PrivateHost = "https://mdviewer.example";
@@ -72,7 +75,36 @@ static class Program
     // Bundled libraries: only these file types, and only from inside the lib folder.
     static readonly HashSet<string> LibTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".js", ".css", ".woff2", ".woff", ".ttf" };
 
-    static string appDir, startFile, startDir, repoRoot, allowRoot;
+    static string appDir;
+
+    // What one window may read: its document, the document's folder (for the file list) and the folder it may
+    // read from (the git repository, or one level above the document). Each window has its own, so a document
+    // opened later from another folder gets a window of its own that can read only that folder.
+    sealed class DocScope
+    {
+        public readonly string File, Dir, RepoRoot, AllowRoot;
+        public static readonly DocScope None = new DocScope(null, null, null, null);
+
+        DocScope(string file, string dir, string repoRoot, string allowRoot)
+        {
+            File = file; Dir = dir; RepoRoot = repoRoot; AllowRoot = allowRoot;
+        }
+
+        public static DocScope For(string file)
+        {
+            if (file == null) return None;
+            string dir = Path.GetDirectoryName(file);
+            string git = FindGitRoot(dir);
+            // Allow one level up so "../images/x.png" from a docs folder still works.
+            DirectoryInfo parent = Directory.GetParent(dir);
+            return new DocScope(file, dir, git ?? dir, git ?? (parent != null ? parent.FullName : dir));
+        }
+
+        public string StartUrl
+        {
+            get { return AppBase + "viewer.html" + (File != null ? "?file=" + Uri.EscapeDataString(ToWeb(File)) : ""); }
+        }
+    }
 
     // Random per-run token every page address must start with.
     static readonly string Token = RandomHex(16);
@@ -110,11 +142,12 @@ static class Program
         try { SetProcessDPIAware(); } catch { }
         Application.EnableVisualStyles();
 
+        string startFile = null;
         foreach (string a in args)
         {
             if (a == "--about")
             {
-                ShowAboutWindow();
+                ShowAboutWindow();      // a short-lived window of its own; never takes over the running viewer
                 return 0;
             }
             if (startFile == null) startFile = Path.GetFullPath(a);
@@ -126,20 +159,229 @@ static class Program
             return 1;
         }
 
-        if (startFile != null)
+        // One viewer per user and Windows session: if one is already running, it opens the document (or comes
+        // to the front) and this copy ends. Only if the running copy cannot be verified does this copy run on
+        // its own, so the viewer is never blocked (see SingleInstance).
+        if (!SingleInstance.TryBecomeFirst())
         {
-            startDir = Path.GetDirectoryName(startFile);
-            string git = FindGitRoot(startDir);
-            repoRoot = git ?? startDir;
-            // Allow one level up so "../images/x.png" from a docs folder still works.
-            DirectoryInfo parent = Directory.GetParent(startDir);
-            allowRoot = git ?? (parent != null ? parent.FullName : startDir);
+            int handed = SingleInstance.Forward(startFile);
+            if (handed == 1) return 0;
+            if (handed == 0)
+            {
+                // The running viewer (verified) said no: not a file type it shows, or too many requests at once.
+                MessageBox.Show("Markdown Viewer is already running and did not open this file:\n" + startFile +
+                                "\n\nIt opens Markdown, text, picture, video and audio files.", AppName,
+                                MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return 1;
+            }
         }
 
-        string startUrl = AppBase + "viewer.html";
-        if (startFile != null) startUrl += "?file=" + Uri.EscapeDataString(ToWeb(startFile));
-        Application.Run(new ViewerForm(startUrl));
+        ViewerApp app = new ViewerApp();
+        app.Open(DocScope.For(startFile));
+        SingleInstance.Listen(app);
+        Application.Run(app);
         return 0;
+    }
+
+    // All viewer windows of this process. The process ends when the last one closes.
+    sealed class ViewerApp : ApplicationContext
+    {
+        const int MaxWindows = 20;
+        readonly List<ViewerForm> windows = new List<ViewerForm>();
+        readonly Control invoker = new Control();     // runs requests from other copies on this (the window) thread
+
+        public ViewerApp() { invoker.CreateControl(); IntPtr h = invoker.Handle; }
+
+        public void Open(DocScope scope) { Show(new ViewerForm(scope.StartUrl, scope, this)); }
+
+        public void Show(ViewerForm form)
+        {
+            if (windows.Count >= MaxWindows) { form.Dispose(); BringToFront(); return; }
+            windows.Add(form);
+            form.FormClosed += (s, e) => { windows.Remove(form); if (windows.Count == 0) ExitThread(); };
+            form.Show();
+            form.Activate();
+        }
+
+        public void BringToFront()
+        {
+            if (windows.Count == 0) return;
+            ViewerForm f = windows[windows.Count - 1];
+            if (f.WindowState == FormWindowState.Minimized) f.WindowState = FormWindowState.Normal;
+            f.Activate();
+        }
+
+        // From the listener thread: a document (or null: just come to the front) a second copy handed over.
+        public void Request(string file)
+        {
+            try { invoker.BeginInvoke((Action)(() => { if (file == null) BringToFront(); else Open(DocScope.For(file)); })); }
+            catch { }
+        }
+    }
+
+    // ------------------------------------------------------------------ one viewer at a time
+    //
+    // The first viewer of a user in a Windows session holds a named mutex (in the session's own "Local\"
+    // namespace) and listens on a named pipe. A second copy - a double-click on another .md, the Start menu -
+    // hands its document over the pipe and ends. The pipe is the only way into the running viewer, so:
+    //  - only this user can open it, and never from the network (deny Network, allow only this user's SID);
+    //  - the viewer accepts a request only from a process that is this same program (same file), which has
+    //    passed all its start-up checks before it connects; anything else is ignored;
+    //  - the second copy hands over its document only after checking that the other end is this same program,
+    //    so a look-alike pipe (created first by something else) learns nothing; it connects at "identification"
+    //    level, so the other end can never act as this user through the pipe;
+    //  - a request is one document path, at most 8 KB, read with a time limit; it must be an existing file of a
+    //    type the viewer shows; at most 5 requests in 5 seconds and 20 windows are accepted.
+    // If any of this fails, the second copy simply runs on its own - the viewer is never blocked.
+    static class SingleInstance
+    {
+        const int MaxRequestBytes = 8192;
+        static System.Threading.Mutex mutex;          // held for the life of the first viewer
+        static readonly Queue<DateTime> recent = new Queue<DateTime>();
+
+        static string Name
+        {
+            get
+            {
+                string sid = WindowsIdentity.GetCurrent().User.Value;
+                return "MarkdownViewerWebView2." + Process.GetCurrentProcess().SessionId + "." + sid;
+            }
+        }
+
+        public static bool TryBecomeFirst()
+        {
+            bool createdNew;
+            try { mutex = new System.Threading.Mutex(true, @"Local\" + Name, out createdNew); }
+            catch { return true; }                    // cannot tell: run on our own
+            if (!createdNew) { mutex.Dispose(); mutex = null; }
+            return createdNew;
+        }
+
+        // Second copy: hand the document (null: just "come to the front") to the running viewer.
+        // 1 = handed over; 0 = the verified running viewer refused it; -1 = no verified viewer could be reached.
+        public static int Forward(string file)
+        {
+            try
+            {
+                using (NamedPipeClientStream pipe = new NamedPipeClientStream(".", Name, PipeDirection.InOut,
+                           PipeOptions.None, TokenImpersonationLevel.Identification))
+                {
+                    pipe.Connect(3000);
+                    uint serverPid;
+                    if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle, out serverPid) || !IsThisProgram((int)serverPid)) return -1;
+                    try { AllowSetForegroundWindow((int)serverPid); } catch { }     // so the new window can come to the front
+                    byte[] body = Encoding.UTF8.GetBytes(file ?? "");
+                    if (body.Length > MaxRequestBytes) return 0;
+                    byte[] length = BitConverter.GetBytes(body.Length);
+                    pipe.Write(length, 0, 4);
+                    pipe.Write(body, 0, body.Length);
+                    pipe.Flush();
+                    int answer = pipe.ReadByte();
+                    return answer == 1 ? 1 : answer == 0 ? 0 : -1;
+                }
+            }
+            catch { return -1; }
+        }
+
+        // First viewer: answer requests from second copies on a background thread.
+        public static void Listen(ViewerApp app)
+        {
+            if (mutex == null) return;                // not the first viewer (a verified one could not be reached)
+            System.Threading.Thread t = new System.Threading.Thread(() => Serve(app));
+            t.IsBackground = true;
+            t.Start();
+        }
+
+        static void Serve(ViewerApp app)
+        {
+            PipeSecurity security = new PipeSecurity();
+            security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.NetworkSid, null), PipeAccessRights.FullControl, AccessControlType.Deny));
+            security.AddAccessRule(new PipeAccessRule(WindowsIdentity.GetCurrent().User, PipeAccessRights.FullControl, AccessControlType.Allow));
+            while (true)
+            {
+                NamedPipeServerStream pipe;
+                // One instance only: if the name is already taken (something else created it first), creating it
+                // fails and this viewer simply stops listening - a second copy then cannot verify it and runs alone.
+                try { pipe = new NamedPipeServerStream(Name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.None, 0, 0, security); }
+                catch (Exception ex) { LogError(ex); return; }
+                using (pipe)
+                {
+                    try
+                    {
+                        pipe.WaitForConnection();
+                        // A client that connects and then sends nothing is cut off after 3 seconds.
+                        using (new System.Threading.Timer(_ => { try { pipe.Dispose(); } catch { } }, null, 3000, System.Threading.Timeout.Infinite))
+                        {
+                            uint clientPid;
+                            if (!GetNamedPipeClientProcessId(pipe.SafePipeHandle, out clientPid) || !IsThisProgram((int)clientPid)) continue;
+                            byte[] length = ReadExactly(pipe, 4);
+                            int n = length == null ? -1 : BitConverter.ToInt32(length, 0);
+                            if (n < 0 || n > MaxRequestBytes) continue;
+                            byte[] body = n == 0 ? new byte[0] : ReadExactly(pipe, n);
+                            if (body == null) continue;
+                            string file = n == 0 ? null : Encoding.UTF8.GetString(body);
+                            bool ok = Allowed() && (file == null || IsViewable(file));
+                            if (ok) app.Request(file == null ? null : Path.GetFullPath(file));
+                            pipe.WriteByte((byte)(ok ? 1 : 0));
+                            pipe.Flush();
+                        }
+                    }
+                    catch { }
+                }
+            }
+        }
+
+        static byte[] ReadExactly(Stream s, int count)
+        {
+            byte[] buffer = new byte[count];
+            int read = 0;
+            while (read < count)
+            {
+                int r = s.Read(buffer, read, count - read);
+                if (r <= 0) return null;
+                read += r;
+            }
+            return buffer;
+        }
+
+        // At most 5 requests in 5 seconds.
+        static bool Allowed()
+        {
+            DateTime now = DateTime.UtcNow;
+            while (recent.Count > 0 && (now - recent.Peek()).TotalSeconds > 5) recent.Dequeue();
+            if (recent.Count >= 5) return false;
+            recent.Enqueue(now);
+            return true;
+        }
+
+        // An existing local or network file of a type the viewer shows - nothing else is opened.
+        internal static bool IsViewable(string file)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(file) || file.IndexOf('\0') >= 0 || !Path.IsPathRooted(file)) return false;
+                if (file.StartsWith(@"\\.\", StringComparison.Ordinal) || file.StartsWith(@"\\?\", StringComparison.Ordinal)) return false;
+                string full = Path.GetFullPath(file);
+                return ServedTypes.Contains(Path.GetExtension(full)) && File.Exists(full);
+            }
+            catch { return false; }
+        }
+
+        // The process with this id runs this very program file (not a copy elsewhere, not another program).
+        internal static bool IsThisProgram(int pid)
+        {
+            string other = ViewerForm.ProcessPath(pid);
+            if (other == null) return false;
+            string a = RealPath(other), b = RealPath(Application.ExecutablePath);
+            return a != null && b != null && string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool GetNamedPipeServerProcessId(SafePipeHandle pipe, out uint pid);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool GetNamedPipeClientProcessId(SafePipeHandle pipe, out uint pid);
+        [DllImport("user32.dll")]
+        static extern bool AllowSetForegroundWindow(int pid);
     }
 
     // ------------------------------------------------------------------ signatures
@@ -749,10 +991,14 @@ static class Program
         static CoreWebView2Environment env;
         readonly WebView2 web = new WebView2();
         readonly string startUrl;
+        readonly DocScope scope;      // what this window may read (see DocScope)
+        readonly ViewerApp app;
 
-        public ViewerForm(string url)
+        public ViewerForm(string url, DocScope scope, ViewerApp app)
         {
             startUrl = url;
+            this.scope = scope;
+            this.app = app;
             SuspendLayout();
             AutoScaleDimensions = new System.Drawing.SizeF(96F, 96F);
             AutoScaleMode = AutoScaleMode.Dpi;
@@ -870,7 +1116,7 @@ static class Program
             core.NewWindowRequested += (s, e) =>
             {
                 e.Handled = true;
-                if (IsPrivate(e.Uri)) new ViewerForm(e.Uri).Show();   // e.g. a linked image from the document's folder
+                if (IsPrivate(e.Uri)) app.Show(new ViewerForm(e.Uri, scope, app));   // e.g. a linked image: same folder scope
                 else AskOpenOutside(e.Uri);
             };
             core.DocumentTitleChanged += (s, e) => { Text = core.DocumentTitle; };
@@ -918,7 +1164,7 @@ static class Program
             return null;
         }
 
-        static string ProcessPath(int pid)
+        internal static string ProcessPath(int pid)
         {
             IntPtr h = OpenProcess(0x1000, false, pid);       // PROCESS_QUERY_LIMITED_INFORMATION
             if (h == IntPtr.Zero) return null;
@@ -1014,7 +1260,7 @@ static class Program
             byte[] request = Encoding.ASCII.GetBytes(e.Request.Method + " " + u.PathAndQuery + " HTTP/1.1\r\n" +
                                                      (range != null ? "Range: " + range + "\r\n" : "") + "\r\n");
             InMemoryExchange io = new InMemoryExchange(request);
-            try { HandleStream(io); } catch { }
+            try { HandleStream(io, scope); } catch { }
             e.Response = ToResponse(io.Output.ToArray());
         }
 
@@ -1064,8 +1310,8 @@ static class Program
 
     // ------------------------------------------------------------------ request handler
 
-    // One request in, one response out.
-    static void HandleStream(Stream stream)
+    // One request in, one response out - for the window whose scope is given.
+    static void HandleStream(Stream stream, DocScope scope)
     {
         string head = ReadHead(stream);
         if (head == null) return;
@@ -1096,9 +1342,9 @@ static class Program
                 SavePref(m.Groups[1].Value, m.Groups[2].Value);
             Send(stream, 204, "text/plain", new byte[0], null, headOnly);
         }
-        else if (rest == "info") SendInfo(stream, headOnly);
+        else if (rest == "info") SendInfo(stream, headOnly, scope);
         else if (rest.StartsWith("app/", StringComparison.Ordinal)) SendAppFile(stream, Uri.UnescapeDataString(rest.Substring(4)), headOnly);
-        else if (rest.StartsWith("fs/", StringComparison.Ordinal)) SendDiskFile(stream, Uri.UnescapeDataString(rest.Substring(3)), headOnly, range);
+        else if (rest.StartsWith("fs/", StringComparison.Ordinal)) SendDiskFile(stream, Uri.UnescapeDataString(rest.Substring(3)), headOnly, range, scope);
         else NotFound(stream);
     }
 
@@ -1150,12 +1396,13 @@ static class Program
         Send(s, 200, Mime(name), body, csp, headOnly);
     }
 
-    static void SendDiskFile(Stream s, string webPath, bool headOnly, string range)
+    static void SendDiskFile(Stream s, string webPath, bool headOnly, string range, DocScope scope)
     {
         string full;
         try { full = Path.GetFullPath(webPath.Replace('/', '\\')); }
         catch { NotFound(s); return; }
 
+        string allowRoot = scope.AllowRoot;
         if (allowRoot == null || !IsUnder(full, allowRoot))
         {
             Send(s, 403, "text/plain", Encoding.UTF8.GetBytes("Forbidden"), null, headOnly);
@@ -1245,15 +1492,15 @@ static class Program
         Send(s, partial ? 206 : 200, Mime(full), body, csp, headOnly, etag, extra);
     }
 
-    static void SendInfo(Stream s, bool headOnly)
+    static void SendInfo(Stream s, bool headOnly, DocScope scope)
     {
         List<string> files = new List<string>();
-        if (startDir != null) CollectMarkdown(startDir, 0, files);
+        if (scope.Dir != null) CollectMarkdown(scope.Dir, 0, files);
 
         StringBuilder sb = new StringBuilder("{");
-        sb.Append("\"file\":").Append(Json(startFile == null ? null : ToWeb(startFile))).Append(',');
-        sb.Append("\"dir\":").Append(Json(startDir == null ? null : ToWeb(startDir) + "/")).Append(',');
-        sb.Append("\"repoRoot\":").Append(Json(repoRoot == null ? null : ToWeb(repoRoot) + "/")).Append(',');
+        sb.Append("\"file\":").Append(Json(scope.File == null ? null : ToWeb(scope.File))).Append(',');
+        sb.Append("\"dir\":").Append(Json(scope.Dir == null ? null : ToWeb(scope.Dir) + "/")).Append(',');
+        sb.Append("\"repoRoot\":").Append(Json(scope.RepoRoot == null ? null : ToWeb(scope.RepoRoot) + "/")).Append(',');
         sb.Append("\"files\":[");
         for (int i = 0; i < files.Count; i++) { if (i > 0) sb.Append(','); sb.Append(Json(ToWeb(files[i]))); }
         sb.Append("],");
@@ -1265,7 +1512,7 @@ static class Program
           .Append(",\"version\":").Append(Json(AppVersion))
           .Append(",\"runtime\":").Append(Json(".NET Framework CLR " + Environment.Version))
           .Append(",\"installDir\":").Append(Json(appDir.TrimEnd('\\')))
-          .Append(",\"readableFolder\":").Append(Json(allowRoot))
+          .Append(",\"readableFolder\":").Append(Json(scope.AllowRoot))
           .Append(",\"servedTypes\":").Append(Json(string.Join(" ", served.ToArray())))
           .Append(",\"webview2Runtime\":").Append(Json(wvRuntime))
           .Append(",\"webview2Sdk\":").Append(Json(wvSdk))

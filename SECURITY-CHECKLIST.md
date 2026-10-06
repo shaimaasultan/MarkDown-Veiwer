@@ -74,7 +74,7 @@ tamper tests described under each section.
 ## 6. Signing key and builds
 
 - [x] **Protected signing key:** a new certificate whose key needs your confirmation for every signing (`-KeyProtection Protect`); unprotected certificates are no longer used (1.8.3) — new key confirmed at `ForceHighProtection`
-  - [ ] Delete the old unprotected certificate `56EB660C…D72F` in certmgr.msc › Personal › Certificates (still present on 2026-10-05)
+  - [x] The old unprotected certificate `56EB660C…D72F` is deleted; your only signing certificate is now the protected `3EA8DD95…` (key protection `ForceHighProtection`), which signed the installed 1.8.8 (checked 2026-10-05)
 - [x] **Only fresh files are signed:** the build signs just the program and Content DLL it has compiled; WebView2 files are never signed by the build (1.8.4)
 - [x] **Tampered SDK stops the build** before anything is compiled or signed: Microsoft signature + pinned SHA-256 in `build.ps1` (1.8.4) — tested: one byte changed in `WebView2Loader.dll`, other Microsoft DLL as `Core.dll`
 - [x] Compiler found via Windows' own folder (not `WINDIR`) and must be Microsoft-signed (1.8.4)
@@ -134,6 +134,16 @@ tamper tests described under each section.
 - [x] No test DLLs, look-alike modules, test folders or profiler variables left anywhere (searched scratchpad, Temp, project, install folders, Documents modules)
 - [x] All installed WebView2 DLLs carry Microsoft's signature and the pinned hashes
 
+## 11. One viewer at a time
+
+- [x] **Single instance per user and session:** a named mutex in the session's own `Local\` namespace, named with the user's SID (1.8.9) — tested: a second launch hands its document over and ends in 0.2 s; one process, two windows
+- [x] **Each window reads only its own document's folder** (per-window scope instead of one global folder) (1.8.9) — tested through the request handler: window A refused folder B and the other way round; a window without a document reads nothing
+- [x] **Hand-over pipe only for this user, never the network:** permissions are exactly "deny NETWORK" and "allow this user" (1.8.9) — read back from the running pipe
+- [x] **Only this same program may ask:** the viewer accepts a request only from a process running this very program file (checked by path), which has passed all start-up checks before it connects (1.8.9) — tested: PowerShell sending a document was cut off, nothing opened
+- [x] **The second copy checks the other end first:** it hands its document over only to this same program, connecting at identification level so the other end can never act as the user (1.8.9) — tested: a look-alike pipe created first received 0 bytes, and the second copy ran on its own
+- [x] **Requests are narrow:** one path, at most 8 KB, read within 3 seconds; it must be an existing file of a type the viewer shows; at most 5 requests in 5 seconds and 20 windows (1.8.9) — tested: `run.cmd` refused with a message, nothing opened
+- [x] **Never blocked:** if the running viewer cannot be verified (or something else holds the name), the second copy runs on its own; a refusal from the verified viewer ends the second copy with a message (1.8.9)
+- [x] `--about` stays a short-lived window of its own and never touches the running viewer (1.8.9)
 ---
 
 ## Known limits (by design)
@@ -146,6 +156,7 @@ tamper tests described under each section.
 - Signatures carry no timestamp (builds never go online). The signing certificate is valid until October
   2036; after that the start-up check refuses the program, so install a build signed with a new
   certificate before then.
+- One viewer at a time is per program file: a test build in `app\dist` and the installed copy are different files, so each runs as its own viewer.
 - Not applicable from the CloClo comparison (this app has no such feature): weather and network requests,
   clipboard and selection reading, screen-capture exclusion, dictation, colour picker, HTTP limits,
   notification logos, `.pfx` signing.
