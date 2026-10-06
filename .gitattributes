@@ -5,6 +5,7 @@
 *.cs text eol=lf
 *.md text eol=lf
 *.txt text eol=lf
+*.js text eol=lf
 .gitattributes text eol=lf
 .gitignore text eol=lf
 # The page and the bundled libraries are kept byte for byte (they are packed into the signed Content DLL).
