@@ -225,7 +225,7 @@ The SDK files are pinned by SHA-256, so an update is a deliberate step:
 
 | Component | Version | License |
 |---|---|---|
-| marked | 15.0.12 | MIT |
+| marked | 18.1.0 | MIT |
 | KaTeX | 0.19.0 | MIT |
 | highlight.js | 11.12.0 | BSD-3-Clause |
 | Mermaid | 12.1.0 | MIT |

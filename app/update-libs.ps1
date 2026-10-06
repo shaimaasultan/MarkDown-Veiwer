@@ -39,7 +39,7 @@ $maxPackage = 60MB
 # Where each library's files come from (npm package, path inside it) and go (under src\). '*' = every
 # matching file in that folder, which replaces the folder's previous files of that kind.
 $libs = [ordered]@{
-    'marked'       = @{ Package = 'marked';                  Files = @(, @('package/marked.min.js', 'marked.min.js')) }
+    'marked'       = @{ Package = 'marked';                  Files = @(, @('package/lib/marked.umd.js', 'marked.min.js')) }   # since marked 16 the browser build is lib/marked.umd.js
     'KaTeX'        = @{ Package = 'katex';                   Files = @(@('package/dist/katex.min.js', 'lib\katex\katex.min.js'),
                                                                        @('package/dist/katex.min.css', 'lib\katex\katex.min.css'),
                                                                        @('package/dist/contrib/auto-render.min.js', 'lib\katex\contrib\auto-render.min.js'),

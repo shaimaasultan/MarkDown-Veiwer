@@ -152,7 +152,7 @@ tamper tests described under each section.
 - [x] **Report only:** nothing is downloaded or installed; the SDK stays pinned by SHA-256, so an update is a deliberate step (README › Updating the WebView2 SDK and libraries) (1.9.0)
 - [x] Same script rules as the others: module limit first, refuses an administrator window, folders from `GetFolderPath` (1.9.0)
 - [x] **Install reminder without going online:** `Install.cmd` reads the last result and lists found updates, or suggests a check when the last one is over 30 days old (1.9.0) — tested: updates found / 40 days old / fresh and clean (quiet)
-- [x] **`Update-Libraries.cmd` / `update-libs.ps1`:** shows the plan first (version, exact download, files replaced) and asks before downloading; downloads from registry.npmjs.org only (HTTPS, no redirects, 60 MB limit), checks the SHA-512 the registry publishes, reads the archive itself and takes out only the expected files (never anything else, never outside `src\`), checks the new version string as the build does, then updates `viewer.js` and the README table; never builds, signs or installs (1.9.0) — used for KaTeX 0.19.0, highlight.js 11.12.0, Mermaid 12.1.0 (all SHA-512 matched); marked 18.1.0 has no `marked.min.js` any more, so it was correctly left untouched
+- [x] **`Update-Libraries.cmd` / `update-libs.ps1`:** shows the plan first (version, exact download, files replaced) and asks before downloading; downloads from registry.npmjs.org only (HTTPS, no redirects, 60 MB limit), checks the SHA-512 the registry publishes, reads the archive itself and takes out only the expected files (never anything else, never outside `src\`), checks the new version string as the build does, then updates `viewer.js` and the README table; never builds, signs or installs (1.9.0) — used for KaTeX 0.19.0, highlight.js 11.12.0, Mermaid 12.1.0 and marked 18.1.0 (all SHA-512 matched); since marked 16 its browser file is `lib/marked.umd.js`, still saved as `src\marked.min.js`
 - [x] The updated libraries were checked in a test build (throwaway certificate, deleted afterwards): math, flowchart and sequence diagrams, code colouring, table; safety badge and Breakdown still pass (1.9.0)---
 
 ## Known limits (by design)
@@ -165,7 +165,6 @@ tamper tests described under each section.
 - Signatures carry no timestamp (builds never go online). The signing certificate is valid until October
   2036; after that the start-up check refuses the program, so install a build signed with a new
   certificate before then.
-- marked stays at 15.0.12: version 16 and later no longer ship a ready-made browser file (`marked.min.js`), so moving on needs changes to the viewer's code; `Check-Updates.cmd` keeps reporting it.
 - One viewer at a time is per program file: a test build in `app\dist` and the installed copy are different files, so each runs as its own viewer.
 - The library update checks each package against the SHA-512 published by the same registry: it catches a damaged or swapped download, not a release published through a compromised npm account. Check the changes (`git diff --stat src`) and test before installing.
 - The update check trusts what nuget.org and the npm registry report as the latest version; it only reports, and every update is still checked (Microsoft signature, pinned hashes, the build's version checks) before it is built.

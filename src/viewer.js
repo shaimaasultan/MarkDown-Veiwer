@@ -2479,8 +2479,10 @@ function analyzeDocument(source) {
         case 'text': {
           if (t.tokens && t.tokens.length) { const c0 = bookedChars, w0 = bookedWords; const v = inline(t.tokens); wrap(CAT.other, v, c0, w0); out += v; break; }
           const v = decodeEntities(t.text);
-          book(CAT.entity, 0, len(t.text) - len(v), W(t.text) - W(v));
-          book(CAT.other, 0, len(raw) - len(t.text), W(raw) - W(t.text));
+          // marked may already have decoded some entities (&#169; → ©) in t.text; those count as entities too.
+          const from = decodeEntities(raw) === v ? raw : t.text;
+          book(CAT.entity, 0, len(from) - len(v), W(from) - W(v));
+          book(CAT.other, 0, len(raw) - len(from), W(raw) - W(from));
           out += v; break;
         }
         case 'escape': book(CAT.escape, 0, len(raw) - len(t.text), W(raw) - W(t.text)); out += t.text; break;
@@ -2608,13 +2610,18 @@ function analyzeDocument(source) {
         bookContainer(CAT.listMarks, raw, t.items.map(i => i.raw).join(''));
         const out = [];
         for (const item of t.items) {
-          const inner = (item.tokens || []).map(c => c.raw).join('');
+          // The task box "[x] " is its own token (in the item, or first in a loose item's paragraph);
+          // it is booked from item.raw below, so leave it out of the item's content.
+          const tokens = (item.tokens || []).filter(c => c.type !== 'checkbox').map(c =>
+            c.type === 'paragraph' && c.tokens && c.tokens[0] && c.tokens[0].type === 'checkbox'
+              ? { ...c, raw: c.raw.slice(c.tokens[0].raw.length), text: c.text.slice(c.tokens[0].raw.length), tokens: c.tokens.slice(1) } : c);
+          const inner = tokens.map(c => c.raw).join('');
           const task = item.task ? /^\s*(?:[-*+]|\d+[.)])\s+(\[[ xX]\]\s*)/.exec(item.raw) : null;
           if (task) book(CAT.taskBoxes, 0, len(task[1]) - 1, W(task[1]));   // the box is drawn followed by a space
           // (the task text "[x] " is part of the item's markers, not of its content)
           bookContainer(CAT.listMarks, item.raw, task ? task[1] + inner : inner);
           if (task) book(CAT.listMarks, 0, 0, W(task[1] + inner) - W(task[1]) - W(inner));   // keep word sums exact
-          const v = blocks(item.tokens);
+          const v = blocks(tokens);
           out.push(task ? ' ' + v : v);
         }
         return out.join('\n');
@@ -4309,7 +4316,7 @@ async function walk(entry, prefix, out) {
 // Every library is bundled with the app (lib folder; marked next to the page). Versions are the bundled
 // copies' versions; the "running" version is read from the library itself where it reports one.
 const LIBRARIES = [
-  { name: 'marked', version: '15.0.12', use: 'Markdown → HTML', match: /marked/i,
+  { name: 'marked', version: '18.1.0', use: 'Markdown → HTML', match: /marked/i,
     loaded: () => typeof window.marked?.Marked === 'function' },
   { name: 'KaTeX', version: '0.19.0', use: 'Math equations', match: /katex/i,
     loaded: () => typeof window.katex?.renderToString === 'function', actual: () => window.katex?.version },
