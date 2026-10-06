@@ -129,7 +129,7 @@ Write-Host "Copying the program to $dest (Windows asks for administrator rights;
 # The SHA-256 of every file as built, taken now: the administrator step compares each copy with it.
 $installFiles = @($exeName, "$key.Content.dll", 'MarkdownViewer.ico', 'source-manifest.txt', 'Microsoft.Web.WebView2.Core.dll',
                   'Microsoft.Web.WebView2.WinForms.dll', 'WebView2Loader.dll' | ForEach-Object { Join-Path $dist $_ }) +
-                @('uninstall.ps1', 'firewall.ps1', 'trust.ps1', 'check-source.ps1' | ForEach-Object { Join-Path $here $_ })
+                @('uninstall.ps1', 'firewall.ps1', 'trust.ps1', 'check-source.ps1', 'register.ps1' | ForEach-Object { Join-Path $here $_ })
 $expected = ($installFiles | ForEach-Object { "$(Split-Path $_ -Leaf)=$((Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash)" }) -join ';'
 # What runs as administrator is a short, readable bootstrap - which is what the UAC prompt's "Show more
 # details" shows: place.ps1's path and SHA-256, then the data (folders, every file's SHA-256, an accepted
@@ -182,132 +182,18 @@ $differs = @($installFiles | Where-Object {
 } | ForEach-Object { Split-Path $_ -Leaf }) + @($present | Where-Object { $keep -notcontains $_ })
 if ($differs.Count) { Write-Host "WARNING: in $dest these do not match what was built: $($differs -join ', ')" -ForegroundColor Yellow }
 else { Write-Host "Copied to $dest and checked: exactly the files that were built." }
-# A copy from earlier versions is no longer used.
-if (Test-Path (Join-Path $userDest $exeName)) {
-    Remove-Item -LiteralPath $userDest -Recurse -Force
-    Write-Host "Removed the earlier copy in $userDest"
-}
-
-# Create a registry key only if it's missing. (New-Item -Force would recreate an existing key and
-# wipe its values - e.g. other apps' entries under .md.)
-function Ensure-Key($path) {
-    if (-not (Test-Path $path)) { New-Item -Path $path -Force | Out-Null }
-}
-
-function Set-Default($path, $value) {
-    Ensure-Key $path
-    Set-Item -Path $path -Value $value
-}
-
-$classes = 'HKCU:\Software\Classes'
-$command = "`"$exe`" `"%1`""
-
-# File type (ProgID)
-Set-Default "$classes\$progId" 'Markdown Document'
-Set-Default "$classes\$progId\DefaultIcon" "`"$exe`",0"
-Set-Default "$classes\$progId\shell\open\command" $command
-Set-ItemProperty "$classes\$progId\shell\open" -Name 'FriendlyAppName' -Value $name
-
-# Application entry (name + icon in "Open with" lists)
-$appKey = "$classes\Applications\$exeName"
-Set-Default "$appKey\shell\open\command" $command
-Set-ItemProperty $appKey -Name 'FriendlyAppName' -Value $name
-Set-Default "$appKey\DefaultIcon" "`"$exe`",0"
-Ensure-Key "$appKey\SupportedTypes"
-
-Ensure-Key $backupKey
-
-foreach ($ext in $exts) {
-    $extKey = "$classes\$ext"
-    Ensure-Key $extKey
-    Ensure-Key "$extKey\OpenWithProgids"
-    Set-ItemProperty "$extKey\OpenWithProgids" -Name $progId -Value ([byte[]]@()) -Type Binary
-    Set-ItemProperty "$appKey\SupportedTypes" -Name $ext -Value ''
-
-    # Make it the default for this extension (remember the previous value for uninstall).
-    $prev = (Get-ItemProperty $extKey -ErrorAction SilentlyContinue).'(default)'
-    if ($prev -and $prev -ne $progId) { Set-ItemProperty $backupKey -Name "Prev$ext" -Value $prev }
-    Set-Item -Path $extKey -Value $progId
-    Set-ItemProperty $extKey -Name 'Content Type' -Value 'text/markdown'
-    Set-ItemProperty $extKey -Name 'PerceivedType' -Value 'text'
-}
-
-# "Open with" for pictures, video and audio: shown in the viewer's own page.
-Set-Default "$classes\$mediaProgId" 'Picture, video or audio'
-Set-Default "$classes\$mediaProgId\DefaultIcon" "`"$exe`",0"
-Set-Default "$classes\$mediaProgId\shell\open\command" $command
-Set-ItemProperty "$classes\$mediaProgId\shell\open" -Name 'FriendlyAppName' -Value $name
-foreach ($ext in $mediaExts) {
-    Ensure-Key "$classes\$ext\OpenWithProgids"
-    Set-ItemProperty "$classes\$ext\OpenWithProgids" -Name $mediaProgId -Value ([byte[]]@()) -Type Binary
-    Set-ItemProperty "$appKey\SupportedTypes" -Name $ext -Value ''
-}
-
-# Start menu shortcuts: the viewer (no file: choose a folder / drag & drop) and the About window.
-$programs = [Environment]::GetFolderPath('Programs')
-$shell = New-Object -ComObject WScript.Shell
-$sc = $shell.CreateShortcut((Join-Path $programs "$name.lnk"))
-$sc.TargetPath = $exe
-$sc.WorkingDirectory = $dest
-$sc.IconLocation = "$exe,0"
-$sc.Description = 'View Markdown files with figures and math - own window, no network port'
-$sc.Save()
-
-$about = $shell.CreateShortcut((Join-Path $programs "About $name.lnk"))
-$about.TargetPath = $exe
-$about.Arguments = '--about'
-$about.WorkingDirectory = $dest
-$about.IconLocation = "$exe,0"
-$about.Description = 'Version, preview-only security, WebView2 and library versions'
-$about.Save()
-
-# Settings > Apps entry (version, size, Uninstall button)
+# File types, Open with, Start menu and Settings > Apps for your account: register.ps1 from Program Files,
+# where only an administrator can change it (the same step Setup.exe runs). It also removes a copy from
+# earlier versions in %LOCALAPPDATA%\Programs.
+& (Join-Path $dest 'register.ps1')
+$registered = $LASTEXITCODE
 $version = (Get-Item $exe).VersionInfo.ProductVersion
-$sizeKB = [int]((Get-ChildItem $dest -Recurse -File | Measure-Object Length -Sum).Sum / 1KB)
-$un = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$key"
-Ensure-Key $un
-Set-ItemProperty $un -Name 'DisplayName' -Value $name
-Set-ItemProperty $un -Name 'DisplayVersion' -Value $version
-Set-ItemProperty $un -Name 'Publisher' -Value 'Markdown Viewer'
-Set-ItemProperty $un -Name 'Comments' -Value 'Preview-only Markdown viewer with figures, math and diagrams - WebView2 window, no network port'
-Set-ItemProperty $un -Name 'DisplayIcon' -Value "$exe,0"
-Set-ItemProperty $un -Name 'InstallLocation' -Value $dest
-Set-ItemProperty $un -Name 'EstimatedSize' -Value $sizeKB -Type DWord
-Set-ItemProperty $un -Name 'NoModify' -Value 1 -Type DWord
-Set-ItemProperty $un -Name 'NoRepair' -Value 1 -Type DWord
-# PowerShell by its full path: Settings would otherwise look "powershell.exe" up (App Paths, PATH).
-$psExe = Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
-Set-ItemProperty $un -Name 'UninstallString' -Value "`"$psExe`" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$dest\uninstall.ps1`""
-
-# Read the entries back: Windows must now start this copy. (Something else holding on to the old values,
-# e.g. a security tool undoing changes to file types, would otherwise go unnoticed.)
-$stale = @(foreach ($k in "$classes\$progId\shell\open\command", "$appKey\shell\open\command", "$classes\$mediaProgId\shell\open\command") {
-    $v = (Get-ItemProperty $k -ErrorAction SilentlyContinue).'(default)'
-    if ($v -ne $command) { "  $k = $v" }
-})
-if ((Get-ItemProperty $un -ErrorAction SilentlyContinue).DisplayVersion -ne $version) { $stale += "  $un (version)" }
-if ($stale.Count) {
-    Write-Host 'WARNING: these entries did not take the new values, so Windows may still start another copy:' -ForegroundColor Yellow
-    $stale | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
-}
-
-# Tell Explorer that file associations changed.
-Add-Type -Namespace Win32 -Name Shell -MemberDefinition '[DllImport("shell32.dll")] public static extern void SHChangeNotify(int eventId, int flags, IntPtr item1, IntPtr item2);' -ErrorAction SilentlyContinue
-[Win32.Shell]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
-
 Write-Host ""
 Write-Host "Installed $name $version to $dest"
-# If the user picked a default app in Windows ("Always"), that choice wins over the installer.
-$userChoice = foreach ($ext in $exts) {
-    $p = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\$ext\UserChoice" -ErrorAction SilentlyContinue).ProgId
-    if ($p -and $p -ne $progId) { "$ext -> $p" }
-}
-if ($userChoice) {
-    Write-Host "Windows still has another default app for: $($userChoice -join ', ')"
-    Write-Host "To switch: right-click a .md file > Open with > Choose another app > $name > Always."
-} else {
-    Write-Host "If Windows asks which app to use the next time you open a .md file, pick $name and click Always."
-}
+if ($registered -ne 0) { Write-Host 'Some Windows entries could not be set (see above).' -ForegroundColor Yellow }
+# The same build as one signed Setup file, for installing on other PCs (made by build.ps1).
+$setupFile = Get-ChildItem -LiteralPath (Join-Path $here 'release') -Filter "MarkdownViewer-Setup-$version.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($setupFile) { Write-Host "For other PCs: $($setupFile.FullName) (one signed file with Install and Uninstall)." }
 if (Get-NetFirewallRule -Group $name -ErrorAction SilentlyContinue) { Write-Host 'Firewall: the block rules for this app are in place.' }
 else { Write-Host 'Optional: run Firewall-Block.cmd (as administrator) to block all network traffic of the program.' }
 # Update reminder, from the last Check-Updates.cmd result (the installer itself never goes online).

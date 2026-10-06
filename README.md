@@ -112,7 +112,32 @@ use is never left half replaced - and it writes no log files into your folders. 
 from an administrator window, and stops with a message if it cannot ask you a question (e.g. in PowerShell ISE). Afterwards the
 installer checks, as you, that Program Files holds exactly the files that were built.
 
-To remove it: Settings › Apps › Markdown Viewer (WebView2) › Uninstall, or run `app\Uninstall.cmd`. It removes
+### Setup for other PCs
+
+Every install (and `app\build.ps1`) also makes `app\release\MarkdownViewer-Setup-<version>.exe`: one signed
+file with the built program inside, for installing on another PC without building - or here, without the
+console window. Double-click it (not "Run as administrator"): a window with the logo shows the version, who
+signed it and whether the viewer is installed, with **Install** / **Update**, **Uninstall**, **Open the viewer**
+and **Close**; progress and questions appear in that window.
+
+- The files are resources of Setup, listed with their SHA-256 inside it, so Setup's signature covers them all.
+  Setup checks its own signature at start (a changed Setup does not run) and keeps its file locked until it ends.
+- The copy into Program Files is the only step with administrator rights, and Setup does not run elevated
+  itself: Windows asks for **Windows PowerShell**, whose short readable command ("Show more details") reads
+  Setup's bytes once, checks them against the SHA-256 Setup took of its checked file and runs only the copy
+  step from those bytes in memory - nothing is started from the Downloads folder with administrator rights,
+  where a planted DLL could be loaded with it. The copy step writes into a staging folder in Program Files,
+  checks every file's SHA-256, that the program and Content DLL are signed by Setup's certificate and the
+  WebView2 files by Microsoft, then swaps the folders (a copy in use is never left half replaced).
+- An installed copy signed by another certificate is replaced only after you answer Yes.
+- File types, Open with, Start menu and Settings › Apps are set up for your account by `register.ps1`, run
+  from Program Files (the same step `Install.cmd` uses). **Uninstall** runs the installed `uninstall.ps1`.
+- On another PC the certificate is not in Windows' trusted list, so Windows may show the publisher as unknown;
+  the viewer itself only needs its files intact and signed by one certificate. Compare the thumbprint Setup
+  shows with yours. The other PC needs the Microsoft Edge WebView2 Runtime (part of Windows 11); Setup says
+  if it is missing.
+
+To remove it: Settings › Apps › Markdown Viewer (WebView2) › Uninstall, run `app\Uninstall.cmd`, or use **Uninstall** in Setup. It removes
 the Program Files copy and the firewall block rules (if you added them) with one administrator prompt - a
 short readable command, no script file - and any per-user copy from earlier versions, the file-type entries
 (your previous `.md` default comes back), shortcuts, the Settings › Apps entry, saved settings, browser data,
@@ -225,6 +250,8 @@ a new empty Edge profile that cannot look up any host name.
 | `app\Content.cs` | Resource-only `MarkdownViewerWebView2.Content.dll` that carries the page and the libraries |
 | `app\build.ps1` | Checks, compiles and signs the app into `app\dist\` |
 | `app\install.ps1`, `app\place.ps1` | Install for your account; `place.ps1` is the one administrator step (copy into Program Files) |
+| `app\register.ps1` | File types, Open with, Start menu and Settings › Apps for your account; installed in Program Files and run from there by `install.ps1` and Setup |
+| `app\Setup.cs` | Setup for other PCs (`app\release\MarkdownViewer-Setup-<version>.exe`, built by `build.ps1`): the signed program inside one signed file, with Install and Uninstall |
 | `app\uninstall.ps1`, `app\firewall.ps1`, `app\trust.ps1` | Uninstall, optional firewall block rules, optional certificate trust (also copied next to the program) |
 | `app\check-source.ps1` | Records the project files' SHA-256 at install time; installed in Program Files with the record, where `Check-Source.cmd` runs it to compare the folder with that record |
 | `app\check-updates.ps1` | Reports newer versions of the WebView2 SDK and the bundled libraries (only when you run it) |

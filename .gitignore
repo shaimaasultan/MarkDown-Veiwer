@@ -1,2 +1,3 @@
 # Build output (recreate with app\build.ps1)
 app/dist/
+app/release/

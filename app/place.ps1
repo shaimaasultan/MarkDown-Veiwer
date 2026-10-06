@@ -4,7 +4,7 @@
 # data below. It reads this file's bytes once, checks the SHA-256 and runs exactly those bytes from memory,
 # so a copy swapped between the prompt and the start never runs.
 #   -Source            the built program (app\dist)
-#   -Scripts           the folder with uninstall.ps1, firewall.ps1, trust.ps1 and check-source.ps1 (app)
+#   -Scripts           the folder with uninstall.ps1, firewall.ps1, trust.ps1, check-source.ps1 and register.ps1 (app)
 #   -Expected          name=SHA-256;... of every file as built: each copy is compared with it
 #   -AcceptThumbprint  a new signing certificate the user has confirmed
 # Run as administrator, this script trusts nothing it is handed:
@@ -27,7 +27,7 @@ $name = 'Markdown Viewer (WebView2)'
 $exeName = 'MarkdownViewerWebView2.exe'
 $contentName = 'MarkdownViewerWebView2.Content.dll'
 $msFiles = 'Microsoft.Web.WebView2.Core.dll', 'Microsoft.Web.WebView2.WinForms.dll', 'WebView2Loader.dll'
-$scriptFiles = 'uninstall.ps1', 'firewall.ps1', 'trust.ps1', 'check-source.ps1'
+$scriptFiles = 'uninstall.ps1', 'firewall.ps1', 'trust.ps1', 'check-source.ps1', 'register.ps1'
 $dest = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'MarkdownViewerWebView2'
 $stage = "$dest.new"
 $old = "$dest.old"

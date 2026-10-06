@@ -165,12 +165,32 @@ tamper tests described under each section.
 
 ---
 
+## 13. Setup for other PCs (`Setup.exe`)
+
+- [x] **One signed file:** `build.ps1` makes `app\release\MarkdownViewer-Setup-<version>.exe` with the signed program, Content DLL, icon, WebView2 files and the uninstall / firewall / trust / register scripts as resources, their SHA-256 listed inside, and signs it with the same certificate in the same run (1.10.0)
+- [x] **Setup checks itself:** its own file is locked for the whole run (readable, not changeable, renamable or deletable), its signature must be intact and its SHA-256 is taken from the locked file (1.10.0) — tested: one changed byte → signature not intact, Setup does not run
+- [x] **The same start-up protections as the viewer:** DLLs from System32 only (`SetDefaultDllDirectories`, image-load and extension-point policies, `DllImport` from System32), no profiler / AppDomain-manager variables, no `.config` next to it, refuses "Run as administrator", 64-bit only (1.10.0)
+- [x] **Nothing elevated from the Downloads folder:** the administrator step is Windows PowerShell from System32 with a short readable command; it reads Setup's bytes once, checks them against the SHA-256 the user's Setup took and runs only `Setup.Place` from those bytes in memory (exit 8 otherwise), so a planted DLL next to Setup or a swapped Setup never runs with administrator rights (1.10.0) — tested: wrong SHA-256 → exit 8, nothing changed
+- [x] **The copy step trusts only Setup's certificate:** Program Files from Windows' own record, a staging folder there, every file's SHA-256 against the list inside Setup, program + Content DLL signed by Setup's certificate, WebView2 files Microsoft-signed, then an atomic swap with rollback; no log file (1.10.0) — tested: wrong certificate → 2, a changed file inside Setup → 7, no certificate → 6, a file in use → swap refused and the installed copy intact, without administrator rights → 6 with nothing left in Program Files
+- [x] **Another certificate needs a Yes:** an installed copy signed by a different certificate is replaced only after the question in the window (1.10.0) — tested: No → untouched, Yes → replaced
+- [x] **Checked again as the user:** afterwards Program Files must hold exactly the files inside Setup (1.10.0) — tested
+- [x] **One registration script for both installers:** `register.ps1` (from `install.ps1`) runs from Program Files as the user, takes no parameters and refuses an administrator window; `install.ps1` and Setup both run it (1.10.0) — tested: re-registering the installed copy gives exactly the entries Windows already had
+- [x] **Uninstall in Setup** runs the installed `uninstall.ps1` (it asks for administrator rights itself) (1.10.0)
+- [x] Tested with a throwaway certificate, deleted with its key afterwards together with the test-signed builds (1.10.0)
+  - [x] Confirmed on a real run: after `Install.cmd`, `app\release\MarkdownViewer-Setup-1.10.0.exe` shows the window, Reinstall works with one administrator prompt (Windows PowerShell) and Open the viewer works (2026-10-06)
+
+---
+
 ## Known limits (by design)
 
 - Windows' administrator prompt is not a security boundary against programs already running as you: they
   could change this repository's scripts or sources before you install. Use `Check-Source.cmd` and
   `git status` before installing, and confirm a signing request only while a build you started is running.
 - `app\dist\` is for testing only; full protection applies to the installed copy in Program Files.
+- Setup, like any program started from the Downloads folder, cannot stop Windows from loading a few system
+  DLLs from its own folder before its first line runs; this affects only the non-elevated window (the
+  administrator step never starts Setup). On another PC Windows shows the publisher as unknown unless the
+  certificate is trusted there, and Setup installs no project record (`Check-Source.cmd` is for the PC that builds).
 - The optional firewall rules cover `MarkdownViewerWebView2.exe`, not the shared WebView2 engine.
 - Signatures carry no timestamp (builds never go online). The signing certificate is valid until October
   2036; after that the start-up check refuses the program, so install a build signed with a new

@@ -38,15 +38,15 @@ using Microsoft.Win32.SafeHandles;
 // The program's own calls into Windows DLLs (user32, kernel32, advapi32, wintrust) load them from System32
 // only, never from the program's folder or anywhere else on the search path.
 [assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
-[assembly: AssemblyVersion("1.9.1.0")]
-[assembly: AssemblyFileVersion("1.9.1.0")]
-[assembly: AssemblyInformationalVersion("1.9.1")]
+[assembly: AssemblyVersion("1.10.0.0")]
+[assembly: AssemblyFileVersion("1.10.0.0")]
+[assembly: AssemblyInformationalVersion("1.10.0")]
 
 static class Program
 {
     const string AppName = "Markdown Viewer (WebView2)";
     const string DataFolder = "MarkdownViewerWebView2";     // %APPDATA% (settings) and %LOCALAPPDATA% (browser data)
-    const string AppVersion = "1.9.1";
+    const string AppVersion = "1.10.0";
     // Exists only inside this program's windows. Not a .local name: Windows would first spend ~2 s
     // looking for a device called "mdviewer" on the local network before the page could load.
     const string PrivateHost = "https://mdviewer.example";
@@ -492,7 +492,7 @@ static class Program
     // for configuration; an extra file or folder (a planted DLL, a ".local" redirection folder) stops the start.
     // source-manifest.txt: the project files' SHA-256 at install time (a text file, never loaded as code);
     // check-source.ps1: the checker Check-Source.cmd runs from here.
-    static readonly string[] FolderFiles = { "MarkdownViewer.ico", "uninstall.ps1", "firewall.ps1", "trust.ps1", "source-manifest.txt", "check-source.ps1" };
+    static readonly string[] FolderFiles = { "MarkdownViewer.ico", "uninstall.ps1", "firewall.ps1", "trust.ps1", "register.ps1", "source-manifest.txt", "check-source.ps1" };
 
     static string CheckFolder()
     {
@@ -506,7 +506,7 @@ static class Program
         return "The program's folder contains " + (extra.Count == 1 ? "something that is" : "things that are") + " not part of " + AppName + ":\n\n  " +
                string.Join("\n  ", extra.GetRange(0, Math.Min(extra.Count, 8))) + (extra.Count > 8 ? "\n  ..." : "") +
                "\n\nWindows or .NET could load code from there into the program, so " + AppName + " will not start.\n" +
-               "Reinstall it (app\\Install.cmd), which removes them, or delete them from\n" + appDir;
+               "Reinstall it (its Setup, or app\\Install.cmd), which removes them, or delete them from\n" + appDir;
     }
 
     // The checked files stay open until the program ends, shared for reading only: they cannot be changed,
@@ -537,9 +537,9 @@ static class Program
         string config = AppDomain.CurrentDomain.SetupInformation.ConfigurationFile;
         if (!string.IsNullOrEmpty(config) && File.Exists(config))
             return Path.GetFileName(Application.ExecutablePath) + ".config was found next to the program. It could make " + AppName +
-                   " load files other than the ones it checks.\n\n" + AppName + " will not start. Delete that file or reinstall it (app\\Install.cmd).";
+                   " load files other than the ones it checks.\n\n" + AppName + " will not start. Delete that file or reinstall it (its Setup, or app\\Install.cmd).";
         if (AppDomain.CurrentDomain.DomainManager != null)
-            return "Something has changed how .NET starts this program.\n\n" + AppName + " will not start. Reinstall it (app\\Install.cmd).";
+            return "Something has changed how .NET starts this program.\n\n" + AppName + " will not start. Reinstall it (its Setup, or app\\Install.cmd).";
         // Locked first, so the files checked below are the files that will be loaded.
         LockFolder();
         Lock(Application.ExecutablePath);
@@ -557,7 +557,7 @@ static class Program
             if (!ms.Trusted || ms.Subject.IndexOf("O=Microsoft Corporation,", StringComparison.Ordinal) < 0) return Tampered(f, ms);
             if (!PinnedFiles.Matches(f, Sha256(Path.Combine(appDir, f))))
                 return f + " cannot be trusted: it is signed by Microsoft but is not the version " + AppName +
-                       " was built with.\n\n" + AppName + " will not start. Reinstall it (app\\Install.cmd).";
+                       " was built with.\n\n" + AppName + " will not start. Reinstall it (its Setup, or app\\Install.cmd).";
         }
         signature = self;
         return null;
@@ -576,7 +576,7 @@ static class Program
                    : s.Subject == null ? "it is not signed"
                    : s.Status == unchecked((int)0x80096010) ? "it has been changed since it was signed"
                    : "its signature is not valid (0x" + s.Status.ToString("X8") + ")";
-        return file + " cannot be trusted: " + why + ".\n\n" + AppName + " will not start. Reinstall it (app\\Install.cmd).";
+        return file + " cannot be trusted: " + why + ".\n\n" + AppName + " will not start. Reinstall it (its Setup, or app\\Install.cmd).";
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
