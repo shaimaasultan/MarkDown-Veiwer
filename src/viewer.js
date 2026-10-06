@@ -4311,11 +4311,11 @@ async function walk(entry, prefix, out) {
 const LIBRARIES = [
   { name: 'marked', version: '15.0.12', use: 'Markdown → HTML', match: /marked/i,
     loaded: () => typeof window.marked?.Marked === 'function' },
-  { name: 'KaTeX', version: '0.16.22', use: 'Math equations', match: /katex/i,
+  { name: 'KaTeX', version: '0.19.0', use: 'Math equations', match: /katex/i,
     loaded: () => typeof window.katex?.renderToString === 'function', actual: () => window.katex?.version },
-  { name: 'highlight.js', version: '11.9.0', use: 'Code colouring', match: /highlight/i,
+  { name: 'highlight.js', version: '11.12.0', use: 'Code colouring', match: /highlight/i,
     loaded: () => typeof window.hljs?.highlightElement === 'function', actual: () => window.hljs?.versionString },
-  { name: 'Mermaid', version: '11.4.1', use: 'Diagrams (```mermaid)', match: /mermaid/i,
+  { name: 'Mermaid', version: '12.1.0', use: 'Diagrams (```mermaid)', match: /mermaid/i,
     loaded: () => typeof window.mermaid?.render === 'function' }
 ];
 

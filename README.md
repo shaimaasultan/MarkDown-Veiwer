@@ -191,10 +191,15 @@ The SDK files are pinned by SHA-256, so an update is a deliberate step:
    replace the three files in `webview2\`. Check that each carries Microsoft's valid signature (file
    Properties › Digital Signatures), then put their SHA-256 (`Get-FileHash`) into `$sdkHashes` in
    `app\build.ps1` and the new version in its comment and in the table below.
-2. **Libraries:** replace the library's files under `src\` (`marked.min.js`, `src\lib\katex\…`,
-   `src\lib\highlight\…`, `src\lib\mermaid\…`) with those of the new release and change its version in
-   `viewer.js`; the build checks that the files match. A new major version can change how documents look -
-   check a few before installing.
+2. **Libraries:** double-click `app\Update-Libraries.cmd`. It first shows the plan - for each library the
+   new version, the exact download and which files in `src\` it replaces - and asks before downloading
+   anything. Then it downloads each package from registry.npmjs.org only (HTTPS, no redirects, size limit),
+   checks it against the SHA-512 the registry publishes, takes out only the expected files (never anything
+   else, never outside `src\`), checks they really are the new version (as the build does) and only then
+   replaces them and updates the version in `viewer.js` and in the table below. A release that lacks an
+   expected file (e.g. no ready-made browser file) is left untouched with an explanation. For one library:
+   `app\update-libs.ps1 -Library KaTeX` (plan) or add `-Apply`. Undo with `git checkout -- src README.md`.
+   A new major version can change how documents look - check a few before installing.
 3. Run `Install.cmd`. It lists the changed files since the last install and asks for Y; then run
    `Check-Updates.cmd` again.
 
@@ -211,7 +216,8 @@ The SDK files are pinned by SHA-256, so an update is a deliberate step:
 | `app\uninstall.ps1`, `app\firewall.ps1`, `app\trust.ps1` | Uninstall, optional firewall block rules, optional certificate trust (also copied next to the program) |
 | `app\check-source.ps1` | Records the project files' SHA-256 at install time; installed in Program Files with the record, where `Check-Source.cmd` runs it to compare the folder with that record |
 | `app\check-updates.ps1` | Reports newer versions of the WebView2 SDK and the bundled libraries (only when you run it) |
-| `app\*.cmd` | Double-click launchers: `Install`, `Uninstall`, `Check-Source`, `Check-Updates`, `Firewall-Block` / `-Unblock`, `Trust-` / `Untrust-Certificate` |
+| `app\update-libs.ps1` | Downloads, checks and replaces the bundled libraries in `src\` (plan first; asks before downloading) |
+| `app\*.cmd` | Double-click launchers: `Install`, `Uninstall`, `Check-Source`, `Check-Updates`, `Update-Libraries`, `Firewall-Block` / `-Unblock`, `Trust-` / `Untrust-Certificate` |
 | `webview2\` | Microsoft WebView2 SDK files needed to build the app, with their license |
 | `docs\` | Promo video and its poster picture |
 
@@ -220,9 +226,9 @@ The SDK files are pinned by SHA-256, so an update is a deliberate step:
 | Component | Version | License |
 |---|---|---|
 | marked | 15.0.12 | MIT |
-| KaTeX | 0.16.22 | MIT |
-| highlight.js | 11.9.0 | BSD-3-Clause |
-| Mermaid | 11.4.1 | MIT |
+| KaTeX | 0.19.0 | MIT |
+| highlight.js | 11.12.0 | BSD-3-Clause |
+| Mermaid | 12.1.0 | MIT |
 | Microsoft WebView2 SDK | 1.0.4258.31 | see `webview2\WebView2-SDK-LICENSE.txt` |
 
 The original viewer was made using GPT-5; this version was extended and tested with Claude Code (Anthropic).
