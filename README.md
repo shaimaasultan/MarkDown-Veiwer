@@ -132,6 +132,7 @@ and **Close**; progress and questions appear in that window.
 - An installed copy signed by another certificate is replaced only after you answer Yes.
 - File types, Open with, Start menu and Settings › Apps are set up for your account by `register.ps1`, run
   from Program Files (the same step `Install.cmd` uses). **Uninstall** runs the installed `uninstall.ps1`.
+- Setup installs `uninstall.ps1`, `register.ps1` and `firewall.ps1` with the program, not `trust.ps1`: certificate trust is only for the PC that holds the signing key.
 - On another PC the certificate is not in Windows' trusted list, so Windows may show the publisher as unknown;
   the viewer itself only needs its files intact and signed by one certificate. Compare the thumbprint Setup
   shows with yours. The other PC needs the Microsoft Edge WebView2 Runtime (part of Windows 11); Setup says

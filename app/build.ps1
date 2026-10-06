@@ -200,13 +200,14 @@ Write-Host "Built $dist\$exeName and $contentName, signed by $($cert.Subject) ($
 
 # --- Setup.exe for installing on any PC (Setup.cs): the signed program and the files installed with it as
 # resources, listed with their SHA-256 in payload.sha256, and the whole file signed with the same certificate.
-# Not included: check-source.ps1 and the project record (they belong to the PC that builds the program).
+# Not included: check-source.ps1, the project record and trust.ps1 (they work only on the PC that builds and
+# signs the program; uninstall.ps1 skips the trust step when trust.ps1 is not there).
 $release = Join-Path $here 'release'
 New-Item -ItemType Directory -Force $release | Out-Null
 $version = (Get-Item (Join-Path $dist $exeName)).VersionInfo.ProductVersion
 if ($version -notmatch '^\d+(\.\d+){1,3}$') { throw "Unexpected program version '$version'." }
 $payload = @(@($exeName, $contentName, 'MarkdownViewer.ico') + $sdkFiles | ForEach-Object { Join-Path $dist $_ }) +
-           @('uninstall.ps1', 'firewall.ps1', 'trust.ps1', 'register.ps1' | ForEach-Object { Join-Path $here $_ })
+           @('uninstall.ps1', 'firewall.ps1', 'register.ps1' | ForEach-Object { Join-Path $here $_ })
 $manifest = Join-Path $release 'payload.sha256'
 [IO.File]::WriteAllLines($manifest, [string[]]@($payload | ForEach-Object { "$(Split-Path $_ -Leaf)=$((Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash)" }))
 $setupInfo = Join-Path $release 'SetupBuild.cs'
