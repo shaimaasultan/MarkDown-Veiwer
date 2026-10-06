@@ -21,6 +21,8 @@ tamper tests described under each section.
 - [x] Blocked-code alert: a popup says when a file contained code that was removed
 - [x] Safety check badge and report: phishing links, look-alike addresses and letters, hidden text, AI-aimed instructions, download-and-run commands, Trojan Source (1.7.0)
 - [x] Code examples cannot be hidden or restyled (no copy-paste traps)
+- [x] **Every file opened on its own stays sandboxed** (no scripts, so even an SVG cannot run code); because a sandboxed page cannot play video or audio, links to video and audio open in a new viewer window with its player instead of the raw file (1.9.1) — reproduced: the app's headers on the promo video gave "no source", without the sandbox it played
+  - [ ] Confirm on a real run: in the installed viewer, click the promo video (poster or link) in README.md → it plays in a new window
 
 ## 2. Never online, private
 

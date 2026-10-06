@@ -642,7 +642,11 @@ function fixResources(root, baseDir) {
       const anchor = href.includes('#') ? href.split('#')[1] : '';
       a.addEventListener('click', ev => { ev.preventDefault(); openDoc(entry.path, anchor); });
     } else if (entry && !entry.missing && OPENABLE.test(entry.path)) {
-      a.href = blobURL(entry);
+      // In the app a file opened on its own is sandboxed, and a sandboxed page cannot play video or audio:
+      // those open in a new viewer window with its player instead (as "Open with" does).
+      a.href = source === 'app' && (VIDEO_EXT.test(entry.path) || AUDIO_EXT.test(entry.path))
+        ? new URL('viewer.html?file=' + encodeURIComponent(entry.path), location.href).href
+        : blobURL(entry);
       a.target = '_blank';
     } else {
       disableLink(a, entry && !entry.missing
