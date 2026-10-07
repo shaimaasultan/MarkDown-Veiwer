@@ -1,3 +1,5 @@
 # Build output (recreate with app\build.ps1)
 app/dist/
 app/release/
+# Large table for trying the viewer (recreate with test\make-million-csv.ps1)
+test/million-rows.csv

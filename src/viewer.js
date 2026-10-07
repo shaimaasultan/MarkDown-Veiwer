@@ -1022,8 +1022,14 @@ function csvRowsShown() {
   return [s.head, ...s.view.map(i => s.head.map((_, c) => s.data[i][c] || ''))];
 }
 
+// redraw: filter and sort again, then draw the first page. Without it (Show more): only draw the next rows.
 function refreshCsv(redraw = true) {
   const s = csvState;
+  if (redraw) csvApplyView(s);
+  csvDraw(s, redraw);
+}
+
+function csvApplyView(s) {
   const all = s.filter.trim().toLocaleLowerCase();
   const tests = s.head.map((_, c) => compileFilter(s.colFilters[c] || ''));
   const view = [];
@@ -1049,7 +1055,9 @@ function refreshCsv(redraw = true) {
     });
     s.view = order.map(k => view[k]);
   } else s.view = view;
+}
 
+function csvDraw(s, redraw) {
   const { tbody, info, more } = s.dom;
   const from = redraw ? 0 : tbody.rows.length;
   const to = Math.min(s.view.length, s.shown);

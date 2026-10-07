@@ -526,7 +526,9 @@
     .csv-view { display: flex; flex-direction: column; gap: .6rem; }
     .csv-bar { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; font: .85rem system-ui, sans-serif; }
     .csv-search { flex: 1 1 14rem; min-width: 10rem; padding: .35rem .55rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; }
-    .csv-option { color: var(--muted); white-space: nowrap; }
+    .csv-option { display: inline-flex; align-items: center; gap: .35rem; color: var(--muted); white-space: nowrap; cursor: pointer; }
+    /* Not a task-list box: no negative margin (that rule moves document checkboxes into the list's margin). */
+    .markdown-body .csv-option input[type=checkbox] { margin: 0; }
     .csv-info { color: var(--muted); margin-inline-start: auto; white-space: nowrap; }
     .csv-btn { border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: 600 .78rem/1 system-ui, sans-serif; padding: .4rem .6rem; cursor: pointer; }
     .csv-btn:hover { color: var(--accent); border-color: var(--accent); }
