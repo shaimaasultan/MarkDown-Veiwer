@@ -14,7 +14,7 @@ and never goes online.
 - **Math** with [KaTeX](https://katex.org) (`$…$`, `$$…$$`, ```` ```math ````)
 - **Code colouring** with [highlight.js](https://highlightjs.org)
 - **Diagrams** with [Mermaid](https://mermaid.js.org) (```` ```mermaid ````)
-- **Folder sidebar** with every Markdown file next to the opened one, a table of contents, and a picture/diagram viewer
+- **Folder sidebar** with every Markdown, CSV and TSV file next to the opened one, a table of contents, and a picture/diagram viewer
 - **Images list** (🖼️ Images, Ctrl+Shift+G): every picture in the document as a thumbnail; click to go to it, double-click to enlarge, and step through them in the viewer with ‹ › or the arrow keys
 - **Links list** (🔗 Links, Ctrl+Shift+L): every link with its text and real address (web, e-mail, other Markdown files, sections, disabled files); links flagged by the safety check are marked ⚠. Clicking an entry goes to the link in the document without opening it; ⧉ copies the address
 - **Counts**: lines, characters, words, sentences, paragraphs, reading time, images, links, tables, code blocks, equations
@@ -47,7 +47,7 @@ and never goes online.
 Every point below, with where it is implemented and how it was tested, is listed in
 [SECURITY-CHECKLIST.md](SECURITY-CHECKLIST.md).
 
-- **Preview only.** Scripts, event handlers, `javascript:` links, frames, forms and plugins in a document are removed before display and also blocked by the window's Content-Security-Policy. Only Markdown, text, images, audio and video files are read from disk.
+- **Preview only.** Scripts, event handlers, `javascript:` links, frames, forms and plugins in a document are removed before display and also blocked by the window's Content-Security-Policy. Only Markdown, text, CSV/TSV tables, images, audio and video files are read from disk.
 - **No network port.** The page lives at a private address (`https://mdviewer.example`) that exists only inside the app window; every request is answered by the program itself.
 - **Never goes online.** All libraries are bundled (`src\lib\`) and packed into the signed Content DLL. The WebView2 engine is started so that it cannot look up any internet address, without background networking, component updates, pings, SmartScreen checks or Microsoft-account sign-in. Pictures a document links to on the web are shown as *not loaded*. (Only the optional `Check-Updates.cmd`, when you run it, asks two fixed sites for version numbers - see [Checking for updates](#checking-for-updates).)
 - **Links ask first.** Web and mail links open outside the app only after a question that shows the real address.
@@ -63,7 +63,7 @@ Every point below, with where it is implemented and how it was tested, is listed
 - **One viewer at a time.** Only one copy runs per user and Windows session. Opening another document (a double-click, the Start menu) hands it to the running viewer, which shows it in a window of its own - and each window can read only its own document's folder. The hand-over is a named pipe that only your account can open and never the network can; the viewer accepts a request only from this same program file (after its start-up checks), and the second copy hands its document over only after checking that the other end is this same program, so a look-alike learns nothing. A request is one path to an existing file of a type the viewer shows; requests are rate-limited and windows are capped at 20. If the running viewer cannot be verified, the second copy simply runs on its own.
 - **Fresh browser data.** The WebView2 engine starts with a new, empty data folder at every start; folders of ended runs are deleted. Nothing left in that folder by an earlier run or another program is read.
 - **No startup hooks.** If environment variables would make .NET load a profiler or an AppDomain manager into the app (`COR_ENABLE_PROFILING`, `COR_PROFILER*`, `APPDOMAIN_MANAGER_*`), it refuses to start. `DOTNET_STARTUP_HOOKS` belongs to .NET Core and is never read by this .NET Framework app.
-- **Never as administrator by accident.** Opened with administrator rights (for example from an administrator prompt) while a normal start is possible, the app refuses and asks you to open the file normally. `Install.cmd` refuses to be started as administrator too: it builds, signs and registers the app as you, and asks for administrator rights only for the copy into Program Files.
+- **Never as administrator by accident.** Opened with administrator rights (for example from an administrator prompt) while a normal start is possible, the app refuses and asks you to open the file normally. `Install.cmd`, Setup and `Uninstall.exe` refuse to be started as administrator too: they build, sign and register the app as you, and ask for administrator rights only for the copy into Program Files and the firewall rules (Setup) or for removing them (`Uninstall.exe`).
 - **Windows entries stay pointed at the installed copy.** At start, an installed copy corrects the entries that open `.md` files, pictures and media when they point to a deleted copy (a place any program running as you could fill with its own program); the Program Files copy also corrects them when they point to any other copy. Development builds and copies run from other folders never touch them, and the installer reads them back and warns if a change did not stick.
 - **Genuine engine.** After the WebView2 engine starts, the app checks that it is Microsoft's `msedgewebview2.exe`, signed and under Program Files (which only an administrator can change); otherwise no document is shown.
 - **No developer access.** Developer tools are off; the app refuses to show documents if WebView2 remote debugging has been switched on, or if it cannot check.
@@ -85,8 +85,8 @@ before then. `Install.cmd` warns once less than a year is left.
 - Windows 10 or 11 (64-bit)
 - Microsoft Edge WebView2 Runtime — included with Windows 11
 - .NET Framework 4.x — included with Windows; its C# compiler builds the app, nothing else to install
-- Administrator rights once per install or update (for the copy into Program Files); on a standard account,
-  Windows asks for an administrator's password
+- Administrator rights once per install or update (for the copy into Program Files and the firewall rules) and
+  once to uninstall; on a standard account, Windows asks for an administrator's password
 
 ## Install
 
@@ -165,15 +165,16 @@ Markdown Viewer (WebView2) › Uninstall (a window with Uninstall, Open the view
 powershell -NoProfile -ExecutionPolicy Bypass -File app\build.ps1
 ```
 
-Output goes to `app\dist\` (for testing; it is not installed). The build checks the compiler's and the
+Output goes to `app\dist\` (for testing; it is not installed) and the Setup file to `app\release\`. The build checks the compiler's and the
 WebView2 files' Microsoft signatures and the WebView2 files' exact SHA-256, that the bundled libraries match
 the versions listed in `viewer.js` and that the page loads nothing from the internet. It then packs the page
-and libraries into `MarkdownViewerWebView2.Content.dll` and signs the program and that DLL (Windows asks you
-to confirm the signing). Run it from a normal window: it refuses to build with administrator rights.
+and libraries into `MarkdownViewerWebView2.Content.dll`, builds `Uninstall.exe` and Setup (`app\Setup.cs`), and signs
+the program, that DLL, `Uninstall.exe` and Setup with one certificate (Windows asks you to confirm the signing). Run it
+from a normal window: it refuses to build with administrator rights.
 
 ## Signing
 
-The program and `MarkdownViewerWebView2.Content.dll` are Authenticode-signed by every build, and the program checks both signatures - plus Microsoft's on the WebView2 files and their exact SHA-256 - at every start (see [Security](#security)).
+The program, `MarkdownViewerWebView2.Content.dll`, `Uninstall.exe` and Setup are Authenticode-signed by every build with one certificate. The program checks its own and the Content DLL's signature - plus Microsoft's on the WebView2 files and their exact SHA-256 - at every start (see [Security](#security)).
 
 The first build creates a code-signing certificate on your PC named
 "Markdown Viewer" (publisher; builds before 1.10 used "Markdown Viewer (WebView2) Code Signing"). It is stored in your personal certificate store, its private
@@ -182,15 +183,15 @@ with it, so no other program running as you can quietly sign a changed program o
 reuse it (you confirm when a build signs). Certificates from earlier versions had no such protection; the build
 no longer uses them, and you can delete them in certmgr.msc › Personal › Certificates.
 
-**Only fresh, untouched files are signed.** The build signs just the program and Content DLL it has compiled
+**Only fresh, untouched files are signed.** The build signs just the program, Content DLL, `Uninstall.exe` and Setup it has compiled
 moments before. The WebView2 files are never signed by the build: they must carry Microsoft's valid signature
 and match the SHA-256 recorded in `build.ps1`, otherwise the build stops before anything is compiled or
 signed. The compiler, PowerShell and its modules are used from Windows' own folders by full path, never
 looked up on PATH or in your Documents module folder.
 
-**Updates keep the certificate.** The installer only replaces an installed copy with a build signed by the
-same certificate. When the certificate has changed (for example right after the protected one was made),
-it shows both thumbprints and installs only after you answer Y.
+**Updates keep the certificate.** Setup (also when `Install.cmd` runs it) only replaces an installed copy with a
+build signed by the same certificate. When the certificate has changed (for example right after a new one was
+made), it shows both thumbprints and installs only after you answer Yes.
 
 To sign with a certificate bought from a certificate authority instead, run:
 
@@ -248,10 +249,14 @@ The SDK files are pinned by SHA-256, so an update is a deliberate step:
 
 ### Testing the viewer page
 
-Double-click `app\Test-Viewer.cmd` (it changes nothing). It opens every document in `test\` in the viewer
-page, in Microsoft Edge without a window, and fails unless each one is shown, its breakdown adds up (✓), no
-element, attribute or address that could run code reaches the page, no payload in `test\attack.md` ran and
-all four libraries load. Add your own documents with `Test-Viewer.cmd -Folder C:\path\to\folder`. The page
+Double-click `app\Test-Viewer.cmd` (it changes nothing). It opens every document in `test\` (`.md`, `.csv`, `.tsv`,
+up to 4 MB each) in the viewer page, in Microsoft Edge without a window, and fails unless each one is shown,
+its breakdown adds up (✓), no element, attribute or address that could run code reaches the page, no payload
+in `test\attack.md` ran and all four libraries load. For the tables it also checks that `test\data.csv`
+(payload cells, quoted commas and line breaks) is drawn exactly as text and sorts and filters correctly, and
+that choosing columns in `test\wide.csv` (40 columns) works. Add your own documents with
+`Test-Viewer.cmd -Folder C:\path\to\folder`. To try a large table, `test\make-million-csv.ps1` writes
+`test\million-rows.csv` (1,000,000 rows, about 45 MB; not kept in git). The page
 runs from a temporary copy of `src\` (removed afterwards), served on 127.0.0.1 only under a random path, in
 a new empty Edge profile that cannot look up any host name.
 
@@ -265,7 +270,6 @@ a new empty Edge profile that cannot look up any host name.
 | `app\Content.cs` | Resource-only `MarkdownViewerWebView2.Content.dll` that carries the page and the libraries |
 | `app\build.ps1` | Checks, compiles and signs the app into `app\dist\` |
 | `app\install.ps1` | `Install.cmd`: checks and records the project folder, builds (`build.ps1`) and installs with the Setup it made |
-
 | `app\Setup.cs` | Built twice by `build.ps1`: Setup (`app\release\MarkdownViewer-Setup-<version>.exe`, the signed program inside one signed file: installs, registers, adds the firewall rules) and `Uninstall.exe` (installed next to the program: the opposite) |
 | `app\trust.ps1` | Optional certificate trust for the PC that builds (not installed) |
 | `app\check-source.ps1` | Records the project files' SHA-256 at install time (the record goes into Program Files) and compares the folder with it; `Check-Source.cmd` runs it only if it is exactly the recorded copy |
@@ -273,7 +277,7 @@ a new empty Edge profile that cannot look up any host name.
 | `app\update-libs.ps1` | Downloads, checks and replaces the bundled libraries in `src\` (plan first; asks before downloading; holds back releases under 7 days old) |
 | `app\test-viewer.ps1` | Tests the viewer page with the documents in `test\` (display, breakdown, nothing that could run code) |
 | `app\*.cmd` | Double-click launchers: `Install`, `Uninstall`, `Check-Source`, `Check-Updates`, `Update-Libraries`, `Test-Viewer`, `Trust-` / `Untrust-Certificate` |
-| `test\` | Test documents (formatting, lists, UTF-16, `attack.md` with harmless payloads) and `selftest.js`, which the test adds to its temporary copy of the page |
+| `test\` | Test documents (formatting, lists, UTF-16, `attack.md` with harmless payloads, `data.csv` and `wide.csv` tables), `selftest.js` (which the test adds to its temporary copy of the page) and `make-million-csv.ps1` (a large table for trying the viewer) |
 | `webview2\` | Microsoft WebView2 SDK files needed to build the app, with their license |
 | `docs\` | Promo video and its poster picture |
 
