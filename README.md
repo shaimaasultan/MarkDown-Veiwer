@@ -131,8 +131,10 @@ rules**; `Uninstall.exe` does the opposite.
 - Afterwards Setup checks, as you, that Program Files holds exactly the files inside it and that both firewall
   rules are there, then registers the file types, Open with, Start menu and Settings › Apps for your account.
 - **No script file is installed.** Program Files holds the program, its Content DLL, the WebView2 files, the
-  icon and `Uninstall.exe` - plus, when installed with `Install.cmd`, the project record `source-manifest.txt`
-  (a Setup made only for that install carries it; the Setup you hand out never contains it). `trust.ps1` stays
+  icon and `Uninstall.exe` - plus the project record `source-manifest.txt` (for `Check-Source.cmd`) when the
+  Setup was made by `Install.cmd`, which puts it in Setup. It lists the project's file names and SHA-256 (no
+  file contents), so whoever you give that Setup also gets that list. A Setup made by `build.ps1` alone has
+  no record; when it updates an install that has one, it keeps it. `trust.ps1` stays
   in the project folder: certificate trust is only for the PC that holds the signing key.
 - On another PC the certificate is not in Windows' trusted list, so Windows may show the publisher as unknown;
   the viewer itself only needs its files intact and signed by one certificate. Compare the thumbprint Setup

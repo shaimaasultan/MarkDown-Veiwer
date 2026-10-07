@@ -185,7 +185,9 @@ tamper tests described under each section.
 
 - [x] **Setup installs, registers and adds the firewall rules; `Uninstall.exe` does the opposite** (uninstalls, unregisters, removes the rules). Both are built from `Setup.cs` and signed with the program's certificate; `Uninstall.exe` is installed next to the program (1.11.0)
 - [x] **No script file in Program Files:** `uninstall.ps1`, `register.ps1`, `firewall.ps1` and `place.ps1` are gone; `check-source.ps1` and `trust.ps1` are no longer installed. Program Files holds the program, Content DLL, WebView2 files, icon, `Uninstall.exe` and (from `Install.cmd`) the project record; the viewer's folder check allows exactly these (1.11.0)
-- [x] **One install path:** `Install.cmd` builds, then installs with a Setup made for this PC (`--install`, progress in the console, questions in Yes/No boxes); that Setup also carries the project record into Program Files and is deleted afterwards - the Setup you hand out never contains it (1.11.0)
+- [x] **One install path:** `Install.cmd` builds, then installs with the Setup it made (`--install`, progress in the console, questions in Yes/No boxes). That Setup carries the project record into Program Files and is kept for reinstalling - also after an uninstall, which removes the record with the folder (1.11.0)
+  - Note: the record lists the project's file names and SHA-256 (no contents); whoever gets that Setup gets the list. `build.ps1` alone makes a Setup without it.
+- [x] **Reinstalling with Setup keeps the project record:** a Setup without a record copies the installed `source-manifest.txt` (a plain file, not a link, at most 8 MB) from the old Program Files folder into the new one inside the administrator step, so `Check-Source.cmd` keeps comparing with the last `Install.cmd` (1.11.0) — tested in a scratch folder: record kept, a stray file in the old folder removed, the check afterwards accepts it
 - [x] **Firewall rules with every install:** Setup's administrator step adds the two block rules for the program it has just installed (no path from outside); Setup then checks, as the user, that both are there; `Uninstall.exe`'s administrator step removes them. `Firewall-Block.cmd` / `Firewall-Unblock.cmd` are gone (1.11.0)
 - [x] **The copy step checks `Uninstall.exe` too:** program, Content DLL and `Uninstall.exe` must carry Setup's certificate (1.11.0)
 - [x] **Only the installed `Uninstall.exe` acts:** it refuses to run from anywhere but Program Files, checks its own signature, refuses "Run as administrator", and has the viewer's start-up protections (1.11.0) — tested: run from `app\dist` → refused
@@ -206,7 +208,7 @@ tamper tests described under each section.
 - Setup, like any program started from the Downloads folder, cannot stop Windows from loading a few system
   DLLs from its own folder before its first line runs; this affects only the non-elevated window (the
   administrator step never starts Setup). On another PC Windows shows the publisher as unknown unless the
-  certificate is trusted there, and Setup installs no project record (`Check-Source.cmd` is for the PC that builds).
+  certificate is trusted there, and Setup installs no project record of its own (`Check-Source.cmd` is for the PC that builds; an existing record is kept).
 - The optional firewall rules cover `MarkdownViewerWebView2.exe`, not the shared WebView2 engine.
 - Signatures carry no timestamp (builds never go online). The signing certificate is valid until October
   2036; after that the start-up check refuses the program, so install a build signed with a new

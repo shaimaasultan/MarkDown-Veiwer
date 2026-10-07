@@ -53,6 +53,9 @@ public static class Setup
     const string ExeName = Key + ".exe";
     const string ContentDll = Key + ".Content.dll";
     const string UninstallerName = "Uninstall.exe";
+    // The project record Install.cmd installs (for Check-Source.cmd). A Setup that carries none keeps the one
+    // already installed, so reinstalling with Setup does not drop it.
+    const string RecordName = "source-manifest.txt";
     const string ProgId = Key + ".md", MediaProgId = Key + ".media";
     const string FirewallGroup = AppName;
     static readonly string[] MicrosoftFiles = { "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll", "WebView2Loader.dll" };
@@ -117,16 +120,20 @@ public static class Setup
                 {
                     // Questions (certificate change, open windows) still get a Yes/No box.
                     Step step = new Step { Log = line => { Console.WriteLine(line); Console.Out.Flush(); },
-                                           Ask = q => MessageBox.Show(q, Title, MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) == DialogResult.Yes };
+                                           Ask = q => ShowOnTop(q, MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes };
                     code = Install(self, selfHash, sig, step) ? 0 : 1;
                     break;
                 }
                 case "--uninstall":
                 {
+                    // Run by Setup (its output is read): the lines go to Setup's window, no message box. Run from
+                    // Uninstall.cmd: one message with the result, on top.
+                    bool toCaller = Console.IsOutputRedirected;
                     StringBuilder log = new StringBuilder();
-                    Step step = new Step { Log = line => log.AppendLine(line), Ask = q => MessageBox.Show(q, Title, MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes };
+                    Step step = new Step { Log = line => { if (toCaller) { Console.WriteLine(line); Console.Out.Flush(); } else log.AppendLine(line); },
+                                           Ask = q => ShowOnTop(q, MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes };
                     bool ok = Uninstall(step);
-                    MessageBox.Show(log.ToString().Trim(), Title, MessageBoxButtons.OK, ok ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                    if (!toCaller) ShowOnTop(log.ToString().Trim(), MessageBoxButtons.OK, ok ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
                     code = ok ? 0 : 1;
                     break;
                 }
@@ -146,9 +153,27 @@ public static class Setup
     static int Report(bool console, string text, int code)
     {
         if (console) { Console.WriteLine(text); Console.Out.Flush(); }
-        else MessageBox.Show(text, Title, MessageBoxButtons.OK, code == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Error);
+        else ShowOnTop(text, MessageBoxButtons.OK, code == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Error);
         return code;
     }
+
+    // A message shown without a window of our own: owned by a hidden top-most form that takes the focus, so it
+    // never opens behind other windows (where it would look as if the uninstall had stopped).
+    static DialogResult ShowOnTop(string text, MessageBoxButtons buttons, MessageBoxIcon icon)
+    {
+        using (Form owner = new Form { TopMost = true, ShowInTaskbar = false, FormBorderStyle = FormBorderStyle.None,
+                                       StartPosition = FormStartPosition.CenterScreen, Size = new Size(1, 1), Opacity = 0 })
+        {
+            owner.Show();
+            owner.Activate();
+            SetForegroundWindow(owner.Handle);
+            return MessageBox.Show(owner, text, Title, buttons, icon,
+                                   buttons == MessageBoxButtons.YesNo ? MessageBoxDefaultButton.Button2 : MessageBoxDefaultButton.Button1);
+        }
+    }
+
+    [DllImport("user32.dll")]
+    static extern bool SetForegroundWindow(IntPtr window);
 
     // The same DLL-loading rules as the viewer: system DLLs from System32, nothing from the current folder,
     // PATH, network shares or low-integrity files; legacy injection points (AppInit_DLLs, hooks) off.
@@ -310,6 +335,12 @@ public static class Setup
                 SignatureInfo ms = Signature(Path.Combine(stage, f));
                 if (!ms.Trusted || ms.Subject.IndexOf("O=Microsoft Corporation,", StringComparison.Ordinal) < 0) return Fail(stage, 4);
             }
+            // The project record of the last Install.cmd: kept from the installed copy when this Setup has none (a
+            // plain text file, never loaded; copied between two folders only administrators can change).
+            string keptRecord = Path.Combine(dest, RecordName);
+            if (!want.ContainsKey(RecordName) && File.Exists(keptRecord) && (File.GetAttributes(keptRecord) & FileAttributes.ReparsePoint) == 0 &&
+                new FileInfo(keptRecord).Length <= 8L << 20)
+                File.Copy(keptRecord, Path.Combine(stage, RecordName));
             // Renaming fails as a whole while a file in the old folder is in use: a running copy is never left
             // half replaced. Anything else that was in the old folder goes with it.
             if (Directory.Exists(dest)) Directory.Move(dest, old);
@@ -413,7 +444,9 @@ public static class Setup
             if (!File.Exists(p) || Sha256(p) != f.Value) differs.Add(f.Key);
         }
         foreach (string e in Directory.GetFileSystemEntries(dest))
-            if (!want.ContainsKey(Path.GetFileName(e))) differs.Add(Path.GetFileName(e));
+            if (!want.ContainsKey(Path.GetFileName(e)) && Path.GetFileName(e) != RecordName) differs.Add(Path.GetFileName(e));
+        if (!want.ContainsKey(RecordName) && File.Exists(Path.Combine(dest, RecordName)))
+            ui.Log("Kept the project record of the last Install.cmd (" + RecordName + ", for Check-Source.cmd).");
         if (differs.Count > 0) ui.Log("WARNING: in " + dest + " these do not match this Setup: " + string.Join(", ", differs));
         else ui.Log("Copied to " + dest + " and checked: exactly the files inside this Setup.");
 
@@ -441,8 +474,8 @@ public static class Setup
         if (File.Exists(InstalledUninstaller))
         {
             ui.Log("Uninstalling with " + InstalledUninstaller + " ...");
-            using (Process p = Process.Start(new ProcessStartInfo(InstalledUninstaller, "--uninstall") { UseShellExecute = false }))
-            { p.WaitForExit(); code = p.ExitCode; }
+            // Its output comes into this window; it shows no message box of its own.
+            code = RunAndLog(InstalledUninstaller, "--uninstall", ui);
         }
         else if (File.Exists(Path.Combine(ProgramFolder, "uninstall.ps1")))
             code = RunAndLog(PowerShellExe, "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File " + NativeArgument(Path.Combine(ProgramFolder, "uninstall.ps1")), ui);
@@ -450,7 +483,7 @@ public static class Setup
         // The folder is removed once the uninstaller has closed.
         for (int i = 0; i < 40 && Directory.Exists(ProgramFolder); i++) Thread.Sleep(250);
         bool gone = !Directory.Exists(ProgramFolder);
-        ui.Log(gone ? AppName + " was uninstalled." : "The program is still in " + ProgramFolder + " (exit " + code + ").");
+        ui.Log(gone ? "Checked: " + ProgramFolder + " is gone." : "The program is still in " + ProgramFolder + " (exit " + code + ").");
         return gone;
     }
 
@@ -803,7 +836,7 @@ public static class Setup
                         p.WaitForExit();
                         if (p.ExitCode != 0) { ui.Log("Could not remove " + machineDest + " (is the viewer still open?). Uninstall again."); failed = true; }
                     }
-                    else ui.Log("The program folder " + machineDest + (hasRules ? " and the firewall rules are" : " is") + " removed as soon as this window closes.");
+                    else ui.Log("The program folder " + machineDest + (hasRules ? " and the firewall rules are" : " is") + " removed as soon as " + UninstallerName + " has closed.");
                 }
             }
             catch (Win32Exception)

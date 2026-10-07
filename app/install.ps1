@@ -82,8 +82,8 @@ switch (Invoke-RecordedChecker -Quiet) {
     default { Write-Host 'The project folder could not be compared with the last install (see above); this install makes a new record.' -ForegroundColor Yellow }
 }
 
-# Record the SHA-256 of every project file before the build. It goes into a Setup made for this PC only and
-# from there into Program Files, next to the program, where only an administrator can change it.
+# Record the SHA-256 of every project file before the build. Setup carries it into Program Files, next to the
+# program, where only an administrator can change it.
 New-Item -ItemType Directory -Force $dist | Out-Null
 $recordFile = Join-Path $dist 'source-manifest.txt'
 & (Join-Path $here 'check-source.ps1') -Write $recordFile
@@ -104,18 +104,13 @@ if ($LASTEXITCODE -ne 0) {
 # Files and adds the firewall rules; then Setup registers the file types, Open with, Start menu and Settings >
 # Apps for you. A new signing certificate, or open viewer windows, are asked about in a Yes/No box.
 $version = (Get-Item (Join-Path $dist $exeName)).VersionInfo.ProductVersion
-$localSetup = Join-Path $here "release\MarkdownViewer-Setup-$version-this-PC.exe"
-Write-Host "Installing with $(Split-Path $localSetup -Leaf) (Windows asks for administrator rights for Windows PowerShell; 'Show more details' shows the command and Setup's SHA-256)..."
-try {
-    & $localSetup --install | ForEach-Object { Write-Host $_ }
-    $installed = $LASTEXITCODE
-} finally { try { [IO.File]::Delete($localSetup) } catch { } }
-if ($installed -ne 0) { Write-Host 'Not installed (see above). The installed copy was left as it was.' -ForegroundColor Yellow; exit 1 }
+$setupFile = Join-Path $here "release\MarkdownViewer-Setup-$version.exe"
+Write-Host "Installing with $(Split-Path $setupFile -Leaf) (Windows asks for administrator rights for Windows PowerShell; 'Show more details' shows the command and Setup's SHA-256)..."
+& $setupFile --install | ForEach-Object { Write-Host $_ }
+if ($LASTEXITCODE -ne 0) { Write-Host 'Not installed (see above). The installed copy was left as it was.' -ForegroundColor Yellow; exit 1 }
 Write-Host ""
 Write-Host "Installed $name $version to $dest"
-# The same build as one signed Setup file, for installing on other PCs (made by build.ps1).
-$setupFile = Get-ChildItem -LiteralPath (Join-Path $here 'release') -Filter "MarkdownViewer-Setup-$version.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-if ($setupFile) { Write-Host "For other PCs: $($setupFile.FullName) (one signed file; it installs Uninstall.exe next to the program)." }
+Write-Host "Setup for reinstalling (here or on other PCs): $setupFile - it includes the project record (file names and SHA-256)."
 # Update reminder, from the last Check-Updates.cmd result (the installer itself never goes online).
 $updateState = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) "$key\update-check.txt"
 $checked = $null; $updatesFound = @()

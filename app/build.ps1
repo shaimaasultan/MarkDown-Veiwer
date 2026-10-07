@@ -7,9 +7,8 @@
 #                  (e.g. one bought from a certificate authority). Without it, the build uses - or creates
 #                  once - a certificate on this PC whose publisher is "Markdown Viewer", whose key
 #                  is protected: Windows asks you to confirm each time it signs.
-#   -Record <file>   the project record Install.cmd made: also builds a Setup for this PC only that installs
-#                    it next to the program (release\MarkdownViewer-Setup-<version>-this-PC.exe; Install.cmd
-#                    runs and then deletes it). The Setup to hand out never contains it.
+#   -Record <file>   the project record Install.cmd made: Setup carries it and installs it next to the program
+#                    (for Check-Source.cmd). It lists the project's file names and SHA-256, no file contents.
 param([string]$CertificateThumbprint, [string]$Record)
 # Only Windows PowerShell's own modules (a look-alike Set-AuthenticodeSignature or Get-AuthenticodeSignature
 # in the user's Documents module folder could otherwise feed its own files to the signing key).
@@ -235,8 +234,8 @@ Write-Host "Built $dist\$exeName, $contentName and Uninstall.exe, signed by $($c
 
 # --- Setup for installing on any PC (Setup.cs): the signed program and the files installed with it as
 # resources, listed with their SHA-256 in payload.sha256, and the whole file signed with the same certificate.
-# Not included: check-source.ps1, the project record and trust.ps1 (they work only on the PC that builds and
-# signs the program).
+# With -Record (Install.cmd) the project record goes in too. Not included: check-source.ps1 and trust.ps1 (they
+# work only on the PC that builds and signs the program).
 $release = Join-Path $here 'release'
 New-Item -ItemType Directory -Force $release | Out-Null
 $version = (Get-Item (Join-Path $dist $exeName)).VersionInfo.ProductVersion
@@ -254,10 +253,10 @@ function Build-Setup([string]$out, [string[]]$files) {
     if (-not $s.SignerCertificate -or $s.SignerCertificate.Thumbprint -ne $cert.Thumbprint) { throw "Signing $(Split-Path $out -Leaf) failed ($($s.StatusMessage))." }
 }
 foreach ($oldSetup in @(Get-ChildItem -LiteralPath $release -Filter 'MarkdownViewer-Setup-*.exe')) { [IO.File]::Delete($oldSetup.FullName) }
-$setupExe = Join-Path $release "MarkdownViewer-Setup-$version.exe"
-Build-Setup $setupExe $payload
-Write-Host "Built $setupExe (installs the program on any PC), signed by the same certificate"
 if ($Record) {
     if (-not (Test-Path -LiteralPath $Record -PathType Leaf) -or (Split-Path $Record -Leaf) -ne 'source-manifest.txt') { throw "Record not found: $Record" }
-    Build-Setup (Join-Path $release "MarkdownViewer-Setup-$version-this-PC.exe") ($payload + (Resolve-Path -LiteralPath $Record).Path)
+    $payload += (Resolve-Path -LiteralPath $Record).Path
 }
+$setupExe = Join-Path $release "MarkdownViewer-Setup-$version.exe"
+Build-Setup $setupExe $payload
+Write-Host "Built $setupExe (installs the program on any PC$(if ($Record) { '; with the project record' })), signed by the same certificate"
