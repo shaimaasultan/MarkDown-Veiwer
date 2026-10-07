@@ -1,0 +1,8 @@
+# Settings
+server:
+  host: localhost
+  port: 8080
+features:
+  - tables
+  - json
+note: "<b>not bold</b>"

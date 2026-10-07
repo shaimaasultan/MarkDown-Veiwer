@@ -45,7 +45,7 @@ function ConvertTo-NativeArgument([string]$text) {
 }
 
 # The documents: plain .md files only (no links), each at most 4 MB.
-$docFiles = @(Get-ChildItem -LiteralPath $tests -File | Where-Object { $_.Extension -in '.md', '.csv', '.tsv', '.json', '.jsonl', '.ndjson' })
+$docFiles = @(Get-ChildItem -LiteralPath $tests -File | Where-Object { $_.Name -ne 'selftest.js' })
 if ($Folder) {
     if (-not (Test-Path -LiteralPath $Folder -PathType Container)) { Write-Host "Folder not found: $Folder"; exit 2 }
     $docFiles += @(Get-ChildItem -LiteralPath $Folder -File | Where-Object { $_.Extension -in '.md', '.csv', '.tsv', '.json', '.jsonl', '.ndjson' })

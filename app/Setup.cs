@@ -30,6 +30,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -60,8 +61,19 @@ public static class Setup
     const string FirewallGroup = AppName;
     static readonly string[] MicrosoftFiles = { "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll", "WebView2Loader.dll" };
     static readonly string[] MdExts = { ".md", ".markdown", ".mdown", ".mkd" };
-    // Offered under "Open with" only - the viewer is never made their default app (pictures, video, audio, tables).
-    static readonly string[] MediaExts = { ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp", ".svg", ".mp4", ".webm", ".mp3", ".wav", ".ogg", ".csv", ".tsv", ".json", ".jsonl", ".ndjson" };
+    // Pictures, video and audio: in each type's "Open with" list (never their default app).
+    static readonly string[] MediaExts = { ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp", ".svg", ".mp4", ".webm", ".mp3", ".wav", ".ogg" };
+    // Data and text the viewer shows that other programs open (Excel, editors, browsers): offered only under
+    // Open with > Choose another app (the application's SupportedTypes), never added to the type itself - adding
+    // a program to a type's own list makes Windows ask "How do you want to open this file?" on the next
+    // double-click. Files that Windows or other programs run (.cmd, .bat, .ps1, .js, .py, .html…) are not
+    // registered at all: the viewer still shows them from its file list, links or a drop.
+    static readonly string[] OfferedExts = { ".csv", ".tsv", ".json", ".jsonl", ".ndjson", ".xlsx", ".xml", ".ipynb", ".txt", ".log",
+                                             ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf" };
+    // Every type an earlier version added to its own "Open with" list (1.12 - 1.14): taken back out.
+    static readonly string[] EarlierExts = { ".csv", ".tsv", ".json", ".jsonl", ".ndjson", ".xlsx", ".xml", ".ipynb", ".txt", ".log", ".yaml", ".yml",
+                                             ".toml", ".ini", ".cfg", ".conf", ".ps1", ".psm1", ".py", ".js", ".ts", ".cs", ".java", ".sql", ".sh",
+                                             ".bat", ".cmd", ".c", ".cpp", ".h", ".go", ".rs", ".rb", ".php", ".css", ".html", ".htm", ".diff", ".patch" };
     // This app's certificate names: the current one and the one earlier versions used.
     static readonly string[] CertSubjects = { "CN=Markdown Viewer, O=Markdown Viewer", "CN=Markdown Viewer (WebView2) Code Signing" };
     // Setup: no option (a window) or --install (no window: used by Install.cmd). Uninstall.exe: no option (a
@@ -586,8 +598,8 @@ public static class Setup
                     ek.SetValue("PerceivedType", "text");
                 }
             }
-            // "Open with" for pictures, video, audio, CSV / TSV tables and JSON: shown in the viewer's own page.
-            SetValue(classes, MediaProgId, "", "Picture, video, audio, table or JSON");
+            // "Open with" for pictures, video and audio: shown in the viewer's own page.
+            SetValue(classes, MediaProgId, "", "Picture, video or audio");
             SetValue(classes, MediaProgId + @"\DefaultIcon", "", icon);
             SetValue(classes, MediaProgId + @"\shell\open\command", "", command);
             SetValue(classes, MediaProgId + @"\shell\open", "FriendlyAppName", AppName);
@@ -596,6 +608,15 @@ public static class Setup
                 using (RegistryKey ow = classes.CreateSubKey(ext + @"\OpenWithProgids")) ow.SetValue(MediaProgId, new byte[0], RegistryValueKind.Binary);
                 SetValue(classes, app + @"\SupportedTypes", ext, "");
             }
+            foreach (string ext in OfferedExts) SetValue(classes, app + @"\SupportedTypes", ext, "");
+            // Out of every other type's own "Open with" list again (earlier versions put the viewer there), and out of
+            // the offered list for types no longer offered.
+            foreach (string ext in EarlierExts)
+                if (Array.IndexOf(MediaExts, ext) < 0) RemoveOpenWith(classes, ext, MediaProgId);
+            using (RegistryKey st = classes.OpenSubKey(app + @"\SupportedTypes", true))
+                if (st != null)
+                    foreach (string ext in st.GetValueNames())
+                        if (Array.IndexOf(MdExts, ext) < 0 && Array.IndexOf(MediaExts, ext) < 0 && Array.IndexOf(OfferedExts, ext) < 0) st.DeleteValue(ext, false);
         }
 
         // Start menu shortcuts: the viewer (no file: choose a folder / drag & drop) and the About window.
@@ -654,6 +675,22 @@ public static class Setup
         }
         else log("If Windows asks which app to use the next time you open a .md file, pick " + AppName + " and click Always.");
         return stale.Count > 0 ? 1 : 0;
+    }
+
+    // Takes the ProgId out of a type's "Open with" list; an OpenWithProgids key or a type key left with nothing
+    // in it at all (no values, no subkeys) is removed too - one that holds anything else is kept as it is.
+    static void RemoveOpenWith(RegistryKey classes, string ext, string progId)
+    {
+        using (RegistryKey ow = classes.OpenSubKey(ext + @"\OpenWithProgids", true))
+        {
+            if (ow == null) return;
+            ow.DeleteValue(progId, false);
+            if (ow.ValueCount > 0 || ow.SubKeyCount > 0) return;
+        }
+        classes.DeleteSubKey(ext + @"\OpenWithProgids", false);
+        using (RegistryKey ek = classes.OpenSubKey(ext))
+            if (ek == null || ek.ValueCount > 0 || ek.SubKeyCount > 0) return;
+        classes.DeleteSubKey(ext, false);
     }
 
     // Creates the key if it is missing (an existing key keeps its other values - e.g. other apps' entries under .md).
@@ -780,8 +817,7 @@ public static class Setup
                 UserRoot.DeleteSubKeyTree(@"Software\" + Key, false);
             }
             if (classes.OpenSubKey(MediaProgId) == null)
-                foreach (string ext in MediaExts)
-                    using (RegistryKey ow = classes.OpenSubKey(ext + @"\OpenWithProgids", true)) if (ow != null) ow.DeleteValue(MediaProgId, false);
+                foreach (string ext in MediaExts.Concat(EarlierExts)) RemoveOpenWith(classes, ext, MediaProgId);
         }
 
         // Start menu shortcuts and the Settings > Apps entry - only those of the installed copy.

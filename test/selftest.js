@@ -199,14 +199,128 @@
     return problems;
   }
 
+  // Code, text, config, XML, Excel and notebooks.
+  async function checkOther(name, bytes) {
+    const problems = [];
+    const ext = name.split('.').pop().toLowerCase();
+    const click = el => el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    const wait = async sel => { for (let i = 0; i < 100 && !output.querySelector(sel); i++) await sleep(50); return output.querySelector(sel); };
+    if (['xml'].includes(ext)) {
+      if (!(await wait('.json-view'))) return ['no XML view'];
+      const dlg = document.getElementById('codeAlert');
+      if (!dlg.open || !document.getElementById('caTitle').textContent.includes('shown as text') || document.getElementById('caFile').textContent !== name)
+        problems.push('no "contains code" warning: ' + dlg.open + ' / ' + document.getElementById('caTitle').textContent);
+      if (!/Contains code \(.*active content/i.test(document.getElementById('stats').textContent)) problems.push('status line: ' + document.getElementById('stats').textContent.slice(0, 160));
+      dlg.close();
+      const modeBtn = label => [...output.querySelectorAll('.json-modes button')].find(b => b.textContent.includes(label));
+      click(modeBtn('Text'));
+      const text = output.querySelector('pre.xml-text').textContent;
+      if (!text.includes("<script>window.PWN='xml-element'</script>")) problems.push('xml text');
+      click(modeBtn('Tree'));
+      await sleep(150);
+      const root = output.querySelector('.json-tree > details > summary');
+      if (!root || !root.textContent.startsWith('<catalog updated="2026-10-07">') || !root.textContent.includes('4 children')) problems.push('xml tree root: ' + (root && root.textContent));
+      click(modeBtn('Table'));
+      await sleep(150);
+      const sel = output.querySelector('select.json-array');
+      if (!sel || sel.value !== '/catalog/book') problems.push('xml rows from: ' + (sel && sel.value));
+      const heads = [...output.querySelectorAll('.csv-table thead tr:first-child th')].map(t => t.textContent).join('|');
+      if (heads !== '@id|title|price|author/name|author/country') problems.push('xml columns: ' + heads);
+      const rows = [...output.querySelector('.csv-table').tBodies[0].rows].map(r => [...r.cells].map(c => c.textContent));
+      if (rows.length !== 3 || rows[2][1] !== "<script>window.PWN='xml'</script>") problems.push('xml rows: ' + rows.length + ' / ' + (rows[2] && rows[2][1]));
+      click(modeBtn('Text'));
+      return problems;
+    }
+    if (ext === 'xlsx') {
+      if (!(await wait('.csv-table'))) return ['no workbook table: ' + output.textContent.slice(0, 120)];
+      const sel = output.querySelector('select.json-array');
+      const sheets = sel ? [...sel.options].map(o => o.value).join('|') : '';
+      if (sheets !== 'Sales|Notes') problems.push('sheets: ' + sheets);
+      const heads = [...output.querySelectorAll('.csv-table thead tr:first-child th')].map(t => t.textContent).join('|');
+      if (heads !== 'Item|Amount|Date|Paid|Note') problems.push('xlsx columns: ' + heads);
+      const rows = [...output.querySelector('.csv-table').tBodies[0].rows].map(r => [...r.cells].map(c => c.textContent));
+      const want = [['Pens', '12.5', '2026-10-07', 'TRUE', "<script>window.PWN='xlsx'</script>"], ['Paper', '3', '2026-10-08', 'FALSE', 'inline text'], ['Total', '15.5', '', '', 'Rich text']];
+      if (JSON.stringify(rows) !== JSON.stringify(want)) problems.push('xlsx rows: ' + JSON.stringify(rows));
+      sel.value = 'Notes'; sel.dispatchEvent(new Event('change'));
+      await sleep(200);
+      const r2 = [...output.querySelector('.csv-table').tBodies[0].rows].map(r => r.cells[0].textContent);
+      if (r2.join('|') !== 'second sheet') problems.push('sheet 2: ' + r2.join('|'));
+      return problems;
+    }
+    if (ext === 'ipynb') {
+      if (!(await wait('.nb-view'))) return ['no notebook view'];
+      const v = output.querySelector('.nb-view');
+      if (!v.querySelector('.nb-md h1') || v.querySelector('.nb-md h1').textContent !== 'Notebook test') problems.push('markdown cell');
+      if (!v.querySelector('.nb-md .katex')) problems.push('math in markdown cell');
+      if (!v.querySelector('.nb-code code') || !v.querySelector('.nb-code code').textContent.includes('import pandas')) problems.push('code cell');
+      if (!v.querySelector('pre.nb-stream') || !v.querySelector('pre.nb-stream').textContent.includes('hello')) problems.push('stream output');
+      const img = v.querySelector('.nb-outputs img');
+      if (!img || !img.getAttribute('src').startsWith('data:image/png;base64,')) problems.push('picture output');
+      if (!v.querySelector('.nb-html table')) problems.push('html table output');
+      const err = v.querySelector('pre.nb-error');
+      if (!err || err.textContent !== 'ValueError: bad value\nValueError: bad value') problems.push('error output: ' + (err && JSON.stringify(err.textContent)));
+      const box = output.querySelector('.nb-view .csv-option input');
+      box.checked = false; box.dispatchEvent(new Event('change'));
+      if (getComputedStyle(v.querySelector('.nb-outputs')).display !== 'none') problems.push('outputs not hidden');
+      box.checked = true; box.dispatchEvent(new Event('change'));
+      return problems;
+    }
+    // Code, text and config: line numbers match the file, the text is all there.
+    if (!(await wait('.code-file'))) return ['no code view'];
+    const text = new TextDecoder().decode(bytes).replace(/^﻿/, '');
+    const lines = text.split(/\r\n|\n|\r/).length - (/(\r\n|\n|\r)$/.test(text) ? 1 : 0);
+    const gutter = output.querySelector('pre.code-gutter').textContent.trim().split('\n');
+    if (gutter.length !== lines) problems.push(`line numbers ${gutter.length}, lines ${lines}`);
+    const shown = output.querySelector('pre.code-text code').textContent.replace(/[\r]/g, '');
+    if (!shown.includes(text.split(/\r?\n/)[0])) problems.push('first line missing');
+    if (name === 'script.ps1') {
+      if (!output.querySelector('pre.code-text .hc')) problems.push('hidden text-direction character not marked');
+      if (!shown.includes('Remove-Item')) problems.push('ps1 text');
+    }
+    if (ext === 'log' && !shown.includes("<script>window.PWN='log'</script>")) problems.push('log text');
+    if (ext === 'yaml' && !output.querySelector('pre.code-text code span')) problems.push('yaml not coloured');
+    return problems;
+  }
+
+  // The file list: one entry per document with its type icon; the type filter hides and shows kinds.
+  async function checkFileList() {
+    const problems = [];
+    const entries = window.TESTDOCS.map(([n, b64]) => ({ path: n, file: new File([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], n) }));
+    loadEntries(entries);
+    await sleep(500);
+    const items = () => [...document.querySelectorAll('#fileList li')];
+    if (items().length !== entries.length) problems.push(`list ${items().length} of ${entries.length}`);
+    const btn = document.querySelector('#typeFilter .csv-cols-btn');
+    if (!btn || !/Types: (\d+) of \1/.test(btn.textContent)) problems.push('types button: ' + (btn && btn.textContent));
+    const md = [...document.querySelectorAll('#typeFilter .csv-cols-list label')].find(l => l.textContent.includes('Markdown'));
+    const mdCount = window.TESTDOCS.filter(([n]) => /\.md$/i.test(n)).length;
+    if (!md || !md.textContent.includes(`(${mdCount})`)) problems.push('markdown count: ' + (md && md.textContent));
+    md.querySelector('input').checked = false; md.querySelector('input').dispatchEvent(new Event('change'));
+    if (items().length !== entries.length - mdCount || items().some(li => /\.md$/i.test(li.dataset.path))) problems.push('hiding Markdown: ' + items().length);
+    // Opening a Markdown file while Markdown is hidden shows Markdown again.
+    const mdName = window.TESTDOCS.find(([n]) => /\.md$/i.test(n))[0];
+    await openDoc(mdName);
+    await sleep(200);
+    if (items().length !== entries.length || hiddenTypes().has('md')) problems.push('opening a hidden kind did not show it: ' + items().length);
+    md.querySelector('input').checked = false; md.querySelector('input').dispatchEvent(new Event('change'));
+    const all = [...document.querySelectorAll('#typeFilter .csv-cols-tools button')].find(b => b.textContent === 'Show all');
+    all.click();
+    if (items().length !== entries.length) problems.push('show all: ' + items().length);
+    if (!items().every(li => li.querySelector('.type-icon') && li.querySelector('.type-icon').textContent)) problems.push('type icons');
+    return problems;
+  }
+
   async function run() {
     const results = [];
     for (const [name, b64] of window.TESTDOCS) {
       const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
       lastBreakdown = null;
       loadEntries([{ path: name, file: new File([bytes], name) }]);
-      if (/\.(csv|tsv|json|jsonl|ndjson)$/i.test(name)) {
-        const tableProblems = /\.(csv|tsv)$/i.test(name) ? await checkTable(name) : await checkJson(name);
+      // Wait until the viewer has switched to this document (views of different files share class names).
+      for (let i = 0; i < 200 && currentPath !== name; i++) await sleep(25);
+      await sleep(60);
+      if (!/\.md$/i.test(name)) {
+        const tableProblems = /\.(csv|tsv)$/i.test(name) ? await checkTable(name) : /\.(json|jsonl|ndjson)$/i.test(name) ? await checkJson(name) : await checkOther(name, bytes);
         results.push({
           name,
           rendered: output.textContent.trim().length > 0,
@@ -236,6 +350,9 @@
         ...inspect()
       });
     }
+    const listProblems = await checkFileList();
+    results.push({ name: '(file list and types)', rendered: true, breakdown: listProblems.length ? 'bad' : 'ok', tableProblems: listProblems,
+                   viewed: null, diagrams: 0, drawn: 0, equations: 0, pwn: window.PWN === undefined ? null : String(window.PWN), ...inspect() });
     const libs = LIBRARIES.map(l => ({ name: l.name, version: l.version, loaded: !!l.loaded() }));
     await fetch(`/${token}/result`, { method: 'POST', body: JSON.stringify({ results, pageErrors, libs }) });
   }

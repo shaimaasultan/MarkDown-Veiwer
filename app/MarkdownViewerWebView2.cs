@@ -14,6 +14,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.IO.Pipes;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -39,15 +40,15 @@ using Microsoft.Win32.SafeHandles;
 // The program's own calls into Windows DLLs (user32, kernel32, advapi32, wintrust) load them from System32
 // only, never from the program's folder or anywhere else on the search path.
 [assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
-[assembly: AssemblyVersion("1.13.0.0")]
-[assembly: AssemblyFileVersion("1.13.0.0")]
-[assembly: AssemblyInformationalVersion("1.13.0")]
+[assembly: AssemblyVersion("1.14.0.0")]
+[assembly: AssemblyFileVersion("1.14.0.0")]
+[assembly: AssemblyInformationalVersion("1.14.0")]
 
 static class Program
 {
     const string AppName = "Markdown Viewer (WebView2)";
     const string DataFolder = "MarkdownViewerWebView2";     // %APPDATA% (settings) and %LOCALAPPDATA% (browser data)
-    const string AppVersion = "1.13.0";
+    const string AppVersion = "1.14.0";
     // Exists only inside this program's windows. Not a .local name: Windows would first spend ~2 s
     // looking for a device called "mdviewer" on the local network before the page could load.
     const string PrivateHost = "https://mdviewer.example";
@@ -57,20 +58,32 @@ static class Program
     static readonly string[] AppFiles = { "viewer.html", "viewer.js", "marked.min.js", "favicon_readme.png" };
     static readonly string[] MicrosoftFiles = { "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll", "WebView2Loader.dll" };
 
-    // Preview only: the only files handed out from disk are documents and media that cannot run code.
-    // HTML, scripts, PDFs, programs etc. are refused (403) even if a document links to them.
-    static readonly HashSet<string> ServedTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    // Documents the viewer shows (listed in the file list): Markdown, tables, JSON, Excel, XML, notebooks, source
+    // code, config and text. Every one of them is handed to the page as plain text (or, for .xlsx, as bytes the
+    // page unpacks) - never as HTML or script, so nothing in them can run; code is only shown.
+    static readonly HashSet<string> DocTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        ".md", ".markdown", ".mdown", ".mkd", ".txt", ".csv", ".tsv", ".json", ".jsonl", ".ndjson",
+        ".md", ".markdown", ".mdown", ".mkd", ".csv", ".tsv", ".json", ".jsonl", ".ndjson", ".xlsx",
+        ".xml", ".xsd", ".xsl", ".xslt", ".config", ".csproj", ".vbproj", ".fsproj", ".props", ".targets", ".resx", ".nuspec", ".ipynb",
+        ".ps1", ".psm1", ".psd1", ".py", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".cs", ".java", ".kt", ".sql", ".sh", ".bash",
+        ".bat", ".cmd", ".c", ".h", ".cpp", ".hpp", ".cc", ".go", ".rs", ".rb", ".php", ".swift", ".vb", ".r", ".lua", ".pl",
+        ".html", ".htm", ".css", ".scss", ".less", ".vue", ".diff", ".patch",
+        ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".properties", ".env", ".editorconfig", ".gitignore", ".gitattributes", ".npmrc",
+        ".txt", ".text", ".log", ".out", ".rst"
+    };
+    static readonly HashSet<string> MediaTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
         ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp", ".ico", ".svg",
         ".mp4", ".webm", ".mp3", ".wav", ".ogg"
     };
+    // Preview only: the only files handed out from disk are these. PDFs, programs, archives, Office files other
+    // than .xlsx etc. are refused (403) even if a document links to them.
+    static readonly HashSet<string> ServedTypes = new HashSet<string>(DocTypes.Concat(MediaTypes), StringComparer.OrdinalIgnoreCase);
     static readonly HashSet<string> SkipDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         { "node_modules", ".git", ".venv", "venv", "__pycache__", "bin", "obj" };
 
     // Largest file handed out from disk (it is read into memory whole): text and SVG, and media.
-    static readonly HashSet<string> TextTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        { ".md", ".markdown", ".mdown", ".mkd", ".txt", ".csv", ".tsv", ".json", ".jsonl", ".ndjson", ".svg" };
+    static readonly HashSet<string> TextTypes = new HashSet<string>(DocTypes.Where(e => e != ".xlsx").Concat(new[] { ".svg" }), StringComparer.OrdinalIgnoreCase);
     const long MaxTextBytes = 50L << 20, MaxMediaBytes = 200L << 20;
 
     // Bundled libraries: only these file types, and only from inside the lib folder.
@@ -1439,7 +1452,8 @@ static class Program
         // request only asks for it, so the file itself is not read.
         string etag = "\"" + info.LastWriteTimeUtc.Ticks.ToString("x") + "-" + info.Length.ToString("x") + "\"";
         if (!text) { SendMedia(s, full, info, csp, etag, headOnly, range); return; }
-        Send(s, 200, Mime(full), headOnly ? new byte[0] : File.ReadAllBytes(full), csp, headOnly, etag);
+        string type = Path.GetExtension(full).Equals(".svg", StringComparison.OrdinalIgnoreCase) ? Mime(full) : "text/plain; charset=utf-8";
+        Send(s, 200, type, headOnly ? new byte[0] : File.ReadAllBytes(full), csp, headOnly, etag);
     }
 
     // Pictures, video and audio. A player asks for pieces ("Range: bytes=start-end"), so a long video is
@@ -1526,14 +1540,14 @@ static class Program
 
     static void CollectMarkdown(string dir, int depth, List<string> files)
     {
-        if (files.Count >= 500) return;
+        if (files.Count >= 2000) return;
         try
         {
             foreach (string f in Directory.GetFiles(dir))
             {
                 string ext = Path.GetExtension(f).ToLowerInvariant();
-                if (ext == ".md" || ext == ".markdown" || ext == ".mdown" || ext == ".mkd" || ext == ".csv" || ext == ".tsv" || ext == ".json" || ext == ".jsonl" || ext == ".ndjson") files.Add(f);
-                if (files.Count >= 500) return;
+                if (DocTypes.Contains(ext)) files.Add(f);
+                if (files.Count >= 2000) return;
             }
             if (depth >= 4) return;
             foreach (string d in Directory.GetDirectories(dir))
@@ -1584,7 +1598,8 @@ static class Program
         { "hiddenchars", new[] { "off", "on" } },
         { "pictures", new[] { "shown", "blocked" } },
         { "size", new[] { "normal", "small", "large", "larger", "largest" } },
-        { "width", new[] { "normal", "wide", "full" } }
+        { "width", new[] { "normal", "wide", "full" } },
+        { "types", new[] { "all" }.Concat(Enumerable.Range(1, 511).Select(i => "t" + i)).ToArray() }
     };
     static readonly object prefLock = new object();
 

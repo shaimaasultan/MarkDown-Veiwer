@@ -363,19 +363,43 @@ const isReadme = p => /(^|\/)readme\.[^/]+$/i.test(p) ? 1 : 0;
 
 function buildList() {
   const q = filter.value.trim().toLowerCase();
+  const hidden = hiddenTypes();
+  buildTypeFilter();
   fileList.innerHTML = '';
   for (const p of mdPaths) {
     const shown = listBase && key(p).startsWith(key(listBase)) ? p.slice(listBase.length) : p;
     if (q && !shown.toLowerCase().includes(q)) continue;
+    const t = typeOf(p);
+    if (t && hidden.has(t.id)) continue;
     const li = document.createElement('li');
     const d = dirOf(shown), name = shown.slice(d.length);
-    li.innerHTML = `<span class="dir">${esc(d)}</span>${esc(name)}`;
+    li.innerHTML = `<span class="type-icon" title="${esc(t ? t.label : '')}">${esc(t ? t.icon : '')}</span><span class="dir">${esc(d)}</span>${esc(name)}`;
     li.title = p;
     li.dataset.path = p;
     if (currentPath && key(p) === key(currentPath)) li.className = 'active';
     li.onclick = () => openDoc(p);
     fileList.appendChild(li);
   }
+}
+
+// An Excel workbook: its bytes, unchanged (it is unpacked and read by renderXlsxDocument).
+async function readBinaryDoc(path) {
+  let buf;
+  if (source === 'app') {
+    let res;
+    try { res = await fetch(fsURL(path)); }
+    catch { throw new Error('The Markdown Viewer helper has closed. Open the file again from Explorer.'); }
+    if (!res.ok) throw new Error(res.status === 403 ? `Can't open files outside the document's folder: ${path}`
+                                 : res.status === 413 ? `File is too large to show: ${path}` : `File not found: ${path}`);
+    buf = await res.arrayBuffer();
+    return { path, stamp: res.headers.get('ETag'), text: '', bytes: new Uint8Array(buf),
+             info: { bytes: buf.byteLength, bom: 'none', name: 'Excel workbook (read as values)', validUtf8: true, note: '' } };
+  }
+  const entry = fileMap.get(key(path));
+  if (!entry) throw new Error(`File not found: ${path}`);
+  buf = await entry.file.arrayBuffer();
+  return { path: entry.path, text: '', bytes: new Uint8Array(buf),
+           info: { bytes: buf.byteLength, bom: 'none', name: 'Excel workbook (read as values)', validUtf8: true, note: '' } };
 }
 
 async function readDoc(path) {
@@ -451,7 +475,7 @@ async function openDoc(path, anchor, { fromHistory = false, scroll = null } = {}
       !confirm('This document has unsaved replacements. Open another document and discard them?')) return false;
   const from = currentPath ? { path: currentPath, scroll: content.scrollTop } : null;
   let entry;
-  try { entry = MEDIA_FILE.test(path) && !MD_RE.test(path) ? mediaEntry(path) : await readDoc(path); }
+  try { entry = MEDIA_FILE.test(path) && !MD_RE.test(path) ? mediaEntry(path) : /\.xlsx$/i.test(path) ? await readBinaryDoc(path) : await readDoc(path); }
   catch (e) { alert(e.message); return false; }
   if (!fromHistory && from && key(from.path) !== key(entry.path)) { navBack.push(from); navFwd.length = 0; }
   currentPath = entry.path;
@@ -459,8 +483,12 @@ async function openDoc(path, anchor, { fromHistory = false, scroll = null } = {}
   if (source === 'app') history.replaceState(null, '', '?file=' + encodeURIComponent(entry.path));
   currentSource = entry.text;
   currentInfo = entry.info;
+  currentBinary = entry.bytes || null;
   resetEdits();
   renderDoc({ anchor });
+  // Its kind is hidden in the file list (☰ Types): show that kind again, so the open file is in the list.
+  const openType = typeOf(currentPath);
+  if (openType) { const h = hiddenTypes(); if (h.has(openType.id)) { h.delete(openType.id); setHiddenTypes(h); buildList(); } }
   if (scroll !== null) content.scrollTop = scroll;
   updateNavButtons();
   alertBlockedCode();
@@ -515,10 +543,11 @@ setInterval(async () => {
       }
       return;
     }
-    const entry = await readDoc(currentPath);
+    const entry = /\.xlsx$/i.test(currentPath) ? await readBinaryDoc(currentPath) : await readDoc(currentPath);
     fileStamp = entry.stamp || stamp;
     currentSource = entry.text;
     currentInfo = entry.info;
+    currentBinary = entry.bytes || null;
     resetEdits();
     renderDoc({ keepScroll: true });
     showToast('Updated — the file was changed on disk.');
@@ -529,11 +558,13 @@ setInterval(async () => {
 // Renders currentSource (the file as read, or as edited by Find & Replace).
 function renderDoc({ anchor = null, keepScroll = false } = {}) {
   const scroll = content.scrollTop;
-  if (TABLE_RE.test(currentPath) || JSON_RE.test(currentPath)) {
-    // A table or JSON file: never parsed as Markdown, so there is no code to report and no source view to map.
+  if (isSpecialDoc(currentPath)) {
+    // Not Markdown (a table, JSON, XML, Excel, a notebook, code or text): no source view to map; only a
+    // notebook's Markdown and HTML outputs are checked for code.
     dropHint.hidden = true;
     lastSafety = null;
-    if (JSON_RE.test(currentPath)) renderJsonDocument(); else renderTableDocument();
+    renderSpecialDocument();
+    if (specialStats) specialStats();
     buildToc();
     buildImageList();
     buildLinkList();
@@ -812,7 +843,7 @@ function addTableTools(root) {
 // so nothing in the file can become markup, a link, a picture or code. Rows are sorted and filtered in
 // memory and drawn a page at a time, so large files stay quick.
 const TABLE_RE = /\.(csv|tsv)$/i;
-const DOC_RE = /\.(md|markdown|mdown|mkd|csv|tsv|json|jsonl|ndjson)$/i;
+const DOC_RE = { test: p => !!typeOf(p) };       // every kind of file in FILE_TYPES
 const CSV_PAGE = 500;
 const csvCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 const DELIM_NAMES = { ',': 'comma', ';': 'semicolon', '\t': 'tab', '|': 'vertical bar' };
@@ -1000,7 +1031,7 @@ function buildCsvView() {
   save.type = 'button';
   save.title = 'Save the shown columns of the rows the filters keep, in this order, as a CSV file';
   bar.append(search, colsWrap);
-  if (s.kind !== 'json') bar.append(headerLabel);      // a JSON table's column names come from its keys
+  if (!s.kind || s.kind === 'xlsx') bar.append(headerLabel);      // JSON and XML tables name their columns themselves
   bar.append(clear);
   const sub = make('div', 'csv-bar csv-subbar');
   sub.append(info, copy, save);
@@ -1208,15 +1239,16 @@ function csvDraw(s, redraw) {
 function updateCsvStats() {
   const s = csvState;
   const stats = document.getElementById('stats');
-  if (!s || !(TABLE_RE.test(currentPath || '') || JSON_RE.test(currentPath || ''))) return;
+  if (!s || !isSpecialDoc(currentPath || '')) return;
   const group = (title, text) => { const g = document.createElement('span'); g.className = 'group'; g.title = title; g.textContent = text; return g; };
   stats.replaceChildren(
-    s.kind === 'json'
-      ? group('The array shown as a table', `JSON table from ${s.label}: ${plural(s.data.length, 'row')} · ${plural(s.width, 'column')}`)
+    s.kind
+      ? group('What is shown as a table', `${{ json: 'JSON', xml: 'XML', xlsx: 'Excel' }[s.kind]} table from ${s.label}: ${plural(s.data.length, 'row')} · ${plural(s.width, 'column')}`)
       : group('The table in this file', `Table: ${plural(s.data.length, 'row')} · ${plural(s.width, 'column')} · separator: ${DELIM_NAMES[s.delim] || s.delim}` +
               (s.header ? ' · first row is the header' : '')),
     group('What the filters and the column choice keep', `Shown: ${plural(s.view.length, 'row')} · ${fmt(s.cols.length)} of ${plural(s.width, 'column')}`),
-    group('How this file is shown', 'Shown as plain text: nothing in a table can run, link or load anything'));
+    group('How this file is shown', s.kind === 'xlsx' ? 'Values only: formulas and macros are never run; nothing in a cell can run, link or load anything'
+                                                    : 'Shown as plain text: nothing in a table can run, link or load anything'));
 }
 
 function debounce(fn, ms) {
@@ -1593,6 +1625,669 @@ function updateJsonStats() {
     group('How this file is shown', 'Shown as plain text: nothing in a JSON file can run, link or load anything'));
 }
 
+// ---------------------------------------------------------------- file types
+// Every kind of file the viewer shows, in the order of the file list's type filter. Nothing here is ever
+// run: code is coloured text, XML and notebooks are read as data, Excel files are unpacked and read as values.
+const FILE_TYPES = [
+  { id: 'md',     icon: '📄', label: 'Markdown',        exts: ['md', 'markdown', 'mdown', 'mkd'] },
+  { id: 'table',  icon: '▦',  label: 'CSV / TSV tables', exts: ['csv', 'tsv'] },
+  { id: 'json',   icon: '{}', label: 'JSON',            exts: ['json', 'jsonl', 'ndjson'] },
+  { id: 'xlsx',   icon: '📊', label: 'Excel',           exts: ['xlsx'] },
+  { id: 'xml',    icon: '‹›', label: 'XML',             exts: ['xml', 'xsd', 'xsl', 'xslt', 'config', 'csproj', 'vbproj', 'fsproj', 'props', 'targets', 'resx', 'nuspec'] },
+  { id: 'ipynb',  icon: '📓', label: 'Notebooks',       exts: ['ipynb'] },
+  { id: 'code',   icon: '</>', label: 'Source code',    exts: ['ps1', 'psm1', 'psd1', 'py', 'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'cs', 'java', 'kt', 'sql', 'sh', 'bash',
+                                                                  'bat', 'cmd', 'c', 'h', 'cpp', 'hpp', 'cc', 'go', 'rs', 'rb', 'php', 'swift', 'vb', 'r', 'lua', 'pl',
+                                                                  'html', 'htm', 'css', 'scss', 'less', 'vue', 'diff', 'patch'] },
+  { id: 'config', icon: '⚙',  label: 'Config',          exts: ['yaml', 'yml', 'toml', 'ini', 'cfg', 'conf', 'properties', 'env', 'editorconfig', 'gitignore', 'gitattributes', 'npmrc'] },
+  { id: 'text',   icon: '🗎',  label: 'Text and logs',   exts: ['txt', 'text', 'log', 'out', 'rst'] }
+];
+const TYPE_BY_EXT = new Map(FILE_TYPES.flatMap(t => t.exts.map(e => [e, t])));
+const extOf = p => { const m = /\.([^./\\]+)$/.exec(p || ''); return m ? m[1].toLowerCase() : ''; };
+const typeOf = p => TYPE_BY_EXT.get(extOf(p)) || null;
+const isSpecialDoc = p => { const t = typeOf(p); return !!t && t.id !== 'md'; };
+// highlight.js language for each extension (only those in the bundled build; others show as plain text).
+const CODE_LANG = { py: 'python', js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript',
+                    cs: 'csharp', java: 'java', kt: 'kotlin', sql: 'sql', sh: 'bash', bash: 'bash', c: 'c', h: 'c', cpp: 'cpp', hpp: 'cpp', cc: 'cpp',
+                    go: 'go', rs: 'rust', rb: 'ruby', php: 'php', swift: 'swift', vb: 'vbnet', r: 'r', lua: 'lua', pl: 'perl', html: 'xml', htm: 'xml',
+                    css: 'css', scss: 'scss', less: 'less', vue: 'xml', diff: 'diff', patch: 'diff', yaml: 'yaml', yml: 'yaml', toml: 'ini', ini: 'ini',
+                    cfg: 'ini', conf: 'ini', properties: 'ini', env: 'bash', editorconfig: 'ini', npmrc: 'ini', xml: 'xml', xsd: 'xml', xsl: 'xml',
+                    xslt: 'xml', config: 'xml', csproj: 'xml', vbproj: 'xml', fsproj: 'xml', props: 'xml', targets: 'xml', resx: 'xml', nuspec: 'xml',
+                    ps1: 'powershell', psm1: 'powershell', psd1: 'powershell', bat: 'dos', cmd: 'dos' };
+const LANG_NAMES = { python: 'Python', javascript: 'JavaScript', typescript: 'TypeScript', csharp: 'C#', java: 'Java', kotlin: 'Kotlin', sql: 'SQL',
+                     bash: 'Shell', c: 'C', cpp: 'C++', go: 'Go', rust: 'Rust', ruby: 'Ruby', php: 'PHP', swift: 'Swift', vbnet: 'VB.NET', r: 'R',
+                     lua: 'Lua', perl: 'Perl', xml: 'XML / HTML', css: 'CSS', scss: 'SCSS', less: 'Less', diff: 'Diff', yaml: 'YAML', ini: 'INI / TOML',
+                     powershell: 'PowerShell', dos: 'Batch' };
+let specialStats = null;        // the status line of the open non-Markdown file
+let currentBinary = null;       // bytes of an open Excel file
+
+function renderSpecialDocument() {
+  const t = typeOf(currentPath);
+  specialStats = null;
+  if (t.id === 'table') { renderTableDocument(); specialStats = updateCsvStats; }
+  else if (t.id === 'json') { renderJsonDocument(); specialStats = updateJsonStats; }
+  else if (t.id === 'xml') { renderXmlDocument(); specialStats = updateXmlStats; }
+  else if (t.id === 'xlsx') renderXlsxDocument();
+  else if (t.id === 'ipynb') renderNotebookDocument();
+  else renderCodeDocument(t);
+  if (isRunnableMarkup(currentPath)) lastSafety = { source: currentSource, ...checkSafety(currentSource) };
+}
+
+// XML and HTML: shown as text here, but a browser or another program opening them could run code in them.
+const isRunnableMarkup = p => typeOf(p) && (typeOf(p).id === 'xml' || /^html?$/.test(extOf(p)));
+
+// "⚠ Contains code (…)" for the status line of such a file, or null.
+function markupCodeNote() {
+  if (!isRunnableMarkup(currentPath) || !lastSafety || lastSafety.source !== currentSource) return null;
+  const found = (lastSafety.findings || []).filter(f => CODE_FINDINGS.has(f.id));
+  return found.length ? ['Code in this file: shown as text here, but it could run in a browser or another program',
+                         `⚠ Contains code (${found.map(f => `${f.title.toLowerCase()}: ${fmt(f.count)}`).join(', ')}) — shown as text only`] : null;
+}
+
+// ---- text, logs, source code and config: line numbers, colours, Wrap
+const CODE_RICH = 2e6;           // up to this many characters: colours; above: plain text
+let codeWrap = false;
+
+function renderCodeDocument(t) {
+  const make = csvMake;
+  const text = currentSource.replace(/^﻿/, '');
+  const ext = extOf(currentPath);
+  let lang = t.id === 'text' ? null : CODE_LANG[ext] || null;
+  if (lang && !(window.hljs && hljs.getLanguage(lang))) lang = null;
+  const lines = text === '' ? 0 : text.split(/\r\n|\n|\r/).length - (/(\r\n|\n|\r)$/.test(text) ? 1 : 0);
+  const view = make('div', 'code-file');
+  const bar = make('div', 'csv-bar');
+  const wrapLabel = make('label', 'csv-option');
+  const wrapBox = make('input');
+  wrapBox.type = 'checkbox';
+  wrapBox.checked = codeWrap;
+  wrapLabel.append(wrapBox, document.createTextNode(' Wrap long lines'));
+  bar.append(wrapLabel);
+  if (ext === 'html' || ext === 'htm') bar.append(make('span', 'csv-info', 'The source of a web page — shown as text, never opened as a page'));
+  const body = make('div', 'code-body' + (codeWrap ? ' wrap' : ''));
+  const gutter = make('pre', 'code-gutter');
+  gutter.setAttribute('aria-hidden', 'true');
+  let numbers = '';
+  for (let i = 1; i <= Math.max(lines, 1); i++) numbers += i + '\n';
+  gutter.textContent = numbers;
+  const pre = make('pre', 'code-text');
+  const code = make('code', 'hljs');
+  code.textContent = text;
+  if (lang && text.length <= CODE_RICH) {
+    // highlight.js turns the text into escaped HTML with only <span class="hljs-…"> around words.
+    try { code.innerHTML = hljs.highlight(text, { language: lang, ignoreIllegals: true }).value; } catch { code.textContent = text; }
+  }
+  pre.append(code);
+  body.append(gutter, pre);
+  view.append(bar, body);
+  output.replaceChildren(view);
+  if (text.length <= CODE_RICH) markHiddenChars(code);       // hidden and text-direction characters stay visible (Trojan Source)
+  wrapBox.addEventListener('change', () => { codeWrap = wrapBox.checked; body.classList.toggle('wrap', codeWrap); });
+  specialStats = () => {
+    const what = t.id === 'text' ? 'Text' : t.id === 'config' ? 'Config' : 'Code';
+    statsLine([
+      ['What this file holds', `${what}${lang ? ` (${LANG_NAMES[lang] || lang})` : ''}: ${plural(lines, 'line')} · ${fmt(text.length)} characters` +
+                               (text.length > CODE_RICH && lang ? ' · large file: shown without colours' : '')],
+      markupCodeNote() || ['How this file is shown', t.id === 'code' ? 'Shown as text only: nothing in it is run' : 'Shown as plain text: nothing in it can run, link or load anything']]);
+  };
+}
+
+function statsLine(groups) {
+  const stats = document.getElementById('stats');
+  stats.replaceChildren(...groups.map(([title, text]) => { const g = document.createElement('span'); g.className = 'group'; g.title = title; g.textContent = text; return g; }));
+}
+
+// ---- XML: text, tree, table (read with the browser's XML parser: nothing in it is loaded or run)
+let xmlState = null;
+let xmlLastMode = 'text';
+
+function renderXmlDocument() {
+  const text = currentSource.replace(/^﻿/, '');
+  const keep = xmlState && xmlState.path === currentPath ? xmlState : null;
+  const doc = new DOMParser().parseFromString(text, 'application/xml');
+  const err = doc.getElementsByTagName('parsererror')[0];
+  let error = null, line = null, col = null;
+  if (err) {
+    error = (err.textContent || 'Not well-formed').replace(/\s+/g, ' ').trim();
+    const m = /line (\d+) at column (\d+)/i.exec(error);
+    if (m) { line = +m[1]; col = +m[2]; }
+  }
+  xmlState = { path: currentPath, text, doc: error ? null : doc, error, line, col,
+               mode: error ? 'text' : keep ? keep.mode : xmlLastMode, groupPath: keep ? keep.groupPath : null };
+  buildXmlView();
+}
+
+function buildXmlView() {
+  const x = xmlState;
+  const make = csvMake;
+  const view = make('div', 'json-view');
+  const bar = make('div', 'csv-bar json-bar');
+  const modes = make('div', 'json-modes');
+  for (const [mode, label] of [['text', '‹› Text'], ['tree', '🌳 Tree'], ['table', '▦ Table']]) {
+    const b = make('button', 'csv-btn' + (x.mode === mode ? ' on' : ''), label);
+    b.type = 'button';
+    b.disabled = !!x.error && mode !== 'text';
+    b.setAttribute('aria-pressed', String(x.mode === mode));
+    b.addEventListener('click', () => { x.mode = xmlLastMode = mode; buildXmlView(); });
+    modes.append(b);
+  }
+  bar.append(modes);
+  const body = make('div', 'json-body');
+  view.append(bar, body);
+  output.replaceChildren(view);
+  if (x.mode === 'tree') xmlRenderTree(body, bar);
+  else if (x.mode === 'table') xmlRenderTable(body, bar);
+  else {
+    if (x.error) {
+      const box = make('div', 'json-error');
+      box.append(make('strong', '', 'Not well-formed XML'), document.createTextNode(x.line ? ` — line ${fmt(x.line)}, column ${fmt(x.col)}: ` : ': '), make('span', '', x.error));
+      body.append(box);
+    }
+    const pre = make('pre', 'code-text xml-text');
+    const code = make('code', 'hljs');
+    code.textContent = x.text;
+    if (x.text.length <= CODE_RICH && window.hljs) { try { code.innerHTML = hljs.highlight(x.text, { language: 'xml', ignoreIllegals: true }).value; } catch {} }
+    pre.append(code);
+    body.append(pre);
+  }
+  updateXmlStats();
+}
+
+const xmlName = el => el.nodeName;
+const xmlChildren = el => [...el.childNodes].filter(n => n.nodeType === 1 || ((n.nodeType === 3 || n.nodeType === 4) && n.nodeValue.trim()) || n.nodeType === 8);
+
+function xmlTreeNode(node, path) {
+  const make = csvMake;
+  if (node.nodeType !== 1) {
+    const leaf = make('div', 'json-leaf');
+    if (node.nodeType === 8) leaf.append(make('span', 'hljs-comment', `<!-- ${node.nodeValue.trim()} -->`));
+    else leaf.append(make('span', 'hljs-string', node.nodeValue.trim()));
+    return leaf;
+  }
+  const attrs = [...node.attributes].map(a => `${a.name}="${a.value}"`).join(' ');
+  const open = `<${xmlName(node)}${attrs ? ' ' + attrs : ''}>`;
+  const kids = xmlChildren(node);
+  // An element holding only text (or nothing): one line.
+  if (!kids.some(k => k.nodeType === 1 || k.nodeType === 8) ) {
+    const leaf = make('div', 'json-leaf');
+    leaf.append(make('span', 'hljs-tag', open), make('span', 'hljs-string', node.textContent.trim()), make('span', 'hljs-tag', `</${xmlName(node)}>`));
+    leaf.title = path;
+    return leaf;
+  }
+  const details = make('details', 'json-node');
+  const summary = make('summary');
+  summary.append(make('span', 'hljs-tag', open), make('span', 'json-count', ` ${fmt(kids.length)} ${kids.length === 1 ? 'child' : 'children'}`));
+  summary.title = path;
+  details.append(summary);
+  const box = make('div', 'json-kids');
+  details.append(box);
+  let drawn = 0;
+  const more = make('button', 'csv-btn json-more');
+  more.type = 'button';
+  const drawNext = () => {
+    const end = Math.min(kids.length, drawn + JSON_TREE_PAGE);
+    const frag = document.createDocumentFragment();
+    for (let i = drawn; i < end; i++) frag.append(xmlTreeNode(kids[i], kids[i].nodeType === 1 ? `${path}/${xmlName(kids[i])}` : path));
+    box.append(frag);
+    drawn = end;
+    more.hidden = drawn >= kids.length;
+    more.textContent = `Show ${fmt(Math.min(JSON_TREE_PAGE, kids.length - drawn))} more of ${fmt(kids.length)}`;
+    if (!more.hidden) box.append(more);
+  };
+  more.addEventListener('click', () => { more.remove(); drawNext(); });
+  details.addEventListener('toggle', () => { if (details.open && !drawn) drawNext(); });
+  return details;
+}
+
+function xmlRenderTree(body, bar) {
+  const make = csvMake;
+  const expand = make('button', 'csv-btn', 'Expand all');
+  expand.type = 'button';
+  const collapse = make('button', 'csv-btn', 'Collapse all');
+  collapse.type = 'button';
+  bar.append(expand, collapse);
+  const tree = make('div', 'json-tree hljs');
+  const root = xmlTreeNode(xmlState.doc.documentElement, '/' + xmlName(xmlState.doc.documentElement));
+  if (root.tagName === 'DETAILS') root.open = true;
+  tree.append(root);
+  body.append(tree);
+  expand.addEventListener('click', () => {
+    let opened = 0;
+    for (;;) {
+      const closed = [...tree.querySelectorAll('details.json-node:not([open])')];
+      if (!closed.length || opened >= 3000) break;
+      for (const d of closed) { if (opened >= 3000) break; d.open = true; opened++; }
+    }
+  });
+  collapse.addEventListener('click', () => tree.querySelectorAll('details.json-node[open]').forEach(d => { if (d !== root) d.open = false; }));
+}
+
+// Elements that repeat under one parent (e.g. /catalog/book) become rows: attributes as @name, child
+// elements' text as columns (one level deeper as child/grandchild), the element's own text as #text.
+function xmlGroups(doc) {
+  const found = [];
+  const walk = (el, path, depth) => {
+    if (found.length >= 60 || depth > 8) return;
+    const byName = new Map();
+    for (const c of el.children) { const n = xmlName(c); if (!byName.has(n)) byName.set(n, []); byName.get(n).push(c); }
+    for (const [n, list] of byName) if (list.length >= 2) found.push({ path: `${path}/${n}`, elements: list });
+    for (const [n, list] of byName) walk(list[0], `${path}/${n}`, depth + 1);
+  };
+  const root = doc.documentElement;
+  walk(root, '/' + xmlName(root), 0);
+  if (!found.length && root.children.length) found.push({ path: `/${xmlName(root)}/*`, elements: [...root.children] });
+  return found;
+}
+
+function xmlTable(group) {
+  const head = [], index = new Map(), data = [];
+  const col = name => { if (!index.has(name)) { if (head.length >= 1000) return -1; index.set(name, head.length); head.push(name); } return index.get(name); };
+  const put = (row, name, value) => { const c = col(name); if (c >= 0) row[c] = row[c] ? `${row[c]} | ${value}` : value; };
+  for (const el of group.elements) {
+    const row = [];
+    for (const a of el.attributes) put(row, '@' + a.name, a.value);
+    let own = '';
+    for (const n of el.childNodes) if (n.nodeType === 3 || n.nodeType === 4) own += n.nodeValue;
+    if (own.trim()) put(row, '#text', own.trim());
+    for (const c of el.children) {
+      if (!c.children.length) put(row, xmlName(c), c.textContent.trim());
+      else for (const g of c.children) put(row, `${xmlName(c)}/${xmlName(g)}`, g.textContent.trim());
+      for (const a of c.attributes) put(row, `${xmlName(c)}/@${a.name}`, a.value);
+    }
+    data.push(row);
+  }
+  for (const row of data) for (let c = 0; c < head.length; c++) if (row[c] === undefined) row[c] = '';
+  return { head, data };
+}
+
+function xmlRenderTable(body, bar) {
+  const x = xmlState;
+  const make = csvMake;
+  if (!x.groups) x.groups = xmlGroups(x.doc);
+  if (!x.groups.length) { body.append(make('p', 'json-note', 'There are no repeated elements in this file to show as a table.')); return; }
+  const pick = x.groups.find(g => g.path === x.groupPath) || x.groups[0];
+  x.groupPath = pick.path;
+  const label = make('label', 'csv-option', 'Rows from ');
+  const select = make('select', 'json-array');
+  for (const g of x.groups) {
+    const o = make('option', '', `${g.path} (${fmt(g.elements.length)})`);
+    o.value = g.path;
+    o.selected = g === pick;
+    select.append(o);
+  }
+  label.append(select);
+  bar.append(label);
+  select.addEventListener('change', () => { x.groupPath = select.value; buildXmlView(); });
+  const { head, data } = xmlTable(pick);
+  const host = make('div', 'json-table');
+  body.append(host);
+  const id = `${x.path}#${pick.path}`;
+  const keep = csvState && csvState.path === id ? csvState : null;
+  csvState = { kind: 'xml', label: pick.path, path: id, host, delim: null, rows: [head, ...data], width: head.length, header: true,
+               sortCol: keep ? keep.sortCol : -1, sortDir: keep ? keep.sortDir : '', filter: keep ? keep.filter : '',
+               colFilters: keep ? keep.colFilters : [], hidden: keep ? keep.hidden : new Set(), shown: CSV_PAGE };
+  buildCsvView();
+}
+
+function updateXmlStats() {
+  const x = xmlState;
+  if (!x || x.path !== currentPath) return;
+  if (x.mode === 'table' && csvState && csvState.kind === 'xml' && csvState.path.startsWith(x.path + '#')) { updateCsvStats(); return; }
+  let count = 0;
+  if (x.doc) count = x.doc.getElementsByTagName('*').length;
+  statsLine([
+    ['What this file holds', x.error ? `XML: not well-formed · ${fmt(x.text.length)} characters`
+                                     : `XML: <${xmlName(x.doc.documentElement)}> with ${plural(count, 'element')} · ${fmt(x.text.length)} characters`],
+    markupCodeNote() || ['How this file is shown', 'Shown as plain text: nothing in an XML file is loaded or run']].filter(Boolean));
+}
+
+// ---- Excel (.xlsx): unpacked with the browser's own decompression, read as values (formulas and macros never run)
+const ZIP_LIMITS = { entry: 150 * 1048576, total: 400 * 1048576, entries: 20000 };
+
+async function unzipEntries(bytes, wanted) {
+  const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let eocd = -1;
+  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65557); i--) if (v.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  if (eocd < 0) throw new Error('not an Excel (.xlsx) file');
+  const count = v.getUint16(eocd + 10, true), cdOffset = v.getUint32(eocd + 16, true);
+  if (count === 0xFFFF || cdOffset === 0xFFFFFFFF) throw new Error('very large workbooks (ZIP64) are not supported');
+  if (count > ZIP_LIMITS.entries) throw new Error('too many parts in the file');
+  const out = new Map();
+  let p = cdOffset, total = 0;
+  for (let k = 0; k < count; k++) {
+    if (p + 46 > bytes.length || v.getUint32(p, true) !== 0x02014b50) throw new Error('damaged file');
+    const method = v.getUint16(p + 10, true), csize = v.getUint32(p + 20, true), usize = v.getUint32(p + 24, true);
+    const nlen = v.getUint16(p + 28, true), elen = v.getUint16(p + 30, true), clen = v.getUint16(p + 32, true), local = v.getUint32(p + 42, true);
+    const name = new TextDecoder().decode(bytes.subarray(p + 46, p + 46 + nlen));
+    p += 46 + nlen + elen + clen;
+    if (!wanted(name)) continue;
+    if (local + 30 > bytes.length || v.getUint32(local, true) !== 0x04034b50) throw new Error('damaged file');
+    const start = local + 30 + v.getUint16(local + 26, true) + v.getUint16(local + 28, true);
+    if (start + csize > bytes.length) throw new Error('damaged file');
+    const raw = bytes.subarray(start, start + csize);
+    let data;
+    if (method === 0) data = raw;
+    else if (method === 8) data = await inflateRaw(raw, Math.min(ZIP_LIMITS.entry, ZIP_LIMITS.total - total));
+    else throw new Error(`unsupported compression in ${name}`);
+    if (usize && data.length !== usize) throw new Error('damaged file');
+    total += data.length;
+    out.set(name, data);
+  }
+  return out;
+}
+
+// Inflates with a hard size limit (a "zip bomb" stops at the limit instead of filling memory).
+async function inflateRaw(raw, limit) {
+  const reader = new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader();
+  const parts = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.length;
+    if (size > limit) { try { await reader.cancel(); } catch {} throw new Error('a part of the file is too large to show'); }
+    parts.push(value);
+  }
+  const all = new Uint8Array(size);
+  let o = 0;
+  for (const part of parts) { all.set(part, o); o += part.length; }
+  return all;
+}
+
+const xmlOf = bytes => new DOMParser().parseFromString(new TextDecoder().decode(bytes), 'application/xml');
+const byTag = (node, tag) => node.getElementsByTagNameNS('*', tag);
+const colIndex = ref => { let n = 0; for (const ch of ref.replace(/\d+$/, '').toUpperCase()) n = n * 26 + ch.charCodeAt(0) - 64; return n - 1; };
+const BUILTIN_DATE_FORMATS = new Set([14, 15, 16, 17, 18, 19, 20, 21, 22, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 45, 46, 47, 50, 51, 52, 53, 54, 55, 56, 57, 58]);
+let xlsxState = null;
+
+async function renderXlsxDocument() {
+  const make = csvMake;
+  const path = currentPath, bytes = currentBinary;
+  output.replaceChildren(make('p', 'json-note', 'Reading the workbook…'));
+  let book;
+  try { book = xlsxState && xlsxState.path === path && xlsxState.bytes === bytes ? xlsxState : await xlsxRead(bytes); }
+  catch (e) {
+    const box = make('div', 'json-error');
+    box.append(make('strong', '', 'Cannot show this workbook'), document.createTextNode(`: ${e.message}.`));
+    output.replaceChildren(box);
+    specialStats = () => statsLine([['What this file holds', 'Excel workbook that could not be read']]);
+    specialStats();
+    return;
+  }
+  if (currentPath !== path) return;                     // another file was opened meanwhile
+  const keepSheet = xlsxState && xlsxState.path === path ? xlsxState.sheet : null;
+  xlsxState = { ...book, path, bytes, sheet: book.sheets.some(s => s.name === keepSheet) ? keepSheet : book.sheets[0] && book.sheets[0].name };
+  buildXlsxView();
+}
+
+async function xlsxRead(bytes) {
+  if (!bytes) throw new Error('the file could not be read');
+  const parts = await unzipEntries(bytes, n => /^xl\/(workbook\.xml|sharedStrings\.xml|styles\.xml|_rels\/workbook\.xml\.rels|worksheets\/[^/]+\.xml)$/i.test(n));
+  const wb = parts.get('xl/workbook.xml');
+  if (!wb) throw new Error('no workbook inside (is it an Excel .xlsx file?)');
+  const rels = new Map();
+  const relsXml = parts.get('xl/_rels/workbook.xml.rels');
+  if (relsXml) for (const r of byTag(xmlOf(relsXml), 'Relationship')) rels.set(r.getAttribute('Id'), r.getAttribute('Target'));
+  const shared = [];
+  const ss = parts.get('xl/sharedStrings.xml');
+  if (ss) for (const si of byTag(xmlOf(ss), 'si')) shared.push([...byTag(si, 't')].map(t => t.textContent).join(''));
+  // Which cell styles are dates.
+  const dateStyle = [];
+  const st = parts.get('xl/styles.xml');
+  if (st) {
+    const sdoc = xmlOf(st), custom = new Map();
+    for (const f of byTag(sdoc, 'numFmt')) custom.set(+f.getAttribute('numFmtId'), f.getAttribute('formatCode') || '');
+    const xfs = byTag(sdoc, 'cellXfs')[0];
+    if (xfs) for (const xf of xfs.children) {
+      const id = +(xf.getAttribute('numFmtId') || 0);
+      const code = (custom.get(id) || '').replace(/"[^"]*"|\\.|\[[^\]]*\]/g, '');
+      dateStyle.push(BUILTIN_DATE_FORMATS.has(id) || (custom.has(id) && /[dmyhs]/i.test(code) && !/general/i.test(code)));
+    }
+  }
+  const sheets = [];
+  for (const s of byTag(xmlOf(wb), 'sheet')) {
+    const rid = s.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id') || s.getAttribute('r:id');
+    let target = rels.get(rid) || '';
+    target = target.startsWith('/') ? target.slice(1) : 'xl/' + target.replace(/^\.\//, '');
+    sheets.push({ name: s.getAttribute('name') || `Sheet ${sheets.length + 1}`, part: target });
+  }
+  return { sheets, parts, shared, dateStyle };
+}
+
+function xlsxSheetRows(book, sheet) {
+  const bytes = book.parts.get(sheet.part);
+  if (!bytes) return [];
+  const doc = xmlOf(bytes);
+  const rows = [];
+  for (const row of byTag(doc, 'row')) {
+    const out = [];
+    for (const c of row.children) {
+      if (c.localName !== 'c') continue;
+      const ref = c.getAttribute('r'), t = c.getAttribute('t') || 'n', s = +(c.getAttribute('s') || 0);
+      const vEl = byTag(c, 'v')[0];
+      const v = vEl ? vEl.textContent : '';
+      let text;
+      if (t === 's') text = book.shared[+v] ?? '';
+      else if (t === 'inlineStr') text = [...byTag(c, 't')].map(x => x.textContent).join('');
+      else if (t === 'b') text = v === '1' ? 'TRUE' : v === '0' ? 'FALSE' : v;
+      else if (t === 'str' || t === 'e') text = v;
+      else if (v !== '' && book.dateStyle[s] && isFinite(+v)) text = xlsxDate(+v);
+      else text = v;
+      out[ref ? colIndex(ref) : out.length] = text;
+    }
+    for (let i = 0; i < out.length; i++) if (out[i] === undefined) out[i] = '';
+    rows.push(out);
+  }
+  while (rows.length && rows[rows.length - 1].every(c => c === '')) rows.pop();
+  return rows;
+}
+
+// Excel stores dates as days since 1899-12-30.
+function xlsxDate(serial) {
+  const ms = Math.round((serial - 25569) * 86400000);
+  const d = new Date(ms);
+  if (isNaN(d)) return String(serial);
+  const iso = d.toISOString();
+  return serial % 1 ? iso.slice(0, 19).replace('T', ' ') : iso.slice(0, 10);
+}
+
+function buildXlsxView() {
+  const b = xlsxState;
+  const make = csvMake;
+  const view = make('div', 'json-view');
+  const bar = make('div', 'csv-bar json-bar');
+  const label = make('label', 'csv-option', 'Sheet ');
+  const select = make('select', 'json-array');
+  for (const s of b.sheets) { const o = make('option', '', s.name); o.value = s.name; o.selected = s.name === b.sheet; select.append(o); }
+  label.append(select);
+  bar.append(label, make('span', 'csv-info', 'Values as last saved by Excel — formulas and macros are never run'));
+  select.addEventListener('change', () => { b.sheet = select.value; buildXlsxView(); });
+  const host = make('div', 'json-table');
+  view.append(bar, host);
+  output.replaceChildren(view);
+  const sheet = b.sheets.find(s => s.name === b.sheet);
+  const rows = sheet ? xlsxSheetRows(b, sheet) : [];
+  if (!rows.length) { host.append(make('p', 'json-note', 'This sheet is empty.')); specialStats = () => statsLine([['What this file holds', `Excel workbook: ${plural(b.sheets.length, 'sheet')} · sheet “${b.sheet}” is empty`]]); specialStats(); return; }
+  let width = 0;
+  for (const r of rows) if (r.length > width) width = r.length;
+  const id = `${b.path}#${b.sheet}`;
+  const keep = csvState && csvState.path === id ? csvState : null;
+  csvState = { kind: 'xlsx', label: `sheet “${b.sheet}”`, path: id, host, delim: null, rows, width, header: keep ? keep.header : true,
+               sortCol: keep ? keep.sortCol : -1, sortDir: keep ? keep.sortDir : '', filter: keep ? keep.filter : '',
+               colFilters: keep ? keep.colFilters : [], hidden: keep ? keep.hidden : new Set(), shown: CSV_PAGE };
+  specialStats = updateCsvStats;
+  buildCsvView();
+}
+
+// ---- Jupyter notebooks: Markdown cells as documents (sanitised), code cells coloured, outputs as text,
+// pictures and sanitised HTML. Code is shown, never run.
+let nbShowOutputs = true;
+
+function renderNotebookDocument() {
+  const make = csvMake;
+  const text = currentSource.replace(/^﻿/, '');
+  let nb;
+  try { nb = JSON.parse(text); } catch (e) { nb = null; }
+  if (!nb || !Array.isArray(nb.cells)) {
+    const box = make('div', 'json-error');
+    box.append(make('strong', '', 'Not a Jupyter notebook'), document.createTextNode(': the file is not notebook JSON.'));
+    output.replaceChildren(box);
+    specialStats = () => statsLine([['What this file holds', 'Not a readable notebook']]);
+    specialStats();
+    return;
+  }
+  const lang = (nb.metadata && ((nb.metadata.kernelspec && nb.metadata.kernelspec.language) || (nb.metadata.language_info && nb.metadata.language_info.name))) || 'python';
+  const join = s => Array.isArray(s) ? s.join('') : String(s ?? '');
+  const ansi = s => s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
+  const view = make('div', 'nb-view');
+  const bar = make('div', 'csv-bar');
+  const outLabel = make('label', 'csv-option');
+  const outBox = make('input');
+  outBox.type = 'checkbox';
+  outBox.checked = nbShowOutputs;
+  outLabel.append(outBox, document.createTextNode(' Show outputs'));
+  bar.append(outLabel, make('span', 'csv-info', 'Code is shown, never run'));
+  const cellsBox = make('div', 'nb-cells' + (nbShowOutputs ? '' : ' no-outputs'));
+  outBox.addEventListener('change', () => { nbShowOutputs = outBox.checked; cellsBox.classList.toggle('no-outputs', !nbShowOutputs); });
+  view.append(bar, cellsBox);
+  const checked = [];           // Markdown and HTML that went into the page, for the blocked-code check
+  let code = 0, markdown = 0;
+  for (const cell of nb.cells) {
+    const src = join(cell.source);
+    if (cell.cell_type === 'markdown') {
+      markdown++;
+      checked.push(src);
+      const box = make('div', 'nb-cell nb-md');
+      box.append(sanitize(md.parse(src)));
+      cellsBox.append(box);
+    } else if (cell.cell_type === 'code') {
+      code++;
+      const box = make('div', 'nb-cell nb-code');
+      box.append(make('div', 'nb-prompt', `In [${cell.execution_count ?? ' '}]:`));
+      const pre = make('pre');
+      const c = make('code', `language-${String(lang).replace(/[^\w-]/g, '')}`, src);
+      pre.append(c);
+      box.append(pre);
+      const outs = make('div', 'nb-outputs');
+      for (const o of cell.outputs || []) {
+        if (o.output_type === 'stream') outs.append(make('pre', 'nb-stream' + (o.name === 'stderr' ? ' nb-stderr' : ''), ansi(join(o.text))));
+        else if (o.output_type === 'error') outs.append(make('pre', 'nb-error', ansi([`${o.ename}: ${o.evalue}`, ...(o.traceback || [])].join('\n'))));
+        else if (o.data) {
+          const d = o.data;
+          const img = ['image/png', 'image/jpeg', 'image/gif'].find(t => typeof join(d[t]) === 'string' && join(d[t]).length);
+          if (img && /^[A-Za-z0-9+/=\s]+$/.test(join(d[img]))) {
+            const el = make('img');
+            el.src = `data:${img};base64,${join(d[img]).replace(/\s/g, '')}`;
+            el.alt = 'Output picture';
+            outs.append(el);
+          } else if (d['image/svg+xml']) {
+            const el = make('img');
+            el.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(join(d['image/svg+xml']))));
+            el.alt = 'Output picture';
+            outs.append(el);
+          } else if (d['text/html']) {
+            checked.push(join(d['text/html']));
+            const div = make('div', 'nb-html');
+            div.append(sanitize(join(d['text/html'])));
+            outs.append(div);
+          } else if (d['text/markdown']) {
+            checked.push(join(d['text/markdown']));
+            const div = make('div', 'nb-html');
+            div.append(sanitize(md.parse(join(d['text/markdown']))));
+            outs.append(div);
+          } else if (d['text/plain']) outs.append(make('pre', 'nb-stream', ansi(join(d['text/plain']))));
+        }
+      }
+      if (outs.childNodes.length) box.append(outs);
+      cellsBox.append(box);
+    } else {
+      const box = make('div', 'nb-cell nb-raw');
+      box.append(make('pre', '', src));
+      cellsBox.append(box);
+    }
+  }
+  output.replaceChildren(view);
+  fixResources(cellsBox, dirOf(currentPath));
+  markCallouts(cellsBox);
+  setDirections(cellsBox);
+  renderLeftoverMath(cellsBox);
+  highlightCode(cellsBox);
+  addCopyButtons(cellsBox);
+  addTableTools(cellsBox);
+  renderDiagrams(cellsBox);
+  // Scripts or other code in Markdown cells or HTML outputs: removed above; say so, as for documents.
+  lastSafety = { source: currentSource, ...checkSafety(checked.join('\n\n')) };
+  specialStats = () => statsLine([
+    ['What this file holds', `Notebook (${lang}): ${plural(nb.cells.length, 'cell')} · ${fmt(code)} code · ${fmt(markdown)} Markdown`],
+    ['How this file is shown', 'Code is shown, never run; Markdown and HTML outputs are cleaned like documents']]);
+}
+
+// ---- the file list's type filter (☰ Types), remembered
+const TYPE_PREF_VALUES = ['all', ...Array.from({ length: (1 << FILE_TYPES.length) - 1 }, (_, i) => 't' + (i + 1))];
+function hiddenTypes() {
+  const v = loadPref('types');
+  const mask = v === 'all' ? 0 : +v.slice(1);
+  return new Set(FILE_TYPES.filter((t, i) => mask & (1 << i)).map(t => t.id));
+}
+function setHiddenTypes(set) {
+  const mask = FILE_TYPES.reduce((m, t, i) => set.has(t.id) ? m | (1 << i) : m, 0);
+  const v = mask ? 't' + mask : 'all';
+  setRootPref('types', v);
+  savePref('types', v);
+}
+
+function buildTypeFilter() {
+  const make = csvMake;
+  let wrap = document.getElementById('typeFilter');
+  if (!wrap) {
+    wrap = make('div', 'csv-cols type-filter');
+    wrap.id = 'typeFilter';
+    filter.insertAdjacentElement('afterend', wrap);
+  }
+  const counts = new Map();
+  for (const p of mdPaths) { const t = typeOf(p); if (t) counts.set(t.id, (counts.get(t.id) || 0) + 1); }
+  const present = FILE_TYPES.filter(t => counts.get(t.id));
+  const hidden = hiddenTypes();
+  const wasOpen = wrap.querySelector('.csv-cols-panel') && !wrap.querySelector('.csv-cols-panel').hidden;
+  wrap.replaceChildren();
+  wrap.hidden = present.length < 2;
+  const btn = make('button', 'csv-btn csv-cols-btn', `☰ Types: ${present.filter(t => !hidden.has(t.id)).length} of ${present.length}`);
+  btn.type = 'button';
+  btn.title = 'Choose which kinds of files the list shows';
+  const panel = make('div', 'csv-cols-panel');
+  panel.hidden = !wasOpen;
+  const tools = make('div', 'csv-cols-tools');
+  const all = make('button', 'csv-btn', 'Show all');
+  all.type = 'button';
+  const none = make('button', 'csv-btn', 'Hide all');
+  none.type = 'button';
+  tools.append(all, none);
+  const list = make('div', 'csv-cols-list');
+  for (const t of present) {
+    const label = make('label', 'csv-col-choice');
+    const box = make('input');
+    box.type = 'checkbox';
+    box.checked = !hidden.has(t.id);
+    box.addEventListener('change', () => {
+      const h = hiddenTypes();
+      if (box.checked) h.delete(t.id); else h.add(t.id);
+      setHiddenTypes(h);
+      buildList();
+    });
+    label.append(box, make('span', 'type-icon', t.icon), make('span', '', `${t.label} (${fmt(counts.get(t.id))})`));
+    list.append(label);
+  }
+  all.addEventListener('click', () => { setHiddenTypes(new Set()); buildList(); });
+  none.addEventListener('click', () => { setHiddenTypes(new Set(present.map(t => t.id))); buildList(); });
+  panel.append(tools, list);
+  wrap.append(btn, panel);
+  btn.addEventListener('click', () => { panel.hidden = !panel.hidden; });
+}
+document.addEventListener('click', ev => {
+  const w = document.getElementById('typeFilter');
+  const p = w && w.querySelector('.csv-cols-panel');
+  if (p && !p.hidden && !w.contains(ev.target)) p.hidden = true;
+});
+
 function disableLink(a, reason) {
   a.removeAttribute('href');
   a.classList.add('link-disabled');
@@ -1645,8 +2340,7 @@ function readingTime(words) {
 function updateStats() {
   const stats = document.getElementById('stats');
   if (!currentPath) { stats.replaceChildren(); return; }
-  if (TABLE_RE.test(currentPath)) { updateCsvStats(); return; }
-  if (JSON_RE.test(currentPath)) { updateJsonStats(); return; }
+  if (isSpecialDoc(currentPath)) { if (specialStats) specialStats(); return; }
 
   // Original file: every line, as an editor numbers them (a final line break doesn't add a line).
   const src = currentSource.replace(/^\uFEFF/, '');
@@ -2573,11 +3267,11 @@ document.getElementById('sfClose').addEventListener('click', () => document.getE
 // got past the sanitizer: that is shown too, as a viewer bug to report.
 const CODE_FINDINGS = new Set(['active', 'handlers', 'codelink', 'scheme']);
 
-function showCodeAlert(text, items, policy) {
+function showCodeAlert(text, items, policy, title) {
   const dlg = document.getElementById('codeAlert');
-  document.getElementById('caTitle').textContent = policy
+  document.getElementById('caTitle').textContent = title || (policy
     ? '⚠ The security policy stopped code from running'
-    : '⚠ This file contains code — it was blocked';
+    : '⚠ This file contains code — it was blocked');
   document.getElementById('caFile').textContent = currentPath || '';
   document.getElementById('caText').textContent = text;
   document.getElementById('caList').replaceChildren(...items.map(t => {
@@ -2594,6 +3288,12 @@ function alertBlockedCode() {
   const found = (lastSafety?.findings || [])
     .filter(f => CODE_FINDINGS.has(f.id) || (f.id === 'diagramcmd' && f.level === 'risk'));
   if (!found.length) return;
+  if (isRunnableMarkup(currentPath)) {
+    showCodeAlert('Nothing in it ran here: the file is shown as text only. Opened in a browser or another program, ' +
+      'the code could run, so be careful where else you open this file.',
+      found.map(f => `${f.title} (${fmt(f.count)})`), false, '⚠ This file contains code — shown as text, nothing ran');
+    return;
+  }
   showCodeAlert('Nothing in it ran here: the code was removed before the file was shown. ' +
     'In a browser or another Markdown viewer it could run, so be careful where else you open this file.',
     found.map(f => `${f.title} (${fmt(f.count)})`), false);
@@ -2601,7 +3301,9 @@ function alertBlockedCode() {
 
 // The browser's own report when the security policy blocks something. Only code-related blocks count;
 // eval inside the bundled libraries is not something a document can cause.
-const CODE_DIRECTIVES = /^(script-src|script-src-elem|script-src-attr|object-src|frame-src|child-src|worker-src|form-action|base-uri)$/;
+// (base-uri is not code: a <base> only changes where links point, and the clean-up removes it. Chromium reports it
+// while the clean-up parses a document in a separate, never-shown document, so it is no sign of a gap.)
+const CODE_DIRECTIVES = /^(script-src|script-src-elem|script-src-attr|object-src|frame-src|child-src|worker-src|form-action)$/;
 const policyBlocks = [];
 document.addEventListener('securitypolicyviolation', e => {
   const directive = e.effectiveDirective || e.violatedDirective || '';
@@ -3596,7 +4298,8 @@ async function renderDiagrams(root, forceTheme) {
 // Remembered view settings. The app stores them itself (in its settings file) and puts them on
 // <html data-…> before the page is shown; the standalone page uses localStorage. The first value is the default.
 const PREFS = { theme: ['auto', 'light', 'dark'], sidebar: ['shown', 'hidden'], toc: ['shown', 'hidden'], hiddenchars: ['off', 'on'],
-                pictures: ['shown', 'blocked'], size: ['normal', 'small', 'large', 'larger', 'largest'], width: ['normal', 'wide', 'full'] };
+                pictures: ['shown', 'blocked'], size: ['normal', 'small', 'large', 'larger', 'largest'], width: ['normal', 'wide', 'full'],
+                types: TYPE_PREF_VALUES };
 
 function loadPref(name) {
   const values = PREFS[name];

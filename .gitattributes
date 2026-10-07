@@ -22,3 +22,9 @@ test/utf16.md -text
 test/*.csv -text
 test/*.json -text
 test/*.jsonl -text
+*.xlsx binary
+test/*.log -text
+test/*.ps1 -text
+test/*.yaml -text
+test/*.xml -text
+test/*.ipynb -text

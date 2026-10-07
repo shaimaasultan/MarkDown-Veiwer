@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- a sample catalogue -->
+<catalog updated="2026-10-07">
+  <book id="b1">
+    <title>Markdown basics</title>
+    <price>12.5</price>
+    <author><name>Ada</name><country>CA</country></author>
+  </book>
+  <book id="b2">
+    <title>Tables in depth</title>
+    <price>30</price>
+    <author><name>Lin</name><country>NZ</country></author>
+  </book>
+  <book id="b3">
+    <title><![CDATA[<script>window.PWN='xml'</script>]]></title>
+    <price>7.25</price>
+    <author><name>Sam</name><country>UK</country></author>
+  </book>
+  <script>window.PWN='xml-element'</script>
+</catalog>
