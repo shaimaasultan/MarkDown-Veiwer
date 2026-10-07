@@ -181,6 +181,20 @@ tamper tests described under each section.
 - [x] Tested with a throwaway certificate, deleted with its key afterwards together with the test-signed builds (1.10.0)
   - [x] Confirmed on a real run: after `Install.cmd`, `app\release\MarkdownViewer-Setup-1.10.0.exe` shows the window, Reinstall works with one administrator prompt (Windows PowerShell) and Open the viewer works (2026-10-06)
 
+## 14. Setup installs, Uninstall.exe uninstalls - no script files in Program Files
+
+- [x] **Setup installs, registers and adds the firewall rules; `Uninstall.exe` does the opposite** (uninstalls, unregisters, removes the rules). Both are built from `Setup.cs` and signed with the program's certificate; `Uninstall.exe` is installed next to the program (1.11.0)
+- [x] **No script file in Program Files:** `uninstall.ps1`, `register.ps1`, `firewall.ps1` and `place.ps1` are gone; `check-source.ps1` and `trust.ps1` are no longer installed. Program Files holds the program, Content DLL, WebView2 files, icon, `Uninstall.exe` and (from `Install.cmd`) the project record; the viewer's folder check allows exactly these (1.11.0)
+- [x] **One install path:** `Install.cmd` builds, then installs with a Setup made for this PC (`--install`, progress in the console, questions in Yes/No boxes); that Setup also carries the project record into Program Files and is deleted afterwards - the Setup you hand out never contains it (1.11.0)
+- [x] **Firewall rules with every install:** Setup's administrator step adds the two block rules for the program it has just installed (no path from outside); Setup then checks, as the user, that both are there; `Uninstall.exe`'s administrator step removes them. `Firewall-Block.cmd` / `Firewall-Unblock.cmd` are gone (1.11.0)
+- [x] **The copy step checks `Uninstall.exe` too:** program, Content DLL and `Uninstall.exe` must carry Setup's certificate (1.11.0)
+- [x] **Only the installed `Uninstall.exe` acts:** it refuses to run from anywhere but Program Files, checks its own signature, refuses "Run as administrator", and has the viewer's start-up protections (1.11.0) — tested: run from `app\dist` → refused
+- [x] **Registration and uninstall in C#, same rules as the scripts:** the same file types, Open with, shortcuts and Settings › Apps entry (uninstall entry starts `Uninstall.exe`), read back; uninstall removes only this app's entries, restores the previous `.md` default, removes settings, browser data and certificate trust (1.11.0) — tested in scratch folders and a scratch registry key: registering twice changes nothing, another app's entry kept, everything of this app removed
+- [x] **Folder removal waits for the uninstaller:** one readable elevated Windows PowerShell command removes the firewall rules and, once `Uninstall.exe` has closed (it lives in that folder), the Program Files folder; a failure shows a message (1.11.0) — tested in a scratch folder (a first test run aimed at the real folder was refused by Windows' permissions; nothing was removed; the test now refuses to run if it would point at the real folder or firewall)
+- [x] **Source check without an installed script:** `Check-Source.cmd` and `Install.cmd` run the project's `check-source.ps1` only if its SHA-256 matches the record in Program Files (read once, run from those bytes); a changed checker is reported and not run. `app\release\` is left out of the record like `app\dist\` (1.11.0) — tested: unchanged → 0, rebuilt Setup ignored → 0, changed document → 1, changed checker → 3 (not run)
+- [x] Tested with a throwaway certificate, deleted with its key afterwards together with the test-signed builds (1.11.0)
+  - [ ] Confirm on a real run: `Install.cmd` (one administrator prompt) → Program Files has no `.ps1` file, has `Uninstall.exe` and `source-manifest.txt`; the two firewall rules exist; `Check-Source.cmd` says no changes; Settings › Apps › Uninstall opens the Uninstall window and removes everything (folder and rules) after it closes; reinstall with Setup
+
 ---
 
 ## Known limits (by design)

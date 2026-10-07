@@ -4,11 +4,12 @@
 #   check-source.ps1 -Write <file>  make a record of the project folder (install.ps1 does this)
 #   check-source.ps1 -Record <file> compare with that record instead of the installed one
 #   -Quiet                          no output, only the exit code: 0 no changes, 1 changes, 2 no record
-# Install.cmd installs the record (source-manifest.txt) and a copy of this script in Program Files, where
-# only an administrator can change them, and Check-Source.cmd runs that installed copy - so a program
-# running as you can neither change the record nor make the checker say "No changes".
+# Install.cmd installs the record (source-manifest.txt) in Program Files, where only an administrator can
+# change it. Check-Source.cmd (and Install.cmd before building) run this script only if it is exactly the
+# copy the record lists - read once, checked against that SHA-256 and run from those bytes - so a program
+# running as you can neither change the record nor make a changed checker say "No changes".
 # The record lists the SHA-256 of every file in the project folder except .git\ and the build output
-# (app\dist\); links (junctions, symbolic links) are not followed.
+# (app\dist\, app\release\); links (junctions, symbolic links) are not followed.
 param([string]$Write, [string]$Record, [string]$Root, [switch]$Quiet)
 # Only Windows PowerShell's own modules (a look-alike Get-FileHash could otherwise report what it likes).
 $env:PSModulePath = "$PSHOME\Modules"
@@ -26,7 +27,7 @@ function Get-SourceFiles($root) {
     while ($dirs.Count) {
         foreach ($item in Get-ChildItem -LiteralPath $dirs.Pop() -Force) {
             $rel = $item.FullName.Substring($root.Length + 1)
-            if ($rel -eq '.git' -or $rel -eq 'app\dist') { continue }
+            if ($rel -eq '.git' -or $rel -eq 'app\dist' -or $rel -eq 'app\release') { continue }
             if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { $list.Add($rel + '  (link - not followed)'); continue }
             if ($item.PSIsContainer) { $dirs.Push($item.FullName) } else { $list.Add($rel) }
         }
@@ -94,7 +95,7 @@ $added   = @($now.Keys | Where-Object { -not $then.Contains($_) })
 Say "Project folder: $root"
 Say "Record:         $Record"
 $header | Select-Object -Skip 1 | ForEach-Object { Say "                $_" }
-Say "Checker:        $PSCommandPath"
+Say "Checker:        $(if ($PSCommandPath) { $PSCommandPath } else { 'app\check-source.ps1, exactly as recorded (SHA-256 checked)' })"
 Say "Commit now:     $(Get-Commit $root)"
 Say ''
 if (-not ($changed.Count + $removed.Count + $added.Count)) {

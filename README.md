@@ -66,9 +66,9 @@ Every point below, with where it is implemented and how it was tested, is listed
 - **Windows entries stay pointed at the installed copy.** At start, an installed copy corrects the entries that open `.md` files, pictures and media when they point to a deleted copy (a place any program running as you could fill with its own program); the Program Files copy also corrects them when they point to any other copy. Development builds and copies run from other folders never touch them, and the installer reads them back and warns if a change did not stick.
 - **Genuine engine.** After the WebView2 engine starts, the app checks that it is Microsoft's `msedgewebview2.exe`, signed and under Program Files (which only an administrator can change); otherwise no document is shown.
 - **No developer access.** Developer tools are off; the app refuses to show documents if WebView2 remote debugging has been switched on, or if it cannot check.
-- **Safe install.** The app is installed in Program Files, where only an administrator can change it. Only the copy itself runs with administrator rights, through a short readable command - what the administrator prompt's "Show more details" shows: `place.ps1`'s path and SHA-256 and every file's SHA-256. The elevated side runs exactly the `place.ps1` bytes it checked, so a swapped file never runs; and it trusts nothing it is handed: it works out the folder itself, compares every copy with the SHA-256 taken from the build and checks the signatures in a staging folder only administrators can change, and writes nothing into your folders. All scripts use only Windows PowerShell's own modules (limited with plain text before any command runs, so not even that step can be hijacked) and start PowerShell and cmd by full path; neither the build nor the installer runs from an administrator window. See [Install](#install).
-- **Optional firewall rules.** `Firewall-Block.cmd` blocks all traffic in and out of `MarkdownViewerWebView2.exe` (needs administrator rights; the result is shown in its own window); `Firewall-Unblock.cmd` removes the rules. Updates keep the rules on the installed copy. The administrator step always runs the firewall script installed in Program Files (only an administrator can change it), never the copy in the project folder, and works out the program path itself - it takes no path from outside, so the rules can only ever be made for this app.
-- **Check the project folder.** Every install records the SHA-256 of every project file (all except `.git\` and `app\dist\`) in Program Files, next to the program, where only an administrator can change the record. `app\Check-Source.cmd` runs the checker installed beside the record (so it cannot be altered either) and lists every file changed, added or removed since the last install - also changes made by another program running as you, which can change neither the record nor the checker to hide them. `Install.cmd` runs the same installed checker before it builds: if the folder changed since the last install, it lists the changes and builds only after you answer Y. The new record is taken before the build and compared again after it: if the sources change while building, nothing is installed. Run it before installing an update you did not expect: changes you made or pulled yourself show up too, so only unexplained ones are a warning.
+- **Safe install.** The app is installed in Program Files, where only an administrator can change it, by Setup (also what `Install.cmd` runs). Only the copy step runs with administrator rights: Windows PowerShell from System32 with a short readable command - what the administrator prompt's "Show more details" shows - that runs only the copy step from Setup's bytes after checking their SHA-256, so a swapped Setup never runs and nothing is started elevated from the Downloads folder. It trusts nothing it is handed: it works out the folder itself, checks every file's SHA-256 and signature in a staging folder only administrators can change, and writes nothing into your folders. No script file is installed. All scripts use only Windows PowerShell's own modules (limited with plain text before any command runs) and start PowerShell by full path; neither the build nor the installer runs from an administrator window. See [Install](#install).
+- **Firewall rules with every install.** Setup's administrator step adds two Windows Firewall rules that block all traffic in and out of the installed `MarkdownViewerWebView2.exe` (it takes no path from outside, so they can only ever be made for this app); `Uninstall.exe` removes them. They do not cover the WebView2 engine (`msedgewebview2.exe`), which Windows shares with other apps.
+- **Check the project folder.** Every `Install.cmd` install records the SHA-256 of every project file (all except `.git\`, `app\dist\` and `app\release\`) in Program Files, next to the program, where only an administrator can change the record. `app\Check-Source.cmd` lists every file changed, added or removed since the last install - also changes made by another program running as you. It runs the project's `app\check-source.ps1` only if that is exactly the copy the record lists (read once, SHA-256 checked, run from those bytes), so a changed checker cannot hide changes; it says so instead. `Install.cmd` runs the same check before it builds: if the folder changed since the last install, it lists the changes and builds only after you answer Y. The new record is taken before the build and compared again after it: if the sources change while building, nothing is installed. Run it before installing an update you did not expect: changes you made or pulled yourself show up too, so only unexplained ones are a warning.
 
 **What this does not cover.** Windows' administrator prompt is not a security boundary against programs
 already running as you: they could change this repository's scripts or sources before you run
@@ -90,35 +90,30 @@ before then. `Install.cmd` warns once less than a year is left.
 ## Install
 
 1. Download or clone this repository.
-2. Run `app\Install.cmd` (double-click it; not "Run as administrator"). It builds and signs the app as you,
-   then asks once for administrator rights to copy it to `C:\Program Files\MarkdownViewerWebView2`, where only
-   an administrator can change the program's files: no program running as you can replace them or put a DLL
-   or `.config` file next to them. Start menu entries, a Settings › Apps entry and the `.md` / `.markdown` /
-   `.mdown` / `.mkd` file association are made for your own account.
+2. Run `app\Install.cmd` (double-click it; not "Run as administrator"). It checks the project folder against
+   the last install, builds and signs the app as you, and installs it with the Setup that build made - the
+   same steps as on any other PC (see below): one administrator prompt copies it to
+   `C:\Program Files\MarkdownViewerWebView2`, where only an administrator can change the program's files (no
+   program running as you can replace them or put a DLL or `.config` file next to them), and adds the
+   firewall rules that block its network traffic; then Start menu entries, a Settings › Apps entry and the
+   `.md` / `.markdown` / `.mdown` / `.mkd` file association are made for your own account.
 3. If Windows asks which app to use the next time you open a `.md` file, pick **Markdown Viewer (WebView2)** and click **Always**.
 
 Run `Install.cmd` again to update (one administrator prompt each time). A copy that earlier versions installed
-in `%LOCALAPPDATA%\Programs\MarkdownViewerWebView2` is removed, and existing firewall block rules are moved to
-the Program Files copy. The installer, uninstaller and firewall scripts use only Windows PowerShell's own
-modules (never look-alikes from your Documents module folder) and start PowerShell and cmd by their full
-paths, so nothing planted in your account runs with the administrator rights you grant. The administrator
-step is a short readable command - the prompt's "Show more details" shows `place.ps1`'s path and SHA-256,
-every file's SHA-256 and any certificate you accepted. Elevated, it reads `place.ps1` once, checks that
-SHA-256 and runs exactly those bytes, so a file swapped after you started the install never runs. It
-works out the Program Files folder itself (not from an environment variable), copies into a staging folder
-there that only administrators can change, compares every copy with the SHA-256 taken from the build and
-checks the signatures in that folder, and only then swaps it in - a difference stops the install, a copy in
-use is never left half replaced - and it writes no log files into your folders. The installer does not run
-from an administrator window, and stops with a message if it cannot ask you a question (e.g. in PowerShell ISE). Afterwards the
-installer checks, as you, that Program Files holds exactly the files that were built.
+in `%LOCALAPPDATA%\Programs\MarkdownViewerWebView2` is removed. The scripts use only Windows PowerShell's own
+modules (never look-alikes from your Documents module folder) and start PowerShell by its full path, so
+nothing planted in your account runs with the administrator rights you grant. `Install.cmd` does not run from
+an administrator window, and stops with a message if it cannot ask you a question (e.g. in PowerShell ISE).
+A new signing certificate or open viewer windows are asked about in a Yes/No box.
 
-### Setup for other PCs
+### Setup
 
-Every install (and `app\build.ps1`) also makes `app\release\MarkdownViewer-Setup-<version>.exe`: one signed
-file with the built program inside, for installing on another PC without building - or here, without the
-console window. Double-click it (not "Run as administrator"): a window with the logo shows the version, who
-signed it and whether the viewer is installed, with **Install** / **Update**, **Uninstall**, **Open the viewer**
-and **Close**; progress and questions appear in that window.
+Every install (and `app\build.ps1`) makes `app\release\MarkdownViewer-Setup-<version>.exe`: one signed file
+with the built program inside, for installing on another PC without building - or here, without the console
+window. Double-click it (not "Run as administrator"): a window with the logo shows the version, who signed it
+and whether the viewer is installed, with **Install** / **Update**, **Uninstall**, **Open the viewer** and
+**Close**; progress and questions appear in that window. Setup **installs, registers and adds the firewall
+rules**; `Uninstall.exe` does the opposite.
 
 - The files are resources of Setup, listed with their SHA-256 inside it, so Setup's signature covers them all.
   Setup checks its own signature at start (a changed Setup does not run) and keeps its file locked until it ends.
@@ -126,24 +121,40 @@ and **Close**; progress and questions appear in that window.
   itself: Windows asks for **Windows PowerShell**, whose short readable command ("Show more details") reads
   Setup's bytes once, checks them against the SHA-256 Setup took of its checked file and runs only the copy
   step from those bytes in memory - nothing is started from the Downloads folder with administrator rights,
-  where a planted DLL could be loaded with it. The copy step writes into a staging folder in Program Files,
-  checks every file's SHA-256, that the program and Content DLL are signed by Setup's certificate and the
-  WebView2 files by Microsoft, then swaps the folders (a copy in use is never left half replaced).
+  where a planted DLL could be loaded with it. The copy step works out the Program Files folder itself (not
+  from an environment variable), writes into a staging folder there that only administrators can change,
+  checks every file's SHA-256, that the program, Content DLL and `Uninstall.exe` are signed by Setup's
+  certificate and the WebView2 files by Microsoft, swaps the folders (a copy in use is never left half
+  replaced), and adds two Windows Firewall rules that block all traffic in and out of the installed
+  `MarkdownViewerWebView2.exe` (it takes no path from outside). It writes no log file.
 - An installed copy signed by another certificate is replaced only after you answer Yes.
-- File types, Open with, Start menu and Settings › Apps are set up for your account by `register.ps1`, run
-  from Program Files (the same step `Install.cmd` uses). **Uninstall** runs the installed `uninstall.ps1`.
-- Setup installs `uninstall.ps1`, `register.ps1` and `firewall.ps1` with the program, not `trust.ps1`: certificate trust is only for the PC that holds the signing key.
+- Afterwards Setup checks, as you, that Program Files holds exactly the files inside it and that both firewall
+  rules are there, then registers the file types, Open with, Start menu and Settings › Apps for your account.
+- **No script file is installed.** Program Files holds the program, its Content DLL, the WebView2 files, the
+  icon and `Uninstall.exe` - plus, when installed with `Install.cmd`, the project record `source-manifest.txt`
+  (a Setup made only for that install carries it; the Setup you hand out never contains it). `trust.ps1` stays
+  in the project folder: certificate trust is only for the PC that holds the signing key.
 - On another PC the certificate is not in Windows' trusted list, so Windows may show the publisher as unknown;
   the viewer itself only needs its files intact and signed by one certificate. Compare the thumbprint Setup
   shows with yours. The other PC needs the Microsoft Edge WebView2 Runtime (part of Windows 11); Setup says
   if it is missing.
 
-To remove it: Settings › Apps › Markdown Viewer (WebView2) › Uninstall, run `app\Uninstall.cmd`, or use **Uninstall** in Setup. It removes
-the Program Files copy and the firewall block rules (if you added them) with one administrator prompt - a
-short readable command, no script file - and any per-user copy from earlier versions, the file-type entries
-(your previous `.md` default comes back), shortcuts, the Settings › Apps entry, saved settings, browser data,
-the error log and the certificate trust (if you added it). Entries that start another copy of the viewer are
-left alone and listed. The signing certificate stays in your certificate store for later builds.
+### Uninstall
+
+`Uninstall.exe`, installed next to the program and signed with the same certificate (built from
+`app\Setup.cs`), **uninstalls, unregisters and removes the firewall rules**. Start it from Settings › Apps ›
+Markdown Viewer (WebView2) › Uninstall (a window with Uninstall, Open the viewer and Close), with
+`app\Uninstall.cmd`, or with **Uninstall** in Setup (both without the window: `--uninstall`).
+
+- It acts only as the copy in Program Files (only an administrator can change it) and refuses to run from
+  anywhere else, checks its own signature at start, and has the same start-up protections as the viewer.
+- It removes only this app's entries (entries that start another copy of the viewer are left alone and
+  listed), restores your previous `.md` default, and removes the shortcuts, the Settings › Apps entry, saved
+  settings, browser data, the error log, the certificate trust (if you added it) and any per-user copy from
+  earlier versions.
+- The Program Files folder and the firewall rules go with one administrator prompt - a short readable Windows
+  PowerShell command that waits until `Uninstall.exe` has closed (it lives in that folder), then removes the
+  folder; a failure shows a message. The signing certificate stays in your certificate store for later builds.
 
 ## Build only
 
@@ -250,15 +261,15 @@ a new empty Edge profile that cannot look up any host name.
 | `app\MarkdownViewerWebView2.cs` | The Windows app (C# 5, Windows Forms + WebView2) |
 | `app\Content.cs` | Resource-only `MarkdownViewerWebView2.Content.dll` that carries the page and the libraries |
 | `app\build.ps1` | Checks, compiles and signs the app into `app\dist\` |
-| `app\install.ps1`, `app\place.ps1` | Install for your account; `place.ps1` is the one administrator step (copy into Program Files) |
-| `app\register.ps1` | File types, Open with, Start menu and Settings › Apps for your account; installed in Program Files and run from there by `install.ps1` and Setup |
-| `app\Setup.cs` | Setup for other PCs (`app\release\MarkdownViewer-Setup-<version>.exe`, built by `build.ps1`): the signed program inside one signed file, with Install and Uninstall |
-| `app\uninstall.ps1`, `app\firewall.ps1`, `app\trust.ps1` | Uninstall, optional firewall block rules, optional certificate trust (also copied next to the program) |
-| `app\check-source.ps1` | Records the project files' SHA-256 at install time; installed in Program Files with the record, where `Check-Source.cmd` runs it to compare the folder with that record |
+| `app\install.ps1` | `Install.cmd`: checks and records the project folder, builds (`build.ps1`) and installs with the Setup it made |
+
+| `app\Setup.cs` | Built twice by `build.ps1`: Setup (`app\release\MarkdownViewer-Setup-<version>.exe`, the signed program inside one signed file: installs, registers, adds the firewall rules) and `Uninstall.exe` (installed next to the program: the opposite) |
+| `app\trust.ps1` | Optional certificate trust for the PC that builds (not installed) |
+| `app\check-source.ps1` | Records the project files' SHA-256 at install time (the record goes into Program Files) and compares the folder with it; `Check-Source.cmd` runs it only if it is exactly the recorded copy |
 | `app\check-updates.ps1` | Reports newer versions of the WebView2 SDK and the bundled libraries (only when you run it) |
 | `app\update-libs.ps1` | Downloads, checks and replaces the bundled libraries in `src\` (plan first; asks before downloading; holds back releases under 7 days old) |
 | `app\test-viewer.ps1` | Tests the viewer page with the documents in `test\` (display, breakdown, nothing that could run code) |
-| `app\*.cmd` | Double-click launchers: `Install`, `Uninstall`, `Check-Source`, `Check-Updates`, `Update-Libraries`, `Test-Viewer`, `Firewall-Block` / `-Unblock`, `Trust-` / `Untrust-Certificate` |
+| `app\*.cmd` | Double-click launchers: `Install`, `Uninstall`, `Check-Source`, `Check-Updates`, `Update-Libraries`, `Test-Viewer`, `Trust-` / `Untrust-Certificate` |
 | `test\` | Test documents (formatting, lists, UTF-16, `attack.md` with harmless payloads) and `selftest.js`, which the test adds to its temporary copy of the page |
 | `webview2\` | Microsoft WebView2 SDK files needed to build the app, with their license |
 | `docs\` | Promo video and its poster picture |

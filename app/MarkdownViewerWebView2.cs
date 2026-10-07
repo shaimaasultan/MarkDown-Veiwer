@@ -39,15 +39,15 @@ using Microsoft.Win32.SafeHandles;
 // The program's own calls into Windows DLLs (user32, kernel32, advapi32, wintrust) load them from System32
 // only, never from the program's folder or anywhere else on the search path.
 [assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
-[assembly: AssemblyVersion("1.10.0.0")]
-[assembly: AssemblyFileVersion("1.10.0.0")]
-[assembly: AssemblyInformationalVersion("1.10.0")]
+[assembly: AssemblyVersion("1.11.0.0")]
+[assembly: AssemblyFileVersion("1.11.0.0")]
+[assembly: AssemblyInformationalVersion("1.11.0")]
 
 static class Program
 {
     const string AppName = "Markdown Viewer (WebView2)";
     const string DataFolder = "MarkdownViewerWebView2";     // %APPDATA% (settings) and %LOCALAPPDATA% (browser data)
-    const string AppVersion = "1.10.0";
+    const string AppVersion = "1.11.0";
     // Exists only inside this program's windows. Not a .local name: Windows would first spend ~2 s
     // looking for a device called "mdviewer" on the local network before the page could load.
     const string PrivateHost = "https://mdviewer.example";
@@ -492,8 +492,8 @@ static class Program
     // Only the program's own files may be in its folder. Windows looks there first for many DLLs, and .NET
     // for configuration; an extra file or folder (a planted DLL, a ".local" redirection folder) stops the start.
     // source-manifest.txt: the project files' SHA-256 at install time (a text file, never loaded as code);
-    // check-source.ps1: the checker Check-Source.cmd runs from here.
-    static readonly string[] FolderFiles = { "MarkdownViewer.ico", "uninstall.ps1", "firewall.ps1", "trust.ps1", "register.ps1", "source-manifest.txt", "check-source.ps1" };
+    // Uninstall.exe: removes the program, its Windows entries and its firewall rules (never loaded by the viewer).
+    static readonly string[] FolderFiles = { "MarkdownViewer.ico", "Uninstall.exe", "source-manifest.txt" };
 
     static string CheckFolder()
     {
@@ -747,10 +747,10 @@ static class Program
 
     // ------------------------------------------------------------------ status for the page
 
-    // Firewall (read-only). Nothing listens on the network, so no rules are needed. The optional block rules
-    // added by Firewall-Block.cmd make Windows refuse any traffic in or out of this program as well.
+    // Firewall (read-only). Nothing listens on the network, so no rules are needed. The block rules Setup adds
+    // (and Uninstall.exe removes) make Windows refuse any traffic in or out of this program as well.
     const string FirewallGroup = "Markdown Viewer (WebView2)";
-    const string FirewallDetail = "Nothing listens on the network. Optional block rules (Firewall-Block.cmd) make Windows refuse any traffic in or out of MarkdownViewerWebView2.exe itself. They do not cover the WebView2 engine (msedgewebview2.exe), which Windows shares with other apps.";
+    const string FirewallDetail = "Nothing listens on the network. Block rules (added by Setup, removed by Uninstall.exe) make Windows refuse any traffic in or out of MarkdownViewerWebView2.exe itself. They do not cover the WebView2 engine (msedgewebview2.exe), which Windows shares with other apps.";
 
     class FirewallStatus
     {

@@ -4358,7 +4358,7 @@ function builtWith() {
     { name: 'Installer', detail: 'PowerShell 5.1 scripts',
       use: 'Build, install and uninstall for the current user — no admin rights',
       items: ['build.ps1 — compiles the app, packs the page and libraries into MarkdownViewerWebView2.Content.dll, signs both (Authenticode) and makes the icon (System.Drawing)',
-              'install.ps1 / uninstall.ps1 — per-user .md file association (HKCU registry), Start menu shortcuts, Settings › Apps entry'] },
+              'install.ps1 / Uninstall.exe — per-user .md file association (HKCU registry), Start menu shortcuts, Settings › Apps entry'] },
     { name: 'Viewer', detail: 'HTML, CSS and JavaScript (viewer.html + viewer.js), no frameworks',
       use: 'Renders, counts, inspects, finds and exports',
       items: [
@@ -4494,7 +4494,7 @@ function renderConnStatus() {
 
 // ---------------------------------------------------------------- firewall status
 // Nothing listens on the network, so no firewall rules are needed; the app reports that, whether the
-// optional block rules for its program are in place, and whether Windows Firewall itself is on.
+// block rules Setup adds for its program are in place, and whether Windows Firewall itself is on.
 let firewall = null;
 const firewallOk = () => !!(firewall && firewall.readable && (firewall.state === 'nonetwork' || firewall.state === 'blocked'));
 
