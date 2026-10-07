@@ -292,22 +292,26 @@
 
   // test\hostile.xml and test\entities.xml: every view (text, tree, table) shows the file as data. Scripts, event
   // attributes, stylesheets, XInclude and external entities stay text or are left out; win.ini is never read.
-  // test\entity-bomb.xml: the parser refuses it at once (not well-formed), shown as text only.
+  // Entities are never expanded: every &name; reference is shown as written (test\entity-bomb.xml shows &j;).
   async function checkHostileXml(name, bytes) {
     const problems = [];
     const click = el => el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     for (let i = 0; i < 100 && !output.querySelector('.json-view'); i++) await sleep(50);
     if (!output.querySelector('.json-view')) return ['no XML view'];
     const dlg = document.getElementById('codeAlert');
-    const warned = dlg.open && document.getElementById('caTitle').textContent.includes('shown as text');
+    const warned = dlg.open && /unsafe XML|unsafe parts/i.test(document.getElementById('caTitle').textContent) && document.getElementById('caTitle').textContent.includes('shown as text');
     if (dlg.open) dlg.close();
-    if (name === 'hostile.xml' && !warned) problems.push('no "contains code" warning');
+    if (!warned) problems.push('no red "unsafe XML" warning: ' + document.getElementById('caTitle').textContent);
+    // The safety report: the risks in each file, found from the text (nothing expanded or loaded to find them).
+    const risks = new Map((lastSafety && lastSafety.findings || []).filter(f => f.level === 'risk').map(f => [f.id, f]));
+    const want = { 'hostile.xml': { xmlinclude: 1, xmlxslt: 1 }, 'entities.xml': { xmlexternal: 3 }, 'entity-bomb.xml': { xmlbomb: 0 } }[name] || {};
+    for (const [id, n] of Object.entries(want))
+      if (!risks.has(id) || (n && risks.get(id).count !== n)) problems.push(`safety report: ${id} ${risks.has(id) ? risks.get(id).count : 'missing'} (has ${[...risks.keys()].join(', ')})`);
+    if (name === 'entities.xml' && !(lastSafety.findings.find(f => f.id === 'xmlentity') || {}).count) problems.push('safety report: entity declaration not listed');
+    if (name === 'entity-bomb.xml' && !(risks.get('xmlbomb') && risks.get('xmlbomb').items.some(i => i.what === '&j; grows to about 10,000 million characters'))) problems.push('bomb size: ' + JSON.stringify(risks.get('xmlbomb') && risks.get('xmlbomb').items));
+    if (lastSafety.level !== 'risk') problems.push('safety level ' + lastSafety.level);
     const source = new TextDecoder().decode(bytes);
-    const parses = name !== 'entity-bomb.xml';
-    if (!parses) {
-      const err = output.querySelector('.json-error');
-      if (!err || !/amplification/i.test(err.textContent)) problems.push('entity bomb not refused: ' + (err ? err.textContent.slice(0, 120) : 'no error'));
-    }
+    const parses = true;
     const modeBtn = label => [...output.querySelectorAll('.json-modes button')].find(b => b.textContent.includes(label));
     for (const mode of ['Text', 'Tree', 'Table']) {
       const b = modeBtn(mode);
@@ -329,10 +333,28 @@
       if (foreign) problems.push(mode + ': <' + foreign.tagName.toLowerCase() + '> from the file in the page');
       if (mode === 'Text' && output.querySelector('pre.xml-text').textContent !== source.replace(/^﻿/, '')) problems.push('Text: not the exact source');
       if (name === 'hostile.xml' && mode === 'Tree' && !shown.includes(`onload="window.PWN='svg-onload'"`)) problems.push('Tree: svg onload not shown as text');
-      if (name === 'entities.xml' && mode === 'Tree' && !shown.includes('<notes> 2 children')) problems.push('Tree: entities.xml not read');
+      if (/EXPANDED-TEXT|aaaaaaaaaa/.test(mode === 'Text' ? '' : shown)) problems.push(mode + ': an entity was expanded');
+      if (name === 'entities.xml' && mode !== 'Text') {
+        for (const want of ['&secret;', '&remote;', '&inner; <b> A', '&inner; stays']) if (!shown.includes(want)) problems.push(mode + ': not shown as written: ' + want);
+        if (shown.includes('&amp;inner;')) problems.push(mode + ': CDATA or reference changed');
+      }
+      if (name === 'entities.xml' && mode === 'Tree' && !shown.includes('kind="&inner;"')) problems.push('Tree: attribute entity not shown as written');
+      if (name === 'entity-bomb.xml' && mode === 'Tree' && !shown.includes('<lolz>&j;</lolz>')) problems.push('Tree: bomb reference not shown as written: ' + shown.slice(0, 120));
       if (name === 'hostile.xml' && mode === 'Table' && !shown.includes("</code></pre><script>window.PWN='cdata'</script>")) problems.push('Table: CDATA not shown as text');
     }
     click(modeBtn('Text'));
+    await sleep(150);
+    const statsText = document.getElementById('stats').textContent;
+    if (!/✗ Unsafe/.test(statsText) || !/Unsafe XML \(/.test(statsText)) problems.push('status line has no red flag: ' + statsText.slice(0, 200));
+    // The report opens from the status line, with the XML check listed.
+    const sbtn = [...document.querySelectorAll('#stats .breakdown-btn')].find(b => /Unsafe/.test(b.textContent));
+    if (sbtn) {
+      sbtn.click();
+      const sf = document.getElementById('safety');
+      if (!sf.open || !/Not safe/.test(document.getElementById('sfStatus').textContent) || !/XML entities, includes and stylesheets/.test(sf.textContent)) problems.push('safety report: ' + document.getElementById('sfStatus').textContent);
+      sf.close();
+    }
+    if (name !== 'hostile.xml' && !/Entities shown as written/.test(document.getElementById('stats').textContent)) problems.push(document.getElementById('stats').textContent + ' no "entities shown as written" note');
     return problems;
   }
 

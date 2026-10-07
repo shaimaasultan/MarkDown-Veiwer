@@ -1663,17 +1663,27 @@ let currentBinary = null;       // bytes of an open Excel file
 function renderSpecialDocument() {
   const t = typeOf(currentPath);
   specialStats = null;
+  // XML and HTML are checked first, so their status line carries the warnings and the safety report button.
+  if (isRunnableMarkup(currentPath)) lastSafety = { source: currentSource, ...checkSafety(currentSource) };
   if (t.id === 'table') { renderTableDocument(); specialStats = updateCsvStats; }
   else if (t.id === 'json') { renderJsonDocument(); specialStats = updateJsonStats; }
   else if (t.id === 'xml') { renderXmlDocument(); specialStats = updateXmlStats; }
   else if (t.id === 'xlsx') renderXlsxDocument();
   else if (t.id === 'ipynb') renderNotebookDocument();
   else renderCodeDocument(t);
-  if (isRunnableMarkup(currentPath)) lastSafety = { source: currentSource, ...checkSafety(currentSource) };
 }
 
 // XML and HTML: shown as text here, but a browser or another program opening them could run code in them.
-const isRunnableMarkup = p => typeOf(p) && (typeOf(p).id === 'xml' || /^html?$/.test(extOf(p)));
+const isRunnableMarkup = p => !!p && !!typeOf(p) && (typeOf(p).id === 'xml' || /^html?$/.test(extOf(p)));
+
+// "⚠ Unsafe XML (…)" for the status line of an XML file with entities, includes or stylesheets that other programs
+// act on, or null.
+function markupXmlNote() {
+  if (!isRunnableMarkup(currentPath) || !lastSafety || lastSafety.source !== currentSource) return null;
+  const found = (lastSafety.findings || []).filter(f => XML_FINDINGS.has(f.id) && f.level === 'risk');
+  return found.length ? ['Parts of this XML file that other programs act on (read files, fetch addresses, grow without end): none is used here',
+                         `⚠ Unsafe XML (${found.map(f => `${f.title.toLowerCase()}: ${fmt(f.count)}`).join(', ')}) — nothing used`] : null;
+}
 
 // "⚠ Contains code (…)" for the status line of such a file, or null.
 function markupCodeNote() {
@@ -1734,16 +1744,36 @@ function renderCodeDocument(t) {
 function statsLine(groups) {
   const stats = document.getElementById('stats');
   stats.replaceChildren(...groups.map(([title, text]) => { const g = document.createElement('span'); g.className = 'group'; g.title = title; g.textContent = text; return g; }));
+  // XML and HTML files: the safety report (✗ Unsafe / ⚠ Safety / ✓ Safe), as for documents.
+  if (isRunnableMarkup(currentPath) && lastSafety && lastSafety.source === currentSource) stats.append(safetyButton());
 }
 
 // ---- XML: text, tree, table (read with the browser's XML parser: nothing in it is loaded or run)
 let xmlState = null;
 let xmlLastMode = 'text';
 
+// XML is read without its DOCTYPE, so entities are never expanded: a reference such as &name; stays text, exactly as
+// written (no declared text pulled in, no external entity reading a file or an address, no "billion laughs"). The
+// DOCTYPE is blanked to spaces (its line breaks kept, so error line numbers still match the file); the five XML
+// escapes (&lt; &gt; &amp; &quot; &apos;) and character codes (&#…;) still work - they are how XML writes < & and
+// other characters. CDATA, comments and processing instructions are left exactly as they are.
+const XML_DOCTYPE_OR_ENTITY = /<!\[CDATA\[[\s\S]*?(?:\]\]>|$)|<!--[\s\S]*?(?:-->|$)|<\?[\s\S]*?(?:\?>|$)|<!DOCTYPE\b(?:[^>\[\]"']|"[^"]*"|'[^']*'|\[(?:[^\]"']|"[^"]*"|'[^']*')*\])*>?|&(?=[^\s&;<>"'=]+;)(?!(?:amp|lt|gt|quot|apos|#[0-9]+|#x[0-9a-fA-F]+);)/gi;
+function xmlWithoutEntities(text) {
+  let doctype = false, entities = 0;
+  const safe = text.replace(XML_DOCTYPE_OR_ENTITY, m => {
+    if (m === '&') { entities++; return '&amp;'; }
+    if (/^<!DOCTYPE/i.test(m)) { doctype = true; return m.replace(/[^\r\n]/g, ' '); }
+    return m;
+  });
+  return { safe, doctype, entities };
+}
+const parseXml = text => new DOMParser().parseFromString(xmlWithoutEntities(text).safe, 'application/xml');
+
 function renderXmlDocument() {
   const text = currentSource.replace(/^﻿/, '');
   const keep = xmlState && xmlState.path === currentPath ? xmlState : null;
-  const doc = new DOMParser().parseFromString(text, 'application/xml');
+  const { safe, doctype, entities } = xmlWithoutEntities(text);
+  const doc = new DOMParser().parseFromString(safe, 'application/xml');
   const err = doc.getElementsByTagName('parsererror')[0];
   let error = null, line = null, col = null;
   if (err) {
@@ -1751,7 +1781,7 @@ function renderXmlDocument() {
     const m = /line (\d+) at column (\d+)/i.exec(error);
     if (m) { line = +m[1]; col = +m[2]; }
   }
-  xmlState = { path: currentPath, text, doc: error ? null : doc, error, line, col,
+  xmlState = { path: currentPath, text, doc: error ? null : doc, error, line, col, doctype, entities,
                mode: error ? 'text' : keep ? keep.mode : xmlLastMode, groupPath: keep ? keep.groupPath : null };
   buildXmlView();
 }
@@ -1937,7 +1967,10 @@ function updateXmlStats() {
   statsLine([
     ['What this file holds', x.error ? `XML: not well-formed · ${fmt(x.text.length)} characters`
                                      : `XML: <${xmlName(x.doc.documentElement)}> with ${plural(count, 'element')} · ${fmt(x.text.length)} characters`],
-    markupCodeNote() || ['How this file is shown', 'Shown as plain text: nothing in an XML file is loaded or run']].filter(Boolean));
+    markupCodeNote() || ['How this file is shown', 'Shown as plain text: nothing in an XML file is loaded or run'],
+    markupXmlNote(),
+    (x.doctype || x.entities) && ['Its DOCTYPE and entity declarations are not used: every entity reference (&name;) is shown as written, never expanded or loaded',
+                                 `Entities shown as written${x.entities ? ` (${fmt(x.entities)})` : ''}, never expanded`]].filter(Boolean));
 }
 
 // ---- Excel (.xlsx): unpacked with the browser's own decompression, read as values (formulas and macros never run)
@@ -1993,7 +2026,7 @@ async function inflateRaw(raw, limit) {
   return all;
 }
 
-const xmlOf = bytes => new DOMParser().parseFromString(new TextDecoder().decode(bytes), 'application/xml');
+const xmlOf = bytes => parseXml(new TextDecoder().decode(bytes));    // without DOCTYPE: entities never expanded
 const byTag = (node, tag) => node.getElementsByTagNameNS('*', tag);
 const colIndex = ref => { let n = 0; for (const ch of ref.replace(/\d+$/, '').toUpperCase()) n = n * 26 + ch.charCodeAt(0) - 64; return n - 1; };
 const BUILTIN_DATE_FORMATS = new Set([14, 15, 16, 17, 18, 19, 20, 21, 22, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 45, 46, 47, 50, 51, 52, 53, 54, 55, 56, 57, 58]);
@@ -2861,7 +2894,8 @@ const SAFETY_CHECKS = [
   'Text-direction tricks (Trojan Source)',
   'Look-alike letters',
   'Math and diagram commands',
-  'Size and nesting'
+  'Size and nesting',
+  'XML entities, includes and stylesheets'
 ];
 
 const RISKY_FILE = /\.(exe|msi|msix|appx|appxbundle|bat|cmd|com|scr|pif|ps1|psm1|psd1|vbs|vbe|js|jse|wsf|wsh|hta|lnk|url|dll|cpl|ocx|sys|jar|reg|inf|iso|img|vhd|vhdx|docm|xlsm|pptm|dotm|xlam|apk|dmg|pkg|deb|rpm|sh|run|application|appref-ms|library-ms|search-ms|searchconnector-ms|settingcontent-ms|diagcab|msc|chm)$/i;
@@ -3090,6 +3124,8 @@ function checkSafety(source) {
     const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_COMMENT);
     for (let c = walker.nextNode(); c; c = walker.nextNode()) {
       const body = c.data.trim();
+      // In XML and HTML files, <?…?> and <!ENTITY …> read as HTML become comment-like nodes: only real <!-- --> count.
+      if (isRunnableMarkup(currentPath) && !source.includes('<!--' + c.data)) continue;
       if (body.length < 3 || /^(markdownlint|prettier|toc|end ?toc|vale|lint|cspell|textlint|omit in toc|no ?toc)\b/i.test(body)) continue;
       const line = lineOf(c.data.slice(0, 40));
       if (AI_INSTRUCTIONS.test(body))
@@ -3167,11 +3203,79 @@ function checkSafety(source) {
   if (source.length > 5e6)
     add(SAFETY_CHECKS[14], 'size', 'note', 'Very large file', 'Big files can make other viewers slow.', `${fmt(source.length)} characters`, null);
 
+  // XML: entities, external DTDs, XInclude and stylesheets. None of them is used here (the file is read without its
+  // DOCTYPE and shown as data), but other XML programs and browsers act on them. Read from the text, never expanded.
+  const xmlFile = !!currentPath && (typeOf(currentPath) || {}).id === 'xml';
+  if (xmlFile) {
+    const XML_CHECK = SAFETY_CHECKS[15];
+    const notUsed = 'Not used here: the file is shown as text and every reference as written.';
+    let doctype = null;
+    for (const m of source.matchAll(XML_DOCTYPE_OR_ENTITY)) if (/^<!DOCTYPE/i.test(m[0])) { doctype = m; break; }
+    if (doctype) {
+      const d = doctype[0], at = doctype.index;
+      if (/^<!DOCTYPE\s+[^\s\[>]+\s+(SYSTEM|PUBLIC)\b/i.test(d))
+        add(XML_CHECK, 'xmldtd', 'risk', 'External DTD',
+          'The DOCTYPE loads more declarations from a file or an address when another XML program opens this file. Not loaded here.',
+          d.slice(0, d.includes('[') ? d.indexOf('[') : d.length), lineAt(at), true);
+      const q = `(?:"[^"]*"|'[^']*')`;
+      const decl = new RegExp(`<!ENTITY\\s+(%\\s+)?([^\\s"'>%]+)\\s+(?:(SYSTEM|PUBLIC)\\s+(${q})(?:\\s+(${q}))?|(${q}))`, 'gi');
+      const values = new Map(), lines = new Map();
+      for (const e of d.matchAll(decl)) {
+        const [, pct, name, kind, id1, id2, value] = e;
+        const line = lineAt(at + e.index);
+        if (kind) {
+          const target = (kind.toUpperCase() === 'PUBLIC' && id2 ? id2 : id1).slice(1, -1);
+          add(XML_CHECK, 'xmlexternal', 'risk', 'External entities (XXE)',
+            'Entities that read a file or fetch an address when another XML program opens this file — a known way to steal files or reach inside a network. ' + notUsed,
+            `${pct ? '%' : '&'}${name}; → ${target}`, line, true);
+        } else if (!pct) {
+          values.set(name, value.slice(1, -1));
+          lines.set(name, line);
+          add(XML_CHECK, 'xmlentity', 'caution', 'Entity declarations',
+            'Text that other XML programs paste in wherever &name; is used, so the file can read differently there than it looks. ' + notUsed,
+            `&${name}; = ${value}`, line, true);
+        }
+      }
+      // Entities made of other entities: how far each would grow (worked out from the declarations, never expanded).
+      const sizes = new Map();
+      const grow = name => {
+        if (sizes.has(name)) return sizes.get(name);
+        if (!values.has(name)) return 0;
+        sizes.set(name, Infinity);                 // met again while growing: it refers to itself, endless
+        const v = values.get(name);
+        let size = v.replace(/&[^\s&;]+;/g, '').length;
+        for (const r of v.matchAll(/&([^\s&;#]+);/g)) size += grow(r[1]);
+        sizes.set(name, size);
+        return size;
+      };
+      for (const name of values.keys()) {
+        const size = grow(name);
+        if (size > 1e6)
+          add(XML_CHECK, 'xmlbomb', 'risk', 'Entity bomb (“billion laughs”)',
+            'Entities that expand into each other: a few bytes grow into gigabytes (or never stop), which freezes or crashes other XML programs. Not expanded here.',
+            `&${name}; grows to ${size === Infinity ? 'no end (it refers to itself)' : `about ${fmt(Math.round(size / 1e6))} million characters`}`, lines.get(name), true);
+      }
+    }
+    if (/http:\/\/www\.w3\.org\/20\d\d\/XInclude/.test(source))
+      for (const m of source.matchAll(/<(?:[\w.-]+:)?include\b[^>]*>/g))
+        add(XML_CHECK, 'xmlinclude', 'risk', 'XInclude',
+          'Pulls another file or address into this one when another XML program opens it — for example a system file. ' + notUsed, m[0], lineAt(m.index), true);
+    for (const m of source.matchAll(/<\?xml-stylesheet\b[\s\S]*?\?>/gi)) {
+      if (/type\s*=\s*["'][^"']*xsl|href\s*=\s*["'][^"']*\.xslt?\b/i.test(m[0]))
+        add(XML_CHECK, 'xmlxslt', 'risk', 'XSLT stylesheets',
+          'A browser opening this file runs the XSLT program it names, which changes what is shown and can pull in other files and addresses. Not loaded here.',
+          m[0], lineAt(m.index), true);
+      else
+        add(XML_CHECK, 'xmlcss', 'caution', 'Stylesheets',
+          'Loaded from a file or an address by a browser opening this file. Not loaded here.', m[0], lineAt(m.index), true);
+    }
+  }
+
   const order = { risk: 0, caution: 1, note: 2 };
   const findings = [...found.values()].sort((a, b) => order[a.level] - order[b.level]);
   const count = level => findings.filter(f => f.level === level).reduce((s, f) => s + f.count, 0);
   const counts = { risk: count('risk'), caution: count('caution'), note: count('note') };
-  return { findings, counts, level: counts.risk ? 'risk' : counts.caution ? 'caution' : 'safe' };
+  return { findings, counts, xml: xmlFile, level: counts.risk ? 'risk' : counts.caution ? 'caution' : 'safe' };
 }
 
 let lastSafety = null;
@@ -3200,7 +3304,8 @@ function showSafety() {
   status.className = 'bd-status ' + (r.level === 'risk' ? 'bad' : r.level === 'caution' ? 'warn' : 'ok');
   status.textContent = r.level === 'risk'
     ? `✗ Not safe — ${plural(r.counts.risk, 'risk')}` + (r.counts.caution ? ` and ${plural(r.counts.caution, 'caution')}` : '') +
-      (blockedRisks ? '. Active content is removed in this viewer, but the file is dangerous in other apps.' : '. Read the items below before you trust this file.')
+      (blockedRisks ? (isRunnableMarkup(currentPath) ? '. Nothing in it is run, loaded or expanded in this viewer, but the file is dangerous in other apps.'
+                                                    : '. Active content is removed in this viewer, but the file is dangerous in other apps.') : '. Read the items below before you trust this file.')
     : r.level === 'caution'
       ? `⚠ Use caution — ${plural(r.counts.caution, 'thing')} to check before you trust this file.`
       : '✓ Safe — no tricks found.' + (r.counts.note ? ` ${plural(r.counts.note, 'note')} below, for your information.` : '');
@@ -3208,13 +3313,14 @@ function showSafety() {
   const finding = f => {
     const box = el('div', `sf-finding ${f.level}`);
     const h = el('h4', '', `${f.title} (${fmt(f.count)})`);
-    if (f.blocked) h.append(el('span', 'sf-tag', 'removed here'));
+    if (f.blocked) h.append(el('span', 'sf-tag', isRunnableMarkup(currentPath) ? 'not used here' : 'removed here'));
     box.append(h, el('p', 'sf-why', f.why));
     const t = el('table', 'ins-table sf-table');
     for (const it of f.items) {
       const tr = el('tr');
       const lineCell = el('td', 'n');
-      if (it.line) {
+      if (it.line && isSpecialDoc(currentPath)) lineCell.append(el('span', 'sf-line', `line ${fmt(it.line)}`));   // no Markdown source to jump to
+      else if (it.line) {
         const go = el('button', 'sf-line', `line ${fmt(it.line)}`);
         go.type = 'button';
         go.title = 'Show this line in the Markdown source';
@@ -3242,12 +3348,13 @@ function showSafety() {
   const checked = el('section', 'ins-section');
   const ul = el('ul', 'sf-checks');
   for (const c of SAFETY_CHECKS) {
+    if (c === SAFETY_CHECKS[15] && !r.xml) continue;        // the XML check: for XML files only
     const fs = r.findings.filter(f => f.check === c);
     const worst = fs.find(f => f.level === 'risk') ? 'risk' : fs.find(f => f.level === 'caution') ? 'caution' : fs.length ? 'note' : 'ok';
     ul.append(el('li', worst, `${{ risk: '✗', caution: '⚠', note: 'ℹ', ok: '✓' }[worst]} ${c}`));
   }
   checked.append(el('h3', '', 'What was checked'), ul,
-    el('p', 'ins-note', 'Line numbers point into the Markdown file. Nothing in the file was run to check it.'));
+    el('p', 'ins-note', `Line numbers point into the ${isSpecialDoc(currentPath) ? 'file' : 'Markdown file'}. Nothing in the file was run or used to check it.`));
 
   document.getElementById('sfBody').replaceChildren(...[
     section('Risks', r.findings.filter(f => f.level === 'risk')),
@@ -3255,6 +3362,12 @@ function showSafety() {
     section('For your information', r.findings.filter(f => f.level === 'note')),
     checked].filter(Boolean));
   document.getElementById('sfFile').textContent = currentPath;
+  const kind = isRunnableMarkup(currentPath) ? typeOf(currentPath).id : 'md';
+  document.getElementById('sfIntro').textContent = kind === 'xml'
+    ? 'Tricks an XML file can play on you or on other programs that open it (browsers, XML editors, other apps). Here it is shown as text: nothing in it is run, loaded or expanded.'
+    : kind !== 'md'
+      ? 'Tricks a web page can play on you or on a browser that opens it. Here it is shown as source text: nothing in it is run or loaded.'
+      : 'Tricks a Markdown file can play on you, on AI assistants that read it, or in other apps that open it (GitHub, VS Code, browsers). Scripts and other active content are already removed here before display.';
   const dlg = document.getElementById('safety');
   dlg.showModal();
   dlg.scrollTop = 0;          // start at the verdict, not at the focused Close button
@@ -3266,6 +3379,7 @@ document.getElementById('sfClose').addEventListener('click', () => document.getE
 // once, when the file is opened. And if the window's security policy ever has to stop something, code
 // got past the sanitizer: that is shown too, as a viewer bug to report.
 const CODE_FINDINGS = new Set(['active', 'handlers', 'codelink', 'scheme']);
+const XML_FINDINGS = new Set(['xmldtd', 'xmlexternal', 'xmlentity', 'xmlbomb', 'xmlinclude', 'xmlxslt', 'xmlcss']);
 
 function showCodeAlert(text, items, policy, title) {
   const dlg = document.getElementById('codeAlert');
@@ -3287,13 +3401,22 @@ function alertBlockedCode() {
   if (!lastSafety || lastSafety.source !== currentSource) return;      // e.g. a table: nothing was parsed as Markdown
   const found = (lastSafety?.findings || [])
     .filter(f => CODE_FINDINGS.has(f.id) || (f.id === 'diagramcmd' && f.level === 'risk'));
-  if (!found.length) return;
   if (isRunnableMarkup(currentPath)) {
-    showCodeAlert('Nothing in it ran here: the file is shown as text only. Opened in a browser or another program, ' +
-      'the code could run, so be careful where else you open this file.',
-      found.map(f => `${f.title} (${fmt(f.count)})`), false, '⚠ This file contains code — shown as text, nothing ran');
+    const xmlRisks = lastSafety.findings.filter(f => XML_FINDINGS.has(f.id) && f.level === 'risk');
+    if (!found.length && !xmlRisks.length) return;
+    const items = [...found, ...xmlRisks].map(f => `${f.title} (${fmt(f.count)})`);
+    if (!xmlRisks.length)
+      showCodeAlert('Nothing in it ran here: the file is shown as text only. Opened in a browser or another program, ' +
+        'the code could run, so be careful where else you open this file.', items, false, '⚠ This file contains code — shown as text, nothing ran');
+    else
+      showCodeAlert('Nothing in it ran or was used here: the file is shown as text, its entities are not expanded and nothing is loaded. ' +
+        'Opened in a browser or another XML program, these parts could ' + (found.length ? 'run code, ' : '') +
+        'read files, fetch addresses or freeze the program, so be careful where else you open this file.',
+        items, false, found.length ? '⚠ This file contains code and unsafe XML — shown as text, nothing ran'
+                                   : '⚠ This XML file has unsafe parts — shown as text, nothing was used');
     return;
   }
+  if (!found.length) return;
   showCodeAlert('Nothing in it ran here: the code was removed before the file was shown. ' +
     'In a browser or another Markdown viewer it could run, so be careful where else you open this file.',
     found.map(f => `${f.title} (${fmt(f.count)})`), false);

