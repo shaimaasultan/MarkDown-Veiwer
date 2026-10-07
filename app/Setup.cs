@@ -61,7 +61,7 @@ public static class Setup
     static readonly string[] MicrosoftFiles = { "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll", "WebView2Loader.dll" };
     static readonly string[] MdExts = { ".md", ".markdown", ".mdown", ".mkd" };
     // Offered under "Open with" only - the viewer is never made their default app (pictures, video, audio, tables).
-    static readonly string[] MediaExts = { ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp", ".svg", ".mp4", ".webm", ".mp3", ".wav", ".ogg", ".csv", ".tsv" };
+    static readonly string[] MediaExts = { ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp", ".svg", ".mp4", ".webm", ".mp3", ".wav", ".ogg", ".csv", ".tsv", ".json", ".jsonl", ".ndjson" };
     // This app's certificate names: the current one and the one earlier versions used.
     static readonly string[] CertSubjects = { "CN=Markdown Viewer, O=Markdown Viewer", "CN=Markdown Viewer (WebView2) Code Signing" };
     // Setup: no option (a window) or --install (no window: used by Install.cmd). Uninstall.exe: no option (a
@@ -586,8 +586,8 @@ public static class Setup
                     ek.SetValue("PerceivedType", "text");
                 }
             }
-            // "Open with" for pictures, video, audio and CSV / TSV tables: shown in the viewer's own page.
-            SetValue(classes, MediaProgId, "", "Picture, video, audio or table");
+            // "Open with" for pictures, video, audio, CSV / TSV tables and JSON: shown in the viewer's own page.
+            SetValue(classes, MediaProgId, "", "Picture, video, audio, table or JSON");
             SetValue(classes, MediaProgId + @"\DefaultIcon", "", icon);
             SetValue(classes, MediaProgId + @"\shell\open\command", "", command);
             SetValue(classes, MediaProgId + @"\shell\open", "FriendlyAppName", AppName);

@@ -123,14 +123,90 @@
     return problems;
   }
 
+  // JSON files: test\sample.json (text, tree, table), test\events.jsonl (one value per line), test\broken.json.
+  async function checkJson(name) {
+    for (let i = 0; i < 100 && !output.querySelector('.json-view'); i++) await sleep(50);
+    const problems = [];
+    if (!output.querySelector('.json-view')) return ['no JSON view'];
+    const modeBtn = label => [...output.querySelectorAll('.json-modes button')].find(b => b.textContent.includes(label));
+    const click = el => el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    if (/broken\.json$/i.test(name)) {
+      const err = output.querySelector('.json-error');
+      if (!err || !/line 4/.test(err.textContent)) problems.push('error box: ' + (err ? err.textContent : 'none'));
+      if (!modeBtn('Tree').disabled || !modeBtn('Table').disabled) problems.push('tree/table not disabled for invalid JSON');
+      if (!output.querySelector('pre.json-text') || !output.querySelector('pre.json-text').textContent.includes('"b":')) problems.push('raw text not shown');
+      return problems;
+    }
+    click(modeBtn('Text'));
+    const text = () => output.querySelector('pre.json-text').textContent;
+    if (/sample\.json$/i.test(name)) {
+      if (!text().includes('"id": 12345678901234567890')) problems.push('long number not kept exactly');
+      if (!text().includes('"note": "<script>')) problems.push('script string not shown as text');
+      for (const want of ['{', '  "items": [', '    {', '      "sku": "A1",', '      "tags": [', '        "office",', '      "stock": {', '        "store": 10,', '  "empty": {},', '  "list": []', '}']) {
+        if (!text().split('\n').includes(want)) problems.push('formatted line missing: ' + want);
+      }
+      // Tree: the root shows 8 keys; opening "items" shows 3 items.
+      click(modeBtn('Tree'));
+      await sleep(150);
+      const rootSummary = output.querySelector('.json-tree > details > summary');
+      if (!rootSummary || !rootSummary.textContent.includes('8 keys')) problems.push('tree root: ' + (rootSummary ? rootSummary.textContent : 'none'));
+      const idLeaf = [...output.querySelectorAll('.json-tree .json-leaf')].find(l => l.textContent.startsWith('"id"'));
+      if (!idLeaf || idLeaf.textContent !== '"id": 12345678901234567890') problems.push('tree long number: ' + (idLeaf && idLeaf.textContent));
+      const items = [...output.querySelectorAll('.json-tree summary')].find(s => s.textContent.startsWith('"items"'));
+      if (!items) problems.push('no items node');
+      else {
+        items.parentElement.open = true;
+        await sleep(150);
+        const kids = items.parentElement.querySelector('.json-kids').children.length;
+        if (kids !== 3) problems.push('items children: ' + kids);
+      }
+      // Table: $.items with flattened columns; sort by price; another array; choose columns.
+      click(modeBtn('Table'));
+      await sleep(100);
+      const heads = () => [...output.querySelectorAll('.csv-table thead tr:first-child th')].map(t => t.textContent);
+      const rows = () => [...output.querySelector('.csv-table').tBodies[0].rows].map(r => [...r.cells].map(c => c.textContent));
+      const select = output.querySelector('select.json-array');
+      if (!select || select.value !== '$.items') problems.push('first array: ' + (select && select.value));
+      const want = ['sku', 'name', 'price', 'tags', 'stock.store', 'stock.online', 'discontinued'];
+      if (heads().join('|') !== want.join('|')) problems.push('columns: ' + heads().join('|'));
+      if (rows().length !== 3) problems.push('rows: ' + rows().length);
+      if (!rows().some(r => r[1] === `<img src=x onerror="window.PWN='json-img'">`)) problems.push('img string not shown as text');
+      const price = output.querySelectorAll('.csv-table thead tr:first-child th')[2];
+      price.click(); price.click();
+      if (rows().map(r => r[0]).join(',') !== 'B2,C3,A1') problems.push('sort price desc: ' + rows().map(r => r[0]).join(','));
+      const tags = [...output.querySelectorAll('.csv-cols-list input')].find(b => b.parentElement.textContent === 'tags');
+      tags.checked = false; tags.dispatchEvent(new Event('change'));
+      if (heads().includes('tags') || !output.querySelector('.csv-cols-btn').textContent.includes('6 of 7')) problems.push('hide column in JSON table');
+      select.value = '$ (keys and values)'; select.dispatchEvent(new Event('change'));
+      await sleep(100);
+      const idRow = rows().find(r => r[0] === 'id');
+      if (!idRow || idRow[1] !== '12345678901234567890') problems.push('table long number: ' + (idRow && idRow[1]));
+      const sel2 = output.querySelector('select.json-array');
+      sel2.value = '$.owners'; sel2.dispatchEvent(new Event('change'));
+      await sleep(100);
+      if (rows().length !== 1 || heads().join('|') !== 'name|role') problems.push('owners: ' + heads().join('|'));
+      click(modeBtn('Text'));
+    }
+    if (/events\.jsonl$/i.test(name)) {
+      if (!text().includes('"message": "slow disk"')) problems.push('jsonl text');
+      click(modeBtn('Table'));
+      await sleep(100);
+      const n = output.querySelector('.csv-table').tBodies[0].rows.length;
+      const heads = [...output.querySelectorAll('.csv-table thead tr:first-child th')].map(t => t.textContent).join('|');
+      if (n !== 3 || heads !== 'time|level|message|ms|code') problems.push('jsonl table: ' + n + ' / ' + heads);
+      click(modeBtn('Text'));
+    }
+    return problems;
+  }
+
   async function run() {
     const results = [];
     for (const [name, b64] of window.TESTDOCS) {
       const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
       lastBreakdown = null;
       loadEntries([{ path: name, file: new File([bytes], name) }]);
-      if (/\.(csv|tsv)$/i.test(name)) {
-        const tableProblems = await checkTable(name);
+      if (/\.(csv|tsv|json|jsonl|ndjson)$/i.test(name)) {
+        const tableProblems = /\.(csv|tsv)$/i.test(name) ? await checkTable(name) : await checkJson(name);
         results.push({
           name,
           rendered: output.textContent.trim().length > 0,

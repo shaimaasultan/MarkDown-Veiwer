@@ -1,4 +1,4 @@
-# Tests the viewer page in src\ with the documents in test\ (plus, optionally, every .md / .csv / .tsv in -Folder):
+# Tests the viewer page in src\ with the documents in test\ (plus, optionally, every .md / .csv / .tsv / .json / .jsonl / .ndjson in -Folder):
 #   test-viewer.ps1                     test\*.md
 #   test-viewer.ps1 -Folder ..\..\BAD   also the .md files in that folder
 #
@@ -45,10 +45,10 @@ function ConvertTo-NativeArgument([string]$text) {
 }
 
 # The documents: plain .md files only (no links), each at most 4 MB.
-$docFiles = @(Get-ChildItem -LiteralPath $tests -File | Where-Object { $_.Extension -in '.md', '.csv', '.tsv' })
+$docFiles = @(Get-ChildItem -LiteralPath $tests -File | Where-Object { $_.Extension -in '.md', '.csv', '.tsv', '.json', '.jsonl', '.ndjson' })
 if ($Folder) {
     if (-not (Test-Path -LiteralPath $Folder -PathType Container)) { Write-Host "Folder not found: $Folder"; exit 2 }
-    $docFiles += @(Get-ChildItem -LiteralPath $Folder -File | Where-Object { $_.Extension -in '.md', '.csv', '.tsv' })
+    $docFiles += @(Get-ChildItem -LiteralPath $Folder -File | Where-Object { $_.Extension -in '.md', '.csv', '.tsv', '.json', '.jsonl', '.ndjson' })
 }
 $docFiles = @($docFiles | Where-Object { -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -and $_.Length -le $maxDoc })
 if (-not $docFiles.Count) { Write-Host 'No test documents found.'; exit 2 }
@@ -183,7 +183,7 @@ foreach ($d in $r.results) {
     if ($d.otherInputs) { $problems += "$($d.otherInputs) input(s) other than disabled checkboxes" }
     if ($d.pwn) { $problems += "a payload ran: $($d.pwn)" }
     $v = $d.viewed
-    $info = if ($v) { '{0} lines, {1} chars, {2} words' -f $v.lines, $v.chars, $v.words } else { 'table: drawn, sorted and filtered as expected' }
+    $info = if ($v) { '{0} lines, {1} chars, {2} words' -f $v.lines, $v.chars, $v.words } else { 'table / JSON views as expected' }
     if ($problems.Count) {
         $failed++
         Write-Host ("FAIL {0,-24} {1}" -f $d.name, ($problems -join '; ')) -ForegroundColor Red

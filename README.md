@@ -14,7 +14,7 @@ and never goes online.
 - **Math** with [KaTeX](https://katex.org) (`$…$`, `$$…$$`, ```` ```math ````)
 - **Code colouring** with [highlight.js](https://highlightjs.org)
 - **Diagrams** with [Mermaid](https://mermaid.js.org) (```` ```mermaid ````)
-- **Folder sidebar** with every Markdown, CSV and TSV file next to the opened one, a table of contents, and a picture/diagram viewer
+- **Folder sidebar** with every Markdown, CSV, TSV and JSON file next to the opened one, a table of contents, and a picture/diagram viewer
 - **Images list** (🖼️ Images, Ctrl+Shift+G): every picture in the document as a thumbnail; click to go to it, double-click to enlarge, and step through them in the viewer with ‹ › or the arrow keys
 - **Links list** (🔗 Links, Ctrl+Shift+L): every link with its text and real address (web, e-mail, other Markdown files, sections, disabled files); links flagged by the safety check are marked ⚠. Clicking an entry goes to the link in the document without opening it; ⧉ copies the address
 - **Counts**: lines, characters, words, sentences, paragraphs, reading time, images, links, tables, code blocks, equations
@@ -34,6 +34,7 @@ and never goes online.
 - **Video and audio**: `![clip](clip.mp4)` (as on GitHub) or `<video src="clip.mp4" controls>` plays in the page; .mp4, .webm, .mp3, .wav, .ogg. Videos are read a few MB at a time as they play, so any size works and seeking is instant
 - **Open pictures, video and audio directly**: right-click a file › Open with › Markdown Viewer (WebView2) shows it on its own page (the installer adds it to Open with only, never as the default app)
 - **CSV and TSV tables**: a `.csv` or `.tsv` file (opened with right-click › Open with, from a link in a document, from the file list or by dropping it) is shown as a table: click a column to sort it (numbers as numbers), filter all columns at once (hidden ones too: a hidden column where the text is found is shown again) or each column on its own (text anywhere in the cell, or `>100`, `<=5`, `=Toronto`, `!=0`…), choose which columns to show (☰ Columns: tick or untick each, find a column by name, Show all / Hide all; the count shows how many of all columns are shown), and copy or save the rows the filters keep - only the shown columns - in the shown order. The separator (comma, semicolon, tab, `|`) is detected; quoted cells may hold commas and line breaks. Every cell is plain text - nothing in a table can become a link, a picture or code. Large files stay quick: 500 rows are drawn at a time.
+- **JSON files**: `.json`, and `.jsonl` / `.ndjson` (one JSON value per line), open the same ways as tables and can be shown three ways: **{ } Text** - indented and coloured with line numbers, re-indented from the file's own characters so every number and string stays exactly as written (a 20-digit id is not rounded); **🌳 Tree** - objects and arrays you open and close, with item counts, Expand all / Collapse all, 500 items drawn at a time; **▦ Table** - one of its arrays (chosen from a list such as `$.items (120 items)`, or the top object's keys and values), each element a row and nested fields as columns like `stock.store`, with the same sorting, filters, ☰ Columns, Copy and Save CSV as CSV files. Text that is not valid JSON is shown as it is, with the line and column where it breaks. Every key and value is plain text - nothing in a JSON file can become a link, a picture or code.
 - **Pictures on / off** (Ctrl+Shift+B, remembered): with pictures off, documents open without loading any picture - each shows its text (or file name) instead; right-click a placeholder › Load picture (or Load all pictures) to show it
 - **Picture as text**: "</> Text" in the picture viewer shows the picture file the way Notepad would open it (SVG as its text, PNG/JPG as their bytes)
 - **Text size and page width**: A− / A+ (small to largest) and ↔ (normal, wide, full window), remembered; printing keeps its own size
@@ -47,7 +48,7 @@ and never goes online.
 Every point below, with where it is implemented and how it was tested, is listed in
 [SECURITY-CHECKLIST.md](SECURITY-CHECKLIST.md).
 
-- **Preview only.** Scripts, event handlers, `javascript:` links, frames, forms and plugins in a document are removed before display and also blocked by the window's Content-Security-Policy. Only Markdown, text, CSV/TSV tables, images, audio and video files are read from disk.
+- **Preview only.** Scripts, event handlers, `javascript:` links, frames, forms and plugins in a document are removed before display and also blocked by the window's Content-Security-Policy. Only Markdown, text, CSV/TSV tables, JSON, images, audio and video files are read from disk.
 - **No network port.** The page lives at a private address (`https://mdviewer.example`) that exists only inside the app window; every request is answered by the program itself.
 - **Never goes online.** All libraries are bundled (`src\lib\`) and packed into the signed Content DLL. The WebView2 engine is started so that it cannot look up any internet address, without background networking, component updates, pings, SmartScreen checks or Microsoft-account sign-in. Pictures a document links to on the web are shown as *not loaded*. (Only the optional `Check-Updates.cmd`, when you run it, asks two fixed sites for version numbers - see [Checking for updates](#checking-for-updates).)
 - **Links ask first.** Web and mail links open outside the app only after a question that shows the real address.
@@ -249,12 +250,12 @@ The SDK files are pinned by SHA-256, so an update is a deliberate step:
 
 ### Testing the viewer page
 
-Double-click `app\Test-Viewer.cmd` (it changes nothing). It opens every document in `test\` (`.md`, `.csv`, `.tsv`,
+Double-click `app\Test-Viewer.cmd` (it changes nothing). It opens every document in `test\` (`.md`, `.csv`, `.tsv`, `.json`, `.jsonl`, `.ndjson`,
 up to 4 MB each) in the viewer page, in Microsoft Edge without a window, and fails unless each one is shown,
 its breakdown adds up (✓), no element, attribute or address that could run code reaches the page, no payload
 in `test\attack.md` ran and all four libraries load. For the tables it also checks that `test\data.csv`
 (payload cells, quoted commas and line breaks) is drawn exactly as text and sorts and filters correctly, and
-that choosing columns in `test\wide.csv` (40 columns) works. Add your own documents with
+that choosing columns in `test\wide.csv` (40 columns) works; for JSON, that `test\sample.json` is shown as text (with its 20-digit number exact), as a tree and as tables of its arrays, that `test\events.jsonl` becomes a table, and that `test\broken.json` shows where it breaks. Add your own documents with
 `Test-Viewer.cmd -Folder C:\path\to\folder`. To try a large table, `test\make-million-csv.ps1` writes
 `test\million-rows.csv` (1,000,000 rows, about 45 MB; not kept in git). The page
 runs from a temporary copy of `src\` (removed afterwards), served on 127.0.0.1 only under a random path, in
@@ -277,7 +278,7 @@ a new empty Edge profile that cannot look up any host name.
 | `app\update-libs.ps1` | Downloads, checks and replaces the bundled libraries in `src\` (plan first; asks before downloading; holds back releases under 7 days old) |
 | `app\test-viewer.ps1` | Tests the viewer page with the documents in `test\` (display, breakdown, nothing that could run code) |
 | `app\*.cmd` | Double-click launchers: `Install`, `Uninstall`, `Check-Source`, `Check-Updates`, `Update-Libraries`, `Test-Viewer`, `Trust-` / `Untrust-Certificate` |
-| `test\` | Test documents (formatting, lists, UTF-16, `attack.md` with harmless payloads, `data.csv` and `wide.csv` tables), `selftest.js` (which the test adds to its temporary copy of the page) and `make-million-csv.ps1` (a large table for trying the viewer) |
+| `test\` | Test documents (formatting, lists, UTF-16, `attack.md` with harmless payloads, `data.csv` and `wide.csv` tables, `sample.json`, `events.jsonl` and `broken.json`), `selftest.js` (which the test adds to its temporary copy of the page) and `make-million-csv.ps1` (a large table for trying the viewer) |
 | `webview2\` | Microsoft WebView2 SDK files needed to build the app, with their license |
 | `docs\` | Promo video and its poster picture |
 

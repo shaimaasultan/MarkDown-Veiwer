@@ -533,7 +533,7 @@
     .csv-btn { border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: 600 .78rem/1 system-ui, sans-serif; padding: .4rem .6rem; cursor: pointer; }
     .csv-btn:hover { color: var(--accent); border-color: var(--accent); }
     .csv-more { align-self: flex-start; }
-    .csv-scroll { overflow: auto; max-height: calc(100vh - 15rem); border: 1px solid var(--border); border-radius: 6px; }
+    .csv-scroll { overflow: auto; max-height: max(22rem, calc(100vh - 15rem)); border: 1px solid var(--border); border-radius: 6px; }
     .markdown-body .csv-table { margin: 0; display: table; width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; }
     .markdown-body .csv-table th, .markdown-body .csv-table td { white-space: pre-wrap; max-width: 32rem; vertical-align: top; }
     .markdown-body .csv-table thead th { position: sticky; z-index: 1; background: var(--panel, var(--bg)); }
@@ -553,6 +553,30 @@
     .markdown-body .csv-col-choice input[type=checkbox] { margin: 0; flex: none; }
     .markdown-body .csv-table td.csv-empty { color: var(--muted); font-style: italic; }
     @media print { .csv-bar, .csv-more, .csv-filters, .csv-cols-panel { display: none !important; } .csv-scroll { max-height: none; overflow: visible; border: 0; } }
+    /* ---- JSON ---- */
+    .json-view { display: flex; flex-direction: column; gap: .6rem; }
+    .json-modes { display: inline-flex; gap: 0; }
+    .json-modes .csv-btn { border-radius: 0; margin-inline-start: -1px; }
+    .json-modes .csv-btn:first-child { border-radius: 6px 0 0 6px; margin-inline-start: 0; }
+    .json-modes .csv-btn:last-child { border-radius: 0 6px 6px 0; }
+    .json-modes .csv-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .json-modes .csv-btn:disabled { opacity: .45; cursor: default; }
+    .json-array { margin-inline-start: .35rem; padding: .3rem .4rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; max-width: 28rem; }
+    .markdown-body pre.json-text { margin: 0; padding: .75rem 0; overflow: auto; max-height: max(22rem, calc(100vh - 15rem)); counter-reset: jsonline; font-size: .85em; line-height: 1.5; white-space: pre; }
+    .markdown-body pre.json-text .json-line { counter-increment: jsonline; }
+    .markdown-body pre.json-text .json-line::before { content: counter(jsonline); display: inline-block; width: 4.5em; padding-inline-end: 1em; text-align: right; color: var(--muted); user-select: none; }
+    .markdown-body pre.json-text.plain { padding: .75rem 1rem; }
+    .json-tree { font: .88em/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; padding: .5rem .75rem; border: 1px solid var(--border); border-radius: 6px; overflow: auto; max-height: max(22rem, calc(100vh - 15rem)); }
+    .json-tree details > summary { cursor: pointer; list-style: none; }
+    .json-tree details > summary::before { content: '▸'; display: inline-block; width: 1.1em; color: var(--muted); }
+    .json-tree details[open] > summary::before { content: '▾'; }
+    .json-tree .json-kids { padding-inline-start: 1.4em; border-inline-start: 1px dotted var(--border); margin-inline-start: .4em; }
+    .json-tree .json-leaf { padding-inline-start: 1.1em; white-space: pre-wrap; word-break: break-word; }
+    .json-tree .json-count { color: var(--muted); font-style: italic; }
+    .json-tree .json-more { margin: .3rem 0 .3rem 1.1em; }
+    .json-error { padding: .6rem .8rem; border: 1px solid #d1242f; border-radius: 6px; color: #d1242f; background: rgba(209,36,47,.06); }
+    .json-note { color: var(--muted); margin: 0; }
+    @media print { .json-bar { display: none !important; } .markdown-body pre.json-text, .json-tree { max-height: none; overflow: visible; } }
     /* ---- Compare two versions ---- */
     dialog#compare {
       width: min(1200px, calc(100vw - 32px)); height: calc(100vh - 48px); padding: 1rem 1.25rem;

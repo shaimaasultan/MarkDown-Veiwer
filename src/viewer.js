@@ -529,11 +529,11 @@ setInterval(async () => {
 // Renders currentSource (the file as read, or as edited by Find & Replace).
 function renderDoc({ anchor = null, keepScroll = false } = {}) {
   const scroll = content.scrollTop;
-  if (TABLE_RE.test(currentPath)) {
-    // A table file: never parsed as Markdown, so there is no code to report and no source view to map.
+  if (TABLE_RE.test(currentPath) || JSON_RE.test(currentPath)) {
+    // A table or JSON file: never parsed as Markdown, so there is no code to report and no source view to map.
     dropHint.hidden = true;
     lastSafety = null;
-    renderTableDocument();
+    if (JSON_RE.test(currentPath)) renderJsonDocument(); else renderTableDocument();
     buildToc();
     buildImageList();
     buildLinkList();
@@ -812,7 +812,7 @@ function addTableTools(root) {
 // so nothing in the file can become markup, a link, a picture or code. Rows are sorted and filtered in
 // memory and drawn a page at a time, so large files stay quick.
 const TABLE_RE = /\.(csv|tsv)$/i;
-const DOC_RE = /\.(md|markdown|mdown|mkd|csv|tsv)$/i;
+const DOC_RE = /\.(md|markdown|mdown|mkd|csv|tsv|json|jsonl|ndjson)$/i;
 const CSV_PAGE = 500;
 const csvCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 const DELIM_NAMES = { ',': 'comma', ';': 'semicolon', '\t': 'tab', '|': 'vertical bar' };
@@ -999,7 +999,9 @@ function buildCsvView() {
   const save = make('button', 'csv-btn', '⬇ Save CSV');
   save.type = 'button';
   save.title = 'Save the shown columns of the rows the filters keep, in this order, as a CSV file';
-  bar.append(search, colsWrap, headerLabel, clear);
+  bar.append(search, colsWrap);
+  if (s.kind !== 'json') bar.append(headerLabel);      // a JSON table's column names come from its keys
+  bar.append(clear);
   const sub = make('div', 'csv-bar csv-subbar');
   sub.append(info, copy, save);
 
@@ -1041,7 +1043,7 @@ function buildCsvView() {
     } catch (e) { showToast(`Saving failed: ${e.message}`); }
   });
 
-  output.replaceChildren(view);
+  (s.host || output).replaceChildren(view);
   refreshCsv();
 }
 
@@ -1206,11 +1208,13 @@ function csvDraw(s, redraw) {
 function updateCsvStats() {
   const s = csvState;
   const stats = document.getElementById('stats');
-  if (!s || !TABLE_RE.test(currentPath || '')) return;
+  if (!s || !(TABLE_RE.test(currentPath || '') || JSON_RE.test(currentPath || ''))) return;
   const group = (title, text) => { const g = document.createElement('span'); g.className = 'group'; g.title = title; g.textContent = text; return g; };
   stats.replaceChildren(
-    group('The table in this file', `Table: ${plural(s.data.length, 'row')} · ${plural(s.width, 'column')} · separator: ${DELIM_NAMES[s.delim] || s.delim}` +
-          (s.header ? ' · first row is the header' : '')),
+    s.kind === 'json'
+      ? group('The array shown as a table', `JSON table from ${s.label}: ${plural(s.data.length, 'row')} · ${plural(s.width, 'column')}`)
+      : group('The table in this file', `Table: ${plural(s.data.length, 'row')} · ${plural(s.width, 'column')} · separator: ${DELIM_NAMES[s.delim] || s.delim}` +
+              (s.header ? ' · first row is the header' : '')),
     group('What the filters and the column choice keep', `Shown: ${plural(s.view.length, 'row')} · ${fmt(s.cols.length)} of ${plural(s.width, 'column')}`),
     group('How this file is shown', 'Shown as plain text: nothing in a table can run, link or load anything'));
 }
@@ -1218,6 +1222,375 @@ function updateCsvStats() {
 function debounce(fn, ms) {
   let t = 0;
   return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+}
+
+// ---------------------------------------------------------------- JSON
+// A .json file (or .jsonl / .ndjson: one value per line) is shown three ways: as indented text, as a tree, or
+// as a table of one of its arrays (the same table as CSV files). Every key and value goes into the page as
+// text (textContent); nothing in a JSON file can become markup, a link or code.
+const JSON_RE = /\.(json|jsonl|ndjson)$/i;
+const JSON_LINES_RE = /\.(jsonl|ndjson)$/i;
+const JSON_TEXT_RICH = 3e6;        // up to this many characters: colours and line numbers; above: plain text
+const JSON_TREE_PAGE = 500;         // items drawn at a time in an opened array or object
+let jsonState = null;
+let jsonLastMode = 'text';
+
+// A number whose usual form differs from how the file writes it (a 20-digit id, 1.50, 1e3) is kept exactly as
+// written: JSON.rawJSON holds its text, and JSON.stringify writes it back unchanged.
+const jsonExact = typeof JSON.rawJSON === 'function'
+  ? (key, value, context) => (typeof value === 'number' && context && typeof context.source === 'string' && String(value) !== context.source
+                              ? JSON.rawJSON(context.source) : value)
+  : undefined;
+const isRawNumber = v => typeof JSON.isRawJSON === 'function' && JSON.isRawJSON(v);
+const jsonParseValue = text => JSON.parse(text, jsonExact);
+
+function jsonParse(text, lines) {
+  if (lines) {
+    const out = [];
+    const ls = text.split(/\r\n|\n|\r/);
+    for (let i = 0; i < ls.length; i++) {
+      const l = ls[i].trim();
+      if (!l) continue;
+      try { out.push(jsonParseValue(l)); } catch (e) { return { error: e.message, line: i + 1, col: 1 }; }
+    }
+    return { value: out };
+  }
+  try { return { value: jsonParseValue(text) }; }
+  catch (e) {
+    let line = null, col = null;
+    const pos = /position (\d+)/.exec(e.message), lc = /line (\d+) column (\d+)/.exec(e.message);
+    let at = lc ? null : pos ? +pos[1] : jsonErrorAt(text);
+    if (lc) { line = +lc[1]; col = +lc[2]; }
+    else if (at !== null) {
+      const before = text.slice(0, at);
+      line = before.split(/\r\n|\n|\r/).length;
+      col = before.length - Math.max(before.lastIndexOf('\n'), before.lastIndexOf('\r'));
+    }
+    return { error: e.message, line, col };
+  }
+}
+
+// The character where JSON text stops being valid (a small checker that follows the JSON grammar).
+function jsonErrorAt(text) {
+  let i = 0;
+  const n = text.length;
+  const fail = () => { throw i; };
+  const ws = () => { while (i < n && ' \t\n\r'.includes(text[i])) i++; };
+  const str = () => {
+    if (text[i] !== '"') fail();
+    i++;
+    while (i < n && text[i] !== '"') {
+      if (text[i] === '\\') { i++; if (text[i] === 'u') { if (!/^[0-9a-fA-F]{4}$/.test(text.substr(i + 1, 4))) fail(); i += 4; } else if (!'"\\/bfnrt'.includes(text[i])) fail(); }
+      else if (text.charCodeAt(i) < 0x20) fail();
+      i++;
+    }
+    if (i >= n) fail();
+    i++;
+  };
+  const val = () => {
+    ws();
+    const ch = text[i];
+    if (ch === '{') {
+      i++; ws();
+      if (text[i] === '}') { i++; return; }
+      for (;;) { ws(); str(); ws(); if (text[i] !== ':') fail(); i++; val(); ws(); if (text[i] === ',') { i++; continue; } if (text[i] === '}') { i++; return; } fail(); }
+    }
+    if (ch === '[') {
+      i++; ws();
+      if (text[i] === ']') { i++; return; }
+      for (;;) { val(); ws(); if (text[i] === ',') { i++; continue; } if (text[i] === ']') { i++; return; } fail(); }
+    }
+    if (ch === '"') { str(); return; }
+    const m = /^-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?|^(true|false|null)/.exec(text.slice(i, i + 400));
+    if (!m) fail();
+    i += m[0].length;
+  };
+  try { val(); ws(); if (i < n) fail(); return null; } catch (at) { return typeof at === 'number' ? Math.min(at, n) : null; }
+}
+
+// Re-indents JSON from its own characters (two spaces a level): strings and numbers stay exactly as written,
+// so no digit of a long number is rounded away. Returns lines of [kind, text] pieces.
+function jsonFormat(text) {
+  const lines = [];
+  let cur = null, depth = 0;
+  const start = () => { if (cur && cur.some(p => p[0] !== 'pad')) lines.push(cur); cur = depth ? [['pad', '  '.repeat(depth)]] : []; };
+  const add = (kind, t) => { if (!cur) start(); cur.push([kind, t]); };
+  const n = text.length;
+  const ws = c => c === ' ' || c === '\t' || c === '\n' || c === '\r';
+  const next = k => { while (k < n && ws(text[k])) k++; return k; };
+  let i = 0;
+  while (i < n) {
+    const ch = text[i];
+    if (ws(ch)) { i++; continue; }
+    if (ch === '"') {
+      let j = i + 1;
+      while (j < n && text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
+      add(text[next(j + 1)] === ':' ? 'key' : 'str', text.slice(i, j + 1));
+      i = j + 1;
+      continue;
+    }
+    if (ch === '{' || ch === '[') {
+      const close = ch === '{' ? '}' : ']', k = next(i + 1);
+      if (text[k] === close) { add('p', ch + close); i = k + 1; continue; }
+      add('p', ch); depth++; start(); i++;
+      continue;
+    }
+    if (ch === '}' || ch === ']') { depth = Math.max(0, depth - 1); start(); add('p', ch); i++; continue; }
+    if (ch === ',') { add('p', ','); start(); i++; continue; }
+    if (ch === ':') { add('p', ': '); i++; continue; }
+    let j = i;
+    while (j < n && !ws(text[j]) && ',:{}[]"'.indexOf(text[j]) < 0) j++;
+    if (j === i) j = i + 1;
+    const word = text.slice(i, j);
+    add(/^(true|false|null)$/.test(word) ? 'lit' : 'num', word);
+    i = j;
+  }
+  if (cur && cur.some(p => p[0] !== 'pad')) lines.push(cur);
+  return lines;
+}
+
+const JSON_CLASS = { key: 'hljs-attr', str: 'hljs-string', num: 'hljs-number', lit: 'hljs-literal', p: 'hljs-punctuation' };
+
+function renderJsonDocument() {
+  const text = currentSource.replace(/^﻿/, '');
+  const lines = JSON_LINES_RE.test(currentPath);
+  const keep = jsonState && jsonState.path === currentPath ? jsonState : null;
+  jsonState = { path: currentPath, text, lines, ...jsonParse(text, lines),
+                mode: keep ? keep.mode : jsonLastMode, arrayPath: keep ? keep.arrayPath : null };
+  if (jsonState.error) jsonState.mode = 'text';
+  buildJsonView();
+}
+
+function buildJsonView() {
+  const j = jsonState;
+  const make = csvMake;
+  const view = make('div', 'json-view');
+  const bar = make('div', 'csv-bar json-bar');
+  const modes = make('div', 'json-modes');
+  modes.setAttribute('role', 'group');
+  modes.setAttribute('aria-label', 'Show as');
+  for (const [mode, label, title] of [['text', '{ } Text', 'Indented text with colours and line numbers'],
+                                      ['tree', '🌳 Tree', 'Objects and arrays you can open and close'],
+                                      ['table', '▦ Table', 'One of its arrays as a table: sort, filter, choose columns']]) {
+    const b = make('button', 'csv-btn' + (j.mode === mode ? ' on' : ''), label);
+    b.type = 'button';
+    b.title = j.error && mode !== 'text' ? 'Not valid JSON — only the text can be shown' : title;
+    b.setAttribute('aria-pressed', String(j.mode === mode));
+    b.disabled = !!j.error && mode !== 'text';
+    b.addEventListener('click', () => { j.mode = jsonLastMode = mode; buildJsonView(); });
+    modes.append(b);
+  }
+  bar.append(modes);
+  const body = make('div', 'json-body');
+  view.append(bar, body);
+  output.replaceChildren(view);
+  if (j.mode === 'tree') jsonRenderTree(body, bar);
+  else if (j.mode === 'table') jsonRenderTable(body, bar);
+  else jsonRenderText(body);
+  updateJsonStats();
+}
+
+function jsonRenderText(body) {
+  const j = jsonState;
+  const make = csvMake;
+  if (j.error) {
+    const box = make('div', 'json-error');
+    box.append(make('strong', '', 'Not valid JSON'),
+               document.createTextNode(j.line ? ` — line ${fmt(j.line)}${j.col ? `, column ${fmt(j.col)}` : ''}: ` : ': '),
+               make('span', '', j.error));
+    body.append(box);
+  }
+  // Valid JSON is re-indented; text that is not valid JSON is shown as it is.
+  const pieces = j.error ? null
+               : j.lines ? j.text.split(/\r\n|\n|\r/).filter(l => l.trim()).flatMap((l, k) => (k ? [[]] : []).concat(jsonFormat(l)))
+               : jsonFormat(j.text);
+  const plain = !pieces || j.text.length > JSON_TEXT_RICH;
+  const pre = make('pre', 'json-text hljs' + (plain ? ' plain' : ''));
+  if (plain) {
+    pre.textContent = pieces ? pieces.map(l => l.map(p => p[1]).join('')).join('\n') : j.text;
+    if (pieces) body.append(make('p', 'json-note', 'Large file: shown without colours and line numbers.'));
+  } else {
+    const frag = document.createDocumentFragment();
+    for (const line of pieces) {
+      const row = make('span', 'json-line');
+      for (const [kind, t] of line) {
+        if (kind === 'pad') row.append(document.createTextNode(t));
+        else row.append(make('span', JSON_CLASS[kind], t));
+      }
+      frag.append(row, document.createTextNode('\n'));
+    }
+    pre.append(frag);
+  }
+  body.append(pre);
+}
+
+// ---- tree: branches are drawn when opened, 500 items at a time
+function jsonKind(v) { return v === null ? 'null' : isRawNumber(v) ? 'number' : Array.isArray(v) ? 'array' : typeof v; }
+
+function jsonValueText(v) {
+  const k = jsonKind(v);
+  return k === 'string' ? JSON.stringify(v) : k === 'null' ? 'null' : isRawNumber(v) ? v.rawJSON : String(v);
+}
+
+function jsonTreeNode(key, value, path) {
+  const make = csvMake;
+  const kind = jsonKind(value);
+  const keyEl = key === null ? null : make('span', 'hljs-attr', typeof key === 'number' ? String(key) : JSON.stringify(key));
+  const empty = kind === 'array' ? !value.length : kind === 'object' && !Object.keys(value).length;
+  if ((kind !== 'object' && kind !== 'array') || empty) {
+    const row = make('div', 'json-leaf');
+    if (keyEl) row.append(keyEl, make('span', 'hljs-punctuation', ': '));
+    if (empty) row.append(make('span', 'hljs-punctuation', kind === 'array' ? '[]' : '{}'));
+    else row.append(make('span', kind === 'string' ? 'hljs-string' : kind === 'number' ? 'hljs-number' : 'hljs-literal', jsonValueText(value)));
+    row.title = path;
+    return row;
+  }
+  const entries = kind === 'array' ? value : Object.keys(value);
+  const count = entries.length;
+  const node = make('details', 'json-node');
+  const summary = make('summary');
+  if (keyEl) summary.append(keyEl, make('span', 'hljs-punctuation', ': '));
+  summary.append(make('span', 'hljs-punctuation', kind === 'array' ? '[ ]' : '{ }'),
+                 make('span', 'json-count', ` ${fmt(count)} ${kind === 'array' ? (count === 1 ? 'item' : 'items') : (count === 1 ? 'key' : 'keys')}`));
+  summary.title = path;
+  node.append(summary);
+  const kids = make('div', 'json-kids');
+  node.append(kids);
+  let drawn = 0;
+  const more = make('button', 'csv-btn json-more');
+  more.type = 'button';
+  const drawNext = () => {
+    const end = Math.min(count, drawn + JSON_TREE_PAGE);
+    const frag = document.createDocumentFragment();
+    for (let i = drawn; i < end; i++) {
+      if (kind === 'array') frag.append(jsonTreeNode(i, value[i], `${path}[${i}]`));
+      else { const k = entries[i]; frag.append(jsonTreeNode(k, value[k], /^[A-Za-z_$][\w$]*$/.test(k) ? `${path}.${k}` : `${path}[${JSON.stringify(k)}]`)); }
+    }
+    kids.append(frag);
+    drawn = end;
+    more.hidden = drawn >= count;
+    more.textContent = `Show ${fmt(Math.min(JSON_TREE_PAGE, count - drawn))} more of ${fmt(count)}`;
+    if (!more.hidden) kids.append(more);
+  };
+  more.addEventListener('click', () => { more.remove(); drawNext(); });
+  node.addEventListener('toggle', () => { if (node.open && !drawn && count) drawNext(); });
+  return node;
+}
+
+function jsonRenderTree(body, bar) {
+  const j = jsonState;
+  const make = csvMake;
+  const expand = make('button', 'csv-btn', 'Expand all');
+  expand.type = 'button';
+  expand.title = 'Open every object and array (the first 3,000 at most)';
+  const collapse = make('button', 'csv-btn', 'Collapse all');
+  collapse.type = 'button';
+  bar.append(expand, collapse);
+  const tree = make('div', 'json-tree hljs');
+  const root = jsonTreeNode(null, j.value, '$');
+  if (root.tagName === 'DETAILS') root.open = true;
+  tree.append(root);
+  body.append(tree);
+  expand.addEventListener('click', () => {
+    let opened = 0;
+    for (;;) {
+      const closed = [...tree.querySelectorAll('details.json-node:not([open])')];
+      if (!closed.length || opened >= 3000) break;
+      for (const d of closed) { if (opened >= 3000) break; d.open = true; opened++; }
+    }
+    if (opened >= 3000) showToast('Opened the first 3,000 objects and arrays; open the others one by one.');
+  });
+  collapse.addEventListener('click', () => {
+    tree.querySelectorAll('details.json-node[open]').forEach(d => { if (d !== root) d.open = false; });
+  });
+}
+
+// ---- table: the arrays in the file; each element a row, nested fields as "a.b" columns
+function jsonArrays(value) {
+  const found = [];
+  const walk = (v, path, depth) => {
+    if (found.length >= 60 || depth > 5) return;
+    if (Array.isArray(v)) {
+      if (v.length) found.push({ path, value: v });
+      if (v.length && v[0] && typeof v[0] === 'object' && !Array.isArray(v[0])) walk(v[0], `${path}[0]`, depth + 1);
+    } else if (v && typeof v === 'object' && !isRawNumber(v)) {
+      for (const k of Object.keys(v)) walk(v[k], /^[A-Za-z_$][\w$]*$/.test(k) ? `${path}.${k}` : `${path}[${JSON.stringify(k)}]`, depth + 1);
+    }
+  };
+  walk(value, '$', 0);
+  // An object at the top: also its keys and values as a table.
+  if (value && typeof value === 'object' && !Array.isArray(value) && !isRawNumber(value)) found.push({ path: '$ (keys and values)', value, keys: true });
+  return found;
+}
+
+function jsonTable(source) {
+  const head = [], index = new Map(), data = [];
+  const col = name => {
+    if (!index.has(name)) { if (head.length >= 1000) return -1; index.set(name, head.length); head.push(name); }
+    return index.get(name);
+  };
+  const cell = v => v === null ? 'null' : isRawNumber(v) ? v.rawJSON : typeof v === 'object' ? JSON.stringify(v) : String(v);
+  if (source.keys) {
+    col('key'); col('value');
+    for (const k of Object.keys(source.value)) data.push([k, cell(source.value[k])]);
+    return { head, data };
+  }
+  const flatten = (v, prefix, row, depth) => {
+    if (v && typeof v === 'object' && !Array.isArray(v) && !isRawNumber(v) && depth < 4 && Object.keys(v).length) {
+      for (const k of Object.keys(v)) flatten(v[k], prefix ? `${prefix}.${k}` : k, row, depth + 1);
+    } else {
+      const c = col(prefix || 'value');
+      if (c >= 0) row[c] = cell(v);
+    }
+  };
+  for (const item of source.value) { const row = []; flatten(item, '', row, 0); data.push(row); }
+  for (const row of data) for (let c = 0; c < head.length; c++) if (row[c] === undefined) row[c] = '';
+  return { head, data };
+}
+
+function jsonRenderTable(body, bar) {
+  const j = jsonState;
+  const make = csvMake;
+  if (!j.arrays) j.arrays = jsonArrays(j.value);
+  if (!j.arrays.length) { body.append(make('p', 'json-note', 'There is no array in this file to show as a table.')); return; }
+  let pick = j.arrays.find(a => a.path === j.arrayPath) || j.arrays[0];
+  j.arrayPath = pick.path;
+  const label = make('label', 'csv-option', 'Rows from ');
+  const select = make('select', 'json-array');
+  for (const a of j.arrays) {
+    const o = make('option', '', a.keys ? a.path : `${a.path} (${fmt(a.value.length)} ${a.value.length === 1 ? 'item' : 'items'})`);
+    o.value = a.path;
+    o.selected = a === pick;
+    select.append(o);
+  }
+  label.append(select);
+  bar.append(label);
+  select.addEventListener('change', () => { j.arrayPath = select.value; buildJsonView(); });
+  const { head, data } = jsonTable(pick);
+  const host = make('div', 'json-table');
+  body.append(host);
+  const id = `${j.path}#${pick.path}`;
+  const keep = csvState && csvState.path === id ? csvState : null;
+  csvState = { kind: 'json', label: pick.path, path: id, host, delim: null, rows: [head, ...data], width: head.length, header: true,
+               sortCol: keep ? keep.sortCol : -1, sortDir: keep ? keep.sortDir : '', filter: keep ? keep.filter : '',
+               colFilters: keep ? keep.colFilters : [], hidden: keep ? keep.hidden : new Set(), shown: CSV_PAGE };
+  buildCsvView();
+}
+
+function updateJsonStats() {
+  const j = jsonState;
+  const stats = document.getElementById('stats');
+  if (!j || !JSON_RE.test(currentPath || '')) return;
+  if (j.mode === 'table' && csvState && csvState.kind === 'json' && csvState.path.startsWith(j.path + '#')) { updateCsvStats(); return; }
+  const group = (title, text) => { const g = document.createElement('span'); g.className = 'group'; g.title = title; g.textContent = text; return g; };
+  const v = j.value, k = jsonKind(v);
+  const what = j.error ? 'not valid JSON'
+             : j.lines ? `${plural(v.length, 'line')} of JSON values`
+             : k === 'array' ? `an array of ${plural(v.length, 'item')}`
+             : k === 'object' ? `an object with ${plural(Object.keys(v).length, 'key')}` : `a single ${k}`;
+  stats.replaceChildren(
+    group('What this file holds', `JSON: ${what} · ${fmt(j.text.length)} characters`),
+    group('How this file is shown', 'Shown as plain text: nothing in a JSON file can run, link or load anything'));
 }
 
 function disableLink(a, reason) {
@@ -1273,6 +1646,7 @@ function updateStats() {
   const stats = document.getElementById('stats');
   if (!currentPath) { stats.replaceChildren(); return; }
   if (TABLE_RE.test(currentPath)) { updateCsvStats(); return; }
+  if (JSON_RE.test(currentPath)) { updateJsonStats(); return; }
 
   // Original file: every line, as an editor numbers them (a final line break doesn't add a line).
   const src = currentSource.replace(/^\uFEFF/, '');

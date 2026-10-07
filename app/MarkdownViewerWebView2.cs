@@ -39,15 +39,15 @@ using Microsoft.Win32.SafeHandles;
 // The program's own calls into Windows DLLs (user32, kernel32, advapi32, wintrust) load them from System32
 // only, never from the program's folder or anywhere else on the search path.
 [assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
-[assembly: AssemblyVersion("1.12.0.0")]
-[assembly: AssemblyFileVersion("1.12.0.0")]
-[assembly: AssemblyInformationalVersion("1.12.0")]
+[assembly: AssemblyVersion("1.13.0.0")]
+[assembly: AssemblyFileVersion("1.13.0.0")]
+[assembly: AssemblyInformationalVersion("1.13.0")]
 
 static class Program
 {
     const string AppName = "Markdown Viewer (WebView2)";
     const string DataFolder = "MarkdownViewerWebView2";     // %APPDATA% (settings) and %LOCALAPPDATA% (browser data)
-    const string AppVersion = "1.12.0";
+    const string AppVersion = "1.13.0";
     // Exists only inside this program's windows. Not a .local name: Windows would first spend ~2 s
     // looking for a device called "mdviewer" on the local network before the page could load.
     const string PrivateHost = "https://mdviewer.example";
@@ -61,7 +61,7 @@ static class Program
     // HTML, scripts, PDFs, programs etc. are refused (403) even if a document links to them.
     static readonly HashSet<string> ServedTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        ".md", ".markdown", ".mdown", ".mkd", ".txt", ".csv", ".tsv",
+        ".md", ".markdown", ".mdown", ".mkd", ".txt", ".csv", ".tsv", ".json", ".jsonl", ".ndjson",
         ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp", ".ico", ".svg",
         ".mp4", ".webm", ".mp3", ".wav", ".ogg"
     };
@@ -70,7 +70,7 @@ static class Program
 
     // Largest file handed out from disk (it is read into memory whole): text and SVG, and media.
     static readonly HashSet<string> TextTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        { ".md", ".markdown", ".mdown", ".mkd", ".txt", ".csv", ".tsv", ".svg" };
+        { ".md", ".markdown", ".mdown", ".mkd", ".txt", ".csv", ".tsv", ".json", ".jsonl", ".ndjson", ".svg" };
     const long MaxTextBytes = 50L << 20, MaxMediaBytes = 200L << 20;
 
     // Bundled libraries: only these file types, and only from inside the lib folder.
@@ -1532,7 +1532,7 @@ static class Program
             foreach (string f in Directory.GetFiles(dir))
             {
                 string ext = Path.GetExtension(f).ToLowerInvariant();
-                if (ext == ".md" || ext == ".markdown" || ext == ".mdown" || ext == ".mkd" || ext == ".csv" || ext == ".tsv") files.Add(f);
+                if (ext == ".md" || ext == ".markdown" || ext == ".mdown" || ext == ".mkd" || ext == ".csv" || ext == ".tsv" || ext == ".json" || ext == ".jsonl" || ext == ".ndjson") files.Add(f);
                 if (files.Count >= 500) return;
             }
             if (depth >= 4) return;

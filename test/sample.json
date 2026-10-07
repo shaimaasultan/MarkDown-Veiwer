@@ -1,0 +1,14 @@
+{
+  "store": "Test shop",
+  "id": 12345678901234567890,
+  "note": "<script>window.PWN='json-script'</script>",
+  "link": "javascript:window.PWN='json-link'",
+  "items": [
+    { "sku": "A1", "name": "Pen", "price": 1.5, "tags": ["office", "blue"], "stock": { "store": 10, "online": 4 } },
+    { "sku": "B2", "name": "<img src=x onerror=\"window.PWN='json-img'\">", "price": 12, "tags": [], "stock": { "store": 0, "online": 7 } },
+    { "sku": "C3", "name": "Notebook", "price": 3.25, "discontinued": true, "stock": { "store": 5, "online": 0 } }
+  ],
+  "owners": [{ "name": "Ada", "role": "admin" }],
+  "empty": {},
+  "list": []
+}
