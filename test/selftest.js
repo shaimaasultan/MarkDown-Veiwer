@@ -8,6 +8,12 @@
   window.addEventListener('error', e => pageErrors.push(String(e.message || e.type)));
   window.addEventListener('unhandledrejection', e => pageErrors.push('promise: ' + String(e.reason && e.reason.message || e.reason)));
   const sleep = ms => new Promise(r => setTimeout(r, ms));
+  // Everything the page loads (files, addresses) and everything the security policy blocks, as it happens.
+  const loads = [], blocked = [];
+  new PerformanceObserver(list => { for (const e of list.getEntries()) loads.push(e.name); }).observe({ type: 'resource' });
+  document.addEventListener('securitypolicyviolation', e => blocked.push(`${e.effectiveDirective} ${e.blockedURI || ''}`.trim()));
+  // win.ini's own lines: they must never show up (an XML external entity or XInclude reading the file).
+  const LEAK = /for 16-bit app support|\[fonts\]|\[extensions\]|\[mci extensions\]/i;
   const BAD_TAGS = 'script, iframe, frame, object, embed, applet, form, base, meta, link, portal, frameset';
   const BAD_URL = /^\s*(javascript|vbscript|livescript)\s*:|^\s*data\s*:\s*text\/html/i;
 
@@ -205,6 +211,8 @@
     const ext = name.split('.').pop().toLowerCase();
     const click = el => el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     const wait = async sel => { for (let i = 0; i < 100 && !output.querySelector(sel); i++) await sleep(50); return output.querySelector(sel); };
+    if (ext === 'xml' && name !== 'catalog.xml') return checkHostileXml(name, bytes);
+    if (ext === 'html') return checkHostileHtml(name, bytes);
     if (['xml'].includes(ext)) {
       if (!(await wait('.json-view'))) return ['no XML view'];
       const dlg = document.getElementById('codeAlert');
@@ -282,6 +290,70 @@
     return problems;
   }
 
+  // test\hostile.xml and test\entities.xml: every view (text, tree, table) shows the file as data. Scripts, event
+  // attributes, stylesheets, XInclude and external entities stay text or are left out; win.ini is never read.
+  // test\entity-bomb.xml: the parser refuses it at once (not well-formed), shown as text only.
+  async function checkHostileXml(name, bytes) {
+    const problems = [];
+    const click = el => el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    for (let i = 0; i < 100 && !output.querySelector('.json-view'); i++) await sleep(50);
+    if (!output.querySelector('.json-view')) return ['no XML view'];
+    const dlg = document.getElementById('codeAlert');
+    const warned = dlg.open && document.getElementById('caTitle').textContent.includes('shown as text');
+    if (dlg.open) dlg.close();
+    if (name === 'hostile.xml' && !warned) problems.push('no "contains code" warning');
+    const source = new TextDecoder().decode(bytes);
+    const parses = name !== 'entity-bomb.xml';
+    if (!parses) {
+      const err = output.querySelector('.json-error');
+      if (!err || !/amplification/i.test(err.textContent)) problems.push('entity bomb not refused: ' + (err ? err.textContent.slice(0, 120) : 'no error'));
+    }
+    const modeBtn = label => [...output.querySelectorAll('.json-modes button')].find(b => b.textContent.includes(label));
+    for (const mode of ['Text', 'Tree', 'Table']) {
+      const b = modeBtn(mode);
+      if (!b || b.disabled) { if (mode === 'Text' || parses) problems.push(mode + ' view missing'); continue; }
+      if (!parses && mode !== 'Text') { problems.push(mode + ' view offered for a file that does not parse'); continue; }
+      click(b);
+      await sleep(150);
+      // Every node drawn: opening a node draws its children (closed), so open until none is left closed.
+      for (let round = 0; mode === 'Tree' && round < 20 && output.querySelector('.json-tree details:not([open])'); round++) {
+        for (const d of output.querySelectorAll('.json-tree details:not([open])')) d.open = true;
+        await sleep(100);
+      }
+      await sleep(150);
+      const shown = output.textContent;
+      if (LEAK.test(shown)) problems.push(mode + ': win.ini was read');
+      const bad = inspect();
+      if (bad.badTags.length || bad.onAttrs.length || bad.badUrls.length) problems.push(mode + ': markup in the page ' + JSON.stringify(bad));
+      const foreign = output.querySelector('svg, img, video, audio, iframe');
+      if (foreign) problems.push(mode + ': <' + foreign.tagName.toLowerCase() + '> from the file in the page');
+      if (mode === 'Text' && output.querySelector('pre.xml-text').textContent !== source.replace(/^﻿/, '')) problems.push('Text: not the exact source');
+      if (name === 'hostile.xml' && mode === 'Tree' && !shown.includes(`onload="window.PWN='svg-onload'"`)) problems.push('Tree: svg onload not shown as text');
+      if (name === 'entities.xml' && mode === 'Tree' && !shown.includes('<notes> 2 children')) problems.push('Tree: entities.xml not read');
+      if (name === 'hostile.xml' && mode === 'Table' && !shown.includes("</code></pre><script>window.PWN='cdata'</script>")) problems.push('Table: CDATA not shown as text');
+    }
+    click(modeBtn('Text'));
+    return problems;
+  }
+
+  // test\page.html: the page's source, as text; never a page (nothing in it runs or loads).
+  async function checkHostileHtml(name, bytes) {
+    const problems = [];
+    for (let i = 0; i < 100 && !output.querySelector('.code-file'); i++) await sleep(50);
+    if (!output.querySelector('.code-file')) return ['no code view'];
+    const dlg = document.getElementById('codeAlert');
+    if (!dlg.open || !document.getElementById('caTitle').textContent.includes('shown as text')) problems.push('no "contains code" warning');
+    if (dlg.open) dlg.close();
+    const source = new TextDecoder().decode(bytes).replace(/^﻿/, '');
+    const shown = output.querySelector('pre.code-text code').textContent;
+    if (shown !== source) problems.push('not the exact source');
+    if (!output.querySelector('pre.code-text code span')) problems.push('not coloured');
+    if (!/never opened as a page/.test(output.querySelector('.csv-bar').textContent)) problems.push('no "never opened as a page" note');
+    if (output.querySelector('pre.code-text code *:not(span)')) problems.push('elements other than colour spans in the code');
+    if (!/Contains code/.test(document.getElementById('stats').textContent)) problems.push('status line: ' + document.getElementById('stats').textContent.slice(0, 160));
+    return problems;
+  }
+
   // The file list: one entry per document with its type icon; the type filter hides and shows kinds.
   async function checkFileList() {
     const problems = [];
@@ -312,8 +384,17 @@
 
   async function run() {
     const results = [];
+    // Loads while a document is open: the page's own files (fonts, libraries) are fine; anything else - another
+    // address, a file from the folder, or anything at all for XML and HTML files - is reported.
+    const own = location.origin + '/' + token + '/';
+    const loadsFrom = (name, l0, b0) => {
+      const markup = /\.(xml|html?)$/i.test(name);
+      return { loads: loads.slice(l0).filter(u => markup || !u.startsWith(own) || /testdocs|\/fs\//.test(u)),
+               blocked: markup ? blocked.slice(b0).filter(b => !b.startsWith('base-uri')) : [] };
+    };
     for (const [name, b64] of window.TESTDOCS) {
       const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+      const l0 = loads.length, b0 = blocked.length;
       lastBreakdown = null;
       loadEntries([{ path: name, file: new File([bytes], name) }]);
       // Wait until the viewer has switched to this document (views of different files share class names).
@@ -328,7 +409,8 @@
           tableProblems,
           viewed: null, diagrams: 0, drawn: 0, equations: 0,
           pwn: window.PWN === undefined ? null : String(window.PWN),
-          ...inspect()
+          ...inspect(),
+          ...(await sleep(200), loadsFrom(name, l0, b0))
         });
         continue;
       }
@@ -347,7 +429,8 @@
         drawn: output.querySelectorAll('pre.mermaid > svg').length,
         equations: output.querySelectorAll('.katex').length,
         pwn: window.PWN === undefined ? null : String(window.PWN),
-        ...inspect()
+        ...inspect(),
+        ...loadsFrom(name, l0, b0)
       });
     }
     const listProblems = await checkFileList();

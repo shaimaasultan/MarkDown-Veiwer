@@ -28,3 +28,4 @@ test/*.ps1 -text
 test/*.yaml -text
 test/*.xml -text
 test/*.ipynb -text
+test/*.html -text

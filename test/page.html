@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<!-- Test page for the viewer: every way a web page runs code or loads something. The viewer must show all of
+     it as source text; window.PWN must never be set and nothing may be fetched. -->
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="0; url=javascript:window.PWN='meta-refresh'">
+<base href="http://evil.example/">
+<link rel="stylesheet" href="http://evil.example/page.css">
+<link rel="prefetch" href="http://evil.example/prefetch">
+<link rel="import" href="http://evil.example/import.html">
+<style>@import url("http://evil.example/import.css"); body { background: url("http://evil.example/bg.png"); }</style>
+<script>window.PWN = 'html-inline-script';</script>
+<script src="http://evil.example/remote.js"></script>
+<script src="data:text/javascript,window.PWN='data-script'"></script>
+<script type="module">window.PWN = 'module-script';</script>
+<title>Hostile page</title>
+</head>
+<body onload="window.PWN='body-onload'">
+<h1>Hostile page</h1>
+<img src="http://evil.example/beacon.png" onerror="window.PWN='img-onerror'">
+<img src="x" onerror="window.PWN='img-onerror-2'">
+<svg onload="window.PWN='svg-onload'"><script>window.PWN='svg-script'</script><a href="javascript:window.PWN='svg-link'"><text>svg link</text></a></svg>
+<iframe src="http://evil.example/frame.html"></iframe>
+<iframe srcdoc="<script>parent.PWN='srcdoc'</script>"></iframe>
+<object data="http://evil.example/object.swf"></object>
+<embed src="http://evil.example/embed.swf">
+<video src="http://evil.example/v.mp4" autoplay onplay="window.PWN='video'"></video>
+<a href="javascript:window.PWN='js-link'">a javascript: link</a>
+<a href="file:///C:/Windows/win.ini">a file link</a>
+<form action="http://evil.example/steal" method="post"><input name="q" autofocus onfocus="window.PWN='autofocus'"><button>Send</button></form>
+<details open ontoggle="window.PWN='ontoggle'"><summary>details</summary></details>
+<noscript><p title="</noscript><img src=x onerror=window.PWN='noscript'>"></p></noscript>
+<template><script>window.PWN='template'</script></template>
+<math><mtext><table><mglyph><style><img src=x onerror="window.PWN='mxss'"></style></mglyph></table></mtext></math>
+<p>Breaking out of the code view: </code></pre><script>window.PWN='breakout'</script><pre><code></p>
+<textarea></textarea><script>window.PWN='after-textarea'</script>
+<div style="background-image: url(http://evil.example/css-bg.png)">styled</div>
+<script>fetch('http://evil.example/fetch'); new Image().src = 'http://evil.example/image'; window.PWN = 'late-script';</script>
+</body>
+</html>

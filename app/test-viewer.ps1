@@ -105,6 +105,7 @@ try {
     $edgeProc = Start-Process -FilePath $edge -ArgumentList (($edgeArgs | ForEach-Object { ConvertTo-NativeArgument $_ }) -join ' ') -PassThru
 
     $result = $null
+    $misses = New-Object Collections.Generic.List[string]   # requests for anything outside the page's own address
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $ascii = [Text.Encoding]::ASCII
     while (-not $result -and (Get-Date) -lt $deadline) {
@@ -146,6 +147,7 @@ try {
                     }
                 }
             }
+            if ($method -and -not $path.StartsWith($prefix) -and $path -ne '/favicon.ico') { $misses.Add("$method $path") }
             $reason = @{ 200 = 'OK'; 204 = 'No Content'; 404 = 'Not Found' }[$status]
             $out = $ascii.GetBytes("HTTP/1.1 $status $reason`r`nContent-Type: $type`r`nContent-Length: $($body.Length)`r`n" +
                                    "Cache-Control: no-store`r`nX-Content-Type-Options: nosniff`r`nConnection: close`r`n`r`n")
@@ -182,6 +184,8 @@ foreach ($d in $r.results) {
     if (@($d.badUrls).Count) { $problems += "code addresses on: $(@($d.badUrls) -join ', ')" }
     if ($d.otherInputs) { $problems += "$($d.otherInputs) input(s) other than disabled checkboxes" }
     if ($d.pwn) { $problems += "a payload ran: $($d.pwn)" }
+    if ($d.loads -and @($d.loads).Count) { $problems += "loaded: $(@($d.loads | Select-Object -First 5) -join ', ')" }
+    if ($d.blocked -and @($d.blocked).Count) { $problems += "the security policy had to block: $(@($d.blocked | Select-Object -First 5) -join ', ')" }
     $v = $d.viewed
     $info = if ($v) { '{0} lines, {1} chars, {2} words' -f $v.lines, $v.chars, $v.words } else { 'table / JSON views as expected' }
     if ($problems.Count) {
@@ -190,6 +194,10 @@ foreach ($d in $r.results) {
     } else {
         Write-Host ("ok   {0,-24} {1}" -f $d.name, $info) -ForegroundColor Green
     }
+}
+if ($misses.Count) {
+    $failed++
+    Write-Host "FAIL requests for things outside the page: $(@($misses | Select-Object -First 5) -join ' | ')" -ForegroundColor Red
 }
 if (@($r.pageErrors).Count) {
     $failed++
