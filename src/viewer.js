@@ -903,13 +903,16 @@ function renderTableDocument() {
   const keep = csvState && csvState.path === currentPath ? csvState : null;     // same file again (reload): keep the view
   csvState = { path: currentPath, delim, rows, width, header: keep ? keep.header : true,
                sortCol: keep ? keep.sortCol : -1, sortDir: keep ? keep.sortDir : '',
-               filter: keep ? keep.filter : '', colFilters: keep ? keep.colFilters : [], shown: CSV_PAGE };
+               filter: keep ? keep.filter : '', colFilters: keep ? keep.colFilters : [],
+               hidden: keep ? keep.hidden : new Set(), shown: CSV_PAGE };
   buildCsvView();
 }
 
+const csvMake = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+
 function buildCsvView() {
   const s = csvState;
-  const make = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  const make = csvMake;
   const blank = Array.from({ length: s.width }, (_, i) => `Column ${i + 1}`);
   s.head = s.header && s.rows.length ? blank.map((b, i) => (s.rows[0][i] || '').trim() || b) : blank;
   s.data = s.header ? s.rows.slice(1) : s.rows;
@@ -924,6 +927,8 @@ function buildCsvView() {
     }
     return filled > 0 && num / filled >= 0.8;
   });
+  for (const c of [...s.hidden]) if (c >= s.width) s.hidden.delete(c);
+  s.cols = s.head.map((_, c) => c).filter(c => !s.hidden.has(c));
 
   const view = make('div', 'csv-view');
   const bar = make('div', 'csv-bar');
@@ -931,63 +936,87 @@ function buildCsvView() {
   search.type = 'search';
   search.placeholder = 'Filter all columns…';
   search.value = s.filter;
-  search.setAttribute('aria-label', 'Filter all columns');
+  search.setAttribute('aria-label', 'Filter all columns, shown or hidden');
+  search.title = 'Keeps the rows with this text in any column; a hidden column where it is found is shown again';
   const headerLabel = make('label', 'csv-option');
   const headerBox = make('input');
   headerBox.type = 'checkbox';
   headerBox.checked = s.header;
   headerLabel.append(headerBox, document.createTextNode(' First row is the header'));
+
+  // Columns: tick the ones to show. Show all / Hide all act on the columns the find box lists.
+  const colsWrap = make('div', 'csv-cols');
+  const colsBtn = make('button', 'csv-btn csv-cols-btn');
+  colsBtn.type = 'button';
+  colsBtn.title = 'Choose which columns to show';
+  colsBtn.setAttribute('aria-haspopup', 'true');
+  colsBtn.setAttribute('aria-expanded', 'false');
+  const panel = make('div', 'csv-cols-panel');
+  panel.hidden = true;
+  const colsFind = make('input', 'csv-cols-find');
+  colsFind.type = 'search';
+  colsFind.placeholder = 'Find a column…';
+  colsFind.setAttribute('aria-label', 'Find a column');
+  const allBtn = make('button', 'csv-btn', 'Show all');
+  allBtn.type = 'button';
+  const noneBtn = make('button', 'csv-btn', 'Hide all');
+  noneBtn.type = 'button';
+  const tools = make('div', 'csv-cols-tools');
+  tools.append(colsFind, allBtn, noneBtn);
+  const list = make('div', 'csv-cols-list');
+  s.head.forEach((name, c) => {
+    const label = make('label', 'csv-col-choice');
+    const box = make('input');
+    box.type = 'checkbox';
+    box.checked = !s.hidden.has(c);
+    box.dataset.col = String(c);
+    label.title = name;
+    label.append(box, make('span', '', name));
+    box.addEventListener('change', () => setCsvColumns([c], box.checked));
+    list.append(label);
+  });
+  panel.append(tools, list);
+  colsWrap.append(colsBtn, panel);
+  const listed = () => [...list.querySelectorAll('label:not([hidden]) input')].map(b => Number(b.dataset.col));
+  colsBtn.addEventListener('click', () => {
+    panel.hidden = !panel.hidden;
+    colsBtn.setAttribute('aria-expanded', String(!panel.hidden));
+    if (!panel.hidden) colsFind.focus();
+  });
+  colsFind.addEventListener('input', () => {
+    const q = colsFind.value.trim().toLocaleLowerCase();
+    list.querySelectorAll('label').forEach(l => { l.hidden = !!q && !l.textContent.toLocaleLowerCase().includes(q); });
+  });
+  allBtn.addEventListener('click', () => setCsvColumns(listed(), true));
+  noneBtn.addEventListener('click', () => setCsvColumns(listed(), false));
+
   const clear = make('button', 'csv-btn', 'Clear filters');
   clear.type = 'button';
   const info = make('span', 'csv-info');
   const copy = make('button', 'csv-btn', '⧉ Copy');
   copy.type = 'button';
-  copy.title = 'Copy the rows shown by the filters, in this order — pastes into Excel or Word as cells';
+  copy.title = 'Copy the shown columns of the rows the filters keep, in this order — pastes into Excel or Word as cells';
   const save = make('button', 'csv-btn', '⬇ Save CSV');
   save.type = 'button';
-  save.title = 'Save the rows shown by the filters, in this order, as a CSV file';
-  bar.append(search, headerLabel, clear, info, copy, save);
+  save.title = 'Save the shown columns of the rows the filters keep, in this order, as a CSV file';
+  bar.append(search, colsWrap, headerLabel, clear);
+  const sub = make('div', 'csv-bar csv-subbar');
+  sub.append(info, copy, save);
 
   const scroll = make('div', 'csv-scroll');
   const table = make('table', 'csv-table');
   const thead = make('thead');
   const headRow = make('tr');
   const filterRow = make('tr', 'csv-filters');
-  s.head.forEach((name, c) => {
-    const th = make('th', 'sortable', name);
-    th.tabIndex = 0;
-    th.title = 'Click to sort by this column (again to reverse, a third time for the file order)';
-    if (s.numeric[c]) th.classList.add('num');
-    if (s.sortCol === c && s.sortDir) th.dataset.sort = s.sortDir;
-    const sort = () => {
-      s.sortDir = s.sortCol !== c ? 'asc' : s.sortDir === 'asc' ? 'desc' : s.sortDir === 'desc' ? '' : 'asc';
-      s.sortCol = s.sortDir ? c : -1;
-      headRow.querySelectorAll('th').forEach(h => { delete h.dataset.sort; });
-      if (s.sortDir) th.dataset.sort = s.sortDir;
-      refreshCsv();
-    };
-    th.addEventListener('click', sort);
-    th.addEventListener('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); sort(); } });
-    headRow.append(th);
-    const fth = make('th');
-    const input = make('input', 'csv-col-filter');
-    input.type = 'search';
-    input.placeholder = s.numeric[c] ? 'e.g. >100' : 'filter';
-    input.title = 'Text anywhere in the cell; or >, <, >=, <=, =, != followed by a number; = or != followed by text for the whole cell';
-    input.setAttribute('aria-label', `Filter ${name}`);
-    input.value = s.colFilters[c] || '';
-    input.addEventListener('input', debounce(() => { s.colFilters[c] = input.value; s.shown = CSV_PAGE; refreshCsv(); }, 150));
-    fth.append(input);
-    filterRow.append(fth);
-  });
   thead.append(headRow, filterRow);
   const tbody = make('tbody');
   table.append(thead, tbody);
   scroll.append(table);
   const more = make('button', 'csv-btn csv-more');
   more.type = 'button';
-  view.append(bar, scroll, more);
-  s.dom = { tbody, info, more, search, filterRow, headRow };
+  view.append(bar, sub, scroll, more);
+  s.dom = { tbody, info, more, search, filterRow, headRow, colsBtn, list, panel };
+  csvBuildHead(s);
 
   search.addEventListener('input', debounce(() => { s.filter = search.value; s.shown = CSV_PAGE; refreshCsv(); }, 150));
   headerBox.addEventListener('change', () => { s.header = headerBox.checked; s.sortCol = -1; s.sortDir = ''; s.colFilters = []; buildCsvView(); });
@@ -1000,7 +1029,7 @@ function buildCsvView() {
   more.addEventListener('click', () => { s.shown += CSV_PAGE; refreshCsv(false); });
   copy.addEventListener('click', async () => {
     const text = csvRowsShown().map(r => r.map(c => /[\t\r\n"]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c).join('\t')).join('\r\n');
-    showToast(await copyToClipboard(text) ? `Copied ${plural(s.view.length, 'row')} — paste them into Excel or Word.` : 'Could not copy the rows.');
+    showToast(await copyToClipboard(text) ? `Copied ${plural(s.view.length, 'row')} × ${plural(s.cols.length, 'column')} — paste them into Excel or Word.` : 'Could not copy the rows.');
   });
   save.addEventListener('click', async () => {
     const csv = String.fromCharCode(0xFEFF) + csvRowsShown().map(r => r.map(c => /[,"\r\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c).join(',')).join('\r\n') + '\r\n';
@@ -1016,30 +1045,114 @@ function buildCsvView() {
   refreshCsv();
 }
 
-// The header and the rows the filters keep, in the shown order (all of them, not just the drawn page).
+// The header row (click to sort) and the filter row, for the shown columns only.
+function csvBuildHead(s) {
+  const { headRow, filterRow } = s.dom;
+  headRow.replaceChildren();
+  filterRow.replaceChildren();
+  for (const c of s.cols) {
+    const name = s.head[c];
+    const th = csvMake('th', 'sortable', name);
+    th.tabIndex = 0;
+    th.title = 'Click to sort by this column (again to reverse, a third time for the file order)';
+    if (s.numeric[c]) th.classList.add('num');
+    if (s.sortCol === c && s.sortDir) th.dataset.sort = s.sortDir;
+    const sort = () => {
+      s.sortDir = s.sortCol !== c ? 'asc' : s.sortDir === 'asc' ? 'desc' : s.sortDir === 'desc' ? '' : 'asc';
+      s.sortCol = s.sortDir ? c : -1;
+      headRow.querySelectorAll('th').forEach(h => { delete h.dataset.sort; });
+      if (s.sortDir) th.dataset.sort = s.sortDir;
+      refreshCsv();
+    };
+    th.addEventListener('click', sort);
+    th.addEventListener('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); sort(); } });
+    headRow.append(th);
+    const fth = csvMake('th');
+    const input = csvMake('input', 'csv-col-filter');
+    input.type = 'search';
+    input.placeholder = s.numeric[c] ? 'e.g. >100' : 'filter';
+    input.title = 'Text anywhere in the cell; or >, <, >=, <=, =, != followed by a number; = or != followed by text for the whole cell';
+    input.setAttribute('aria-label', `Filter ${name}`);
+    input.value = s.colFilters[c] || '';
+    input.addEventListener('input', debounce(() => { s.colFilters[c] = input.value; s.shown = CSV_PAGE; refreshCsv(); }, 150));
+    fth.append(input);
+    filterRow.append(fth);
+  }
+}
+
+// Show or hide columns. A hidden column's filter and sort are cleared, so no row is left out by
+// something you cannot see.
+function setCsvColumns(cols, show) {
+  const s = csvState;
+  if (!s) return;
+  for (const c of cols) {
+    if (show) s.hidden.delete(c);
+    else {
+      s.hidden.add(c);
+      s.colFilters[c] = '';
+      if (s.sortCol === c) { s.sortCol = -1; s.sortDir = ''; }
+    }
+  }
+  s.cols = s.head.map((_, c) => c).filter(c => !s.hidden.has(c));
+  s.dom.list.querySelectorAll('input').forEach(b => { b.checked = !s.hidden.has(Number(b.dataset.col)); });
+  csvBuildHead(s);
+  refreshCsv();
+}
+
+// The column chooser closes on a click elsewhere or Escape.
+document.addEventListener('click', ev => {
+  const p = csvState && csvState.dom && csvState.dom.panel;
+  if (p && !p.hidden && !p.parentElement.contains(ev.target)) { p.hidden = true; csvState.dom.colsBtn.setAttribute('aria-expanded', 'false'); }
+});
+document.addEventListener('keydown', ev => {
+  const p = csvState && csvState.dom && csvState.dom.panel;
+  if (ev.key === 'Escape' && p && !p.hidden) { p.hidden = true; csvState.dom.colsBtn.setAttribute('aria-expanded', 'false'); csvState.dom.colsBtn.focus(); }
+});
+
+// The header and the rows the filters keep, shown columns only, in the shown order (all rows, not just
+// the drawn page).
 function csvRowsShown() {
   const s = csvState;
-  return [s.head, ...s.view.map(i => s.head.map((_, c) => s.data[i][c] || ''))];
+  return [s.cols.map(c => s.head[c]), ...s.view.map(i => s.cols.map(c => s.data[i][c] || ''))];
 }
 
 // redraw: filter and sort again, then draw the first page. Without it (Show more): only draw the next rows.
 function refreshCsv(redraw = true) {
   const s = csvState;
-  if (redraw) csvApplyView(s);
+  if (redraw) {
+    csvApplyView(s);
+    // The filter found the text in hidden columns: show them, so the rows it kept show why.
+    const found = (s.matchHidden || []).filter(c => s.hidden.has(c));
+    s.matchHidden = [];
+    if (found.length) {
+      for (const c of found) s.hidden.delete(c);
+      s.cols = s.head.map((_, c) => c).filter(c => !s.hidden.has(c));
+      s.dom.list.querySelectorAll('input').forEach(b => { b.checked = !s.hidden.has(Number(b.dataset.col)); });
+      csvBuildHead(s);
+      const names = found.slice(0, 4).map(c => s.head[c]).join(', ') + (found.length > 4 ? ` and ${found.length - 4} more` : '');
+      showToast(`Showing ${found.length === 1 ? 'hidden column' : 'hidden columns'} ${names}: the filter found the text there.`);
+    }
+  }
   csvDraw(s, redraw);
 }
 
 function csvApplyView(s) {
   const all = s.filter.trim().toLocaleLowerCase();
-  const tests = s.head.map((_, c) => compileFilter(s.colFilters[c] || ''));
+  const tests = s.head.map((_, c) => s.hidden.has(c) ? null : compileFilter(s.colFilters[c] || ''));
+  // The filter box searches every column, hidden ones too; hidden columns where it matches are noted.
+  const hiddenCols = s.head.map((_, c) => c).filter(c => s.hidden.has(c));
+  const matchHidden = new Set();
   const view = [];
   for (let i = 0; i < s.data.length; i++) {
     const row = s.data[i];
     if (all && !row.some(c => c.toLocaleLowerCase().includes(all))) continue;
     let keep = true;
     for (let c = 0; c < tests.length; c++) if (tests[c] && !tests[c](row[c] || '')) { keep = false; break; }
-    if (keep) view.push(i);
+    if (!keep) continue;
+    view.push(i);
+    if (all) for (const c of hiddenCols) if (!matchHidden.has(c) && (row[c] || '').toLocaleLowerCase().includes(all)) matchHidden.add(c);
   }
+  s.matchHidden = [...matchHidden];
   if (s.sortCol >= 0 && s.sortDir) {
     const c = s.sortCol, dir = s.sortDir === 'asc' ? 1 : -1, numeric = s.numeric[c];
     const key = numeric ? view.map(i => sortValue((s.data[i][c] || '').trim())) : null;
@@ -1058,14 +1171,19 @@ function csvApplyView(s) {
 }
 
 function csvDraw(s, redraw) {
-  const { tbody, info, more } = s.dom;
+  const { tbody, info, more, colsBtn } = s.dom;
   const from = redraw ? 0 : tbody.rows.length;
-  const to = Math.min(s.view.length, s.shown);
+  const to = s.cols.length ? Math.min(s.view.length, s.shown) : 0;
   const frag = document.createDocumentFragment();
+  if (!s.cols.length && redraw) {
+    const tr = csvMake('tr'), td = csvMake('td', 'csv-empty', 'No columns are shown — choose some with ☰ Columns.');
+    tr.append(td);
+    frag.append(tr);
+  }
   for (let k = from; k < to; k++) {
     const row = s.data[s.view[k]];
     const tr = document.createElement('tr');
-    for (let c = 0; c < s.width; c++) {
+    for (const c of s.cols) {
       const td = document.createElement('td');
       td.textContent = row[c] || '';
       if (s.numeric[c]) td.className = 'num';
@@ -1076,8 +1194,11 @@ function csvDraw(s, redraw) {
   if (redraw) tbody.replaceChildren(frag); else tbody.append(frag);
   const filtered = s.view.length !== s.data.length;
   info.textContent = `${filtered ? `${fmt(s.view.length)} of ${fmt(s.data.length)}` : fmt(s.data.length)} row${s.data.length === 1 ? '' : 's'}` +
-                     (to < s.view.length ? ` · first ${fmt(to)} shown` : '');
-  more.hidden = to >= s.view.length;
+                     (to < s.view.length && s.cols.length ? ` · first ${fmt(to)} shown` : '') +
+                     ` · ${fmt(s.cols.length)} of ${fmt(s.width)} column${s.width === 1 ? '' : 's'}`;
+  colsBtn.textContent = `☰ Columns: ${fmt(s.cols.length)} of ${fmt(s.width)}`;
+
+  more.hidden = to >= s.view.length || !s.cols.length;
   more.textContent = `Show ${fmt(Math.min(CSV_PAGE, s.view.length - to))} more`;
   updateCsvStats();
 }
@@ -1090,7 +1211,7 @@ function updateCsvStats() {
   stats.replaceChildren(
     group('The table in this file', `Table: ${plural(s.data.length, 'row')} · ${plural(s.width, 'column')} · separator: ${DELIM_NAMES[s.delim] || s.delim}` +
           (s.header ? ' · first row is the header' : '')),
-    group('Rows kept by the filters', `Shown: ${plural(s.view.length, 'row')}`),
+    group('What the filters and the column choice keep', `Shown: ${plural(s.view.length, 'row')} · ${fmt(s.cols.length)} of ${plural(s.width, 'column')}`),
     group('How this file is shown', 'Shown as plain text: nothing in a table can run, link or load anything'));
 }
 

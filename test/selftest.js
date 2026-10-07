@@ -30,11 +30,65 @@
 
   // A table file (.csv / .tsv): drawn exactly, every cell as text; sorting and filtering work.
   // test\data.csv: Name, City, Amount, Note - six rows, one note on two lines, payloads as text.
+  // test\wide.csv: Id, Name, City, Q1..Q37 (40 columns), 30 rows - choosing which columns to show.
+  async function checkColumns() {
+    const problems = [];
+    const table = output.querySelector('.csv-table');
+    const heads = () => [...table.tHead.rows[0].cells].map(c => c.textContent);
+    const cellsPerRow = () => table.tBodies[0].rows[0].cells.length;
+    const info = () => output.querySelector('.csv-info').textContent;
+    const btn = output.querySelector('.csv-cols-btn');
+    const boxes = () => [...output.querySelectorAll('.csv-cols-list input')];
+    const box = n => boxes().find(b => b.parentElement.textContent === n);
+    const click = el => el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    if (heads().length !== 40 || !info().includes('40 of 40 columns') || !btn.textContent.includes('40 of 40')) problems.push('start: ' + heads().length + ' / ' + info());
+    click(btn);
+    if (output.querySelector('.csv-cols-panel').hidden) problems.push('column list did not open');
+    for (const n of ['Q1', 'Q2']) { const b = box(n); b.checked = false; b.dispatchEvent(new Event('change')); }
+    if (heads().length !== 38 || cellsPerRow() !== 38 || heads().includes('Q1') || !info().includes('38 of 40 columns')) problems.push('untick 2: ' + heads().length + ' / ' + cellsPerRow() + ' / ' + info());
+    // Find "Q1" lists Q1 and Q10-Q19; Hide all hides just those.
+    const find = output.querySelector('.csv-cols-find');
+    find.value = 'Q1'; find.dispatchEvent(new Event('input'));
+    const listed = boxes().filter(b => !b.parentElement.hidden).length;
+    if (listed !== 11) problems.push('find Q1 lists ' + listed);
+    click([...output.querySelectorAll('.csv-cols-tools button')].find(b => b.textContent === 'Hide all'));
+    if (heads().length !== 28 || !btn.textContent.includes('28 of 40')) problems.push('hide found: ' + heads().length);
+    // A filter on a column that gets hidden is cleared.
+    const cityFilter = output.querySelectorAll('.csv-col-filter')[2];
+    cityFilter.value = '=Ottawa'; cityFilter.dispatchEvent(new Event('input'));
+    await sleep(300);
+    if (table.tBodies[0].rows.length !== 8) problems.push('city filter rows: ' + table.tBodies[0].rows.length);
+    find.value = 'City'; find.dispatchEvent(new Event('input'));
+    const city = box('City'); city.checked = false; city.dispatchEvent(new Event('change'));
+    if (table.tBodies[0].rows.length !== 30 || heads().includes('City')) problems.push('hidden column kept its filter: ' + table.tBodies[0].rows.length);
+    // Copy / Save take the shown columns only.
+    if (csvRowsShown()[0].length !== 27) problems.push('copy columns: ' + csvRowsShown()[0].length);
+    // The filter box searches hidden columns too and shows the ones where it finds the text (1110 is only in Q37).
+    find.value = 'Q37'; find.dispatchEvent(new Event('input'));
+    const q37 = box('Q37'); q37.checked = false; q37.dispatchEvent(new Event('change'));
+    if (heads().includes('Q37')) problems.push('Q37 not hidden');
+    const search = output.querySelector('.csv-search');
+    search.value = '1110'; search.dispatchEvent(new Event('input'));
+    await sleep(300);
+    if (table.tBodies[0].rows.length !== 1 || !heads().includes('Q37') || !box('Q37').checked) problems.push('hidden match: ' + table.tBodies[0].rows.length + ' rows, Q37 shown: ' + heads().includes('Q37'));
+    search.value = ''; search.dispatchEvent(new Event('input'));
+    await sleep(300);
+    // Show all (with the find box empty) brings every column back.
+    find.value = ''; find.dispatchEvent(new Event('input'));
+    click([...output.querySelectorAll('.csv-cols-tools button')].find(b => b.textContent === 'Show all'));
+    if (heads().length !== 40 || cellsPerRow() !== 40 || !info().includes('40 of 40 columns')) problems.push('show all: ' + heads().length);
+    // A click elsewhere closes the list.
+    click(document.body);
+    if (!output.querySelector('.csv-cols-panel').hidden) problems.push('column list did not close');
+    return problems;
+  }
+
   async function checkTable(name) {
     for (let i = 0; i < 100 && !output.querySelector('.csv-table'); i++) await sleep(50);
     const problems = [];
     const table = output.querySelector('.csv-table');
     if (!table) return ['no table drawn'];
+    if (/wide\.csv$/i.test(name)) return checkColumns();
     const rows = () => [...table.tBodies[0].rows].map(r => [...r.cells].map(c => c.textContent));
     const heads = [...table.tHead.rows[0].cells].map(c => c.textContent);
     if (heads.join('|') !== 'Name|City|Amount|Note') problems.push('header: ' + heads.join('|'));
