@@ -38,5 +38,11 @@
 <textarea></textarea><script>window.PWN='after-textarea'</script>
 <div style="background-image: url(http://evil.example/css-bg.png)">styled</div>
 <script>fetch('http://evil.example/fetch'); new Image().src = 'http://evil.example/image'; window.PWN = 'late-script';</script>
+<!-- an ordinary note -->
+<!-- <script>window.PWN='in-comment'</script> -->
+<!--[if IE]><script>window.PWN='conditional'</script><![endif]-->
+<!-- powershell -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAA= -->
+<!-- ends early in a browser --!><p>live markup</p> -->
+<!-->
 </body>
 </html>

@@ -10,4 +10,5 @@
   <entry id="3"><title>SVG</title><body><svg:svg onload="window.PWN='svg-onload'"><svg:script>window.PWN='svg-script'</svg:script><svg:a xlink:href="javascript:window.PWN='svg-link'"><svg:text>link</svg:text></svg:a><svg:image xlink:href="http://evil.example/i.png"/></svg:svg></body></entry>
   <entry id="4"><title>CDATA</title><body><![CDATA[</code></pre><script>window.PWN='cdata'</script>]]></body></entry>
   <entry id="5"><title>Escaped</title><body>&lt;img src=x onerror="window.PWN='escaped'"&gt;</body></entry>
+  <!-- <h:script>window.PWN='xml-comment'</h:script> -->
 </feed>

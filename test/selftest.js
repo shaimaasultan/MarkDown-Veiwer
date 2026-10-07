@@ -299,19 +299,21 @@
     for (let i = 0; i < 100 && !output.querySelector('.json-view'); i++) await sleep(50);
     if (!output.querySelector('.json-view')) return ['no XML view'];
     const dlg = document.getElementById('codeAlert');
-    const warned = dlg.open && /unsafe XML|unsafe parts/i.test(document.getElementById('caTitle').textContent) && document.getElementById('caTitle').textContent.includes('shown as text');
+    const warned = dlg.open && /unsafe XML|unsafe parts|contains code/i.test(document.getElementById('caTitle').textContent) && document.getElementById('caTitle').textContent.includes('shown as text');
     if (dlg.open) dlg.close();
     if (!warned) problems.push('no red "unsafe XML" warning: ' + document.getElementById('caTitle').textContent);
     // The safety report: the risks in each file, found from the text (nothing expanded or loaded to find them).
     const risks = new Map((lastSafety && lastSafety.findings || []).filter(f => f.level === 'risk').map(f => [f.id, f]));
-    const want = { 'hostile.xml': { xmlinclude: 1, xmlxslt: 1 }, 'entities.xml': { xmlexternal: 3 }, 'entity-bomb.xml': { xmlbomb: 0 } }[name] || {};
+    const want = { 'hostile.xml': { xmlinclude: 1, xmlxslt: 1 }, 'entities.xml': { xmlexternal: 3 }, 'entity-bomb.xml': { xmlbomb: 0 }, 'comment-trick.xml': { commenttrick: 0 } }[name] || {};
+    // Code in a comment, and XHTML / SVG scripts written with a prefix (<h:script>), count as code.
+    if (name === 'hostile.xml') Object.assign(want, { commentcode: 1, active: 0 });
     for (const [id, n] of Object.entries(want))
       if (!risks.has(id) || (n && risks.get(id).count !== n)) problems.push(`safety report: ${id} ${risks.has(id) ? risks.get(id).count : 'missing'} (has ${[...risks.keys()].join(', ')})`);
     if (name === 'entities.xml' && !(lastSafety.findings.find(f => f.id === 'xmlentity') || {}).count) problems.push('safety report: entity declaration not listed');
     if (name === 'entity-bomb.xml' && !(risks.get('xmlbomb') && risks.get('xmlbomb').items.some(i => i.what === '&j; grows to about 10,000 million characters'))) problems.push('bomb size: ' + JSON.stringify(risks.get('xmlbomb') && risks.get('xmlbomb').items));
     if (lastSafety.level !== 'risk') problems.push('safety level ' + lastSafety.level);
     const source = new TextDecoder().decode(bytes);
-    const parses = true;
+    const parses = name !== 'comment-trick.xml';
     const modeBtn = label => [...output.querySelectorAll('.json-modes button')].find(b => b.textContent.includes(label));
     for (const mode of ['Text', 'Tree', 'Table']) {
       const b = modeBtn(mode);
@@ -345,7 +347,7 @@
     click(modeBtn('Text'));
     await sleep(150);
     const statsText = document.getElementById('stats').textContent;
-    if (!/✗ Unsafe/.test(statsText) || !/Unsafe XML \(/.test(statsText)) problems.push('status line has no red flag: ' + statsText.slice(0, 200));
+    if (!/✗ Unsafe/.test(statsText) || (name !== 'comment-trick.xml' && !/Unsafe XML \(/.test(statsText))) problems.push('status line has no red flag: ' + statsText.slice(0, 200));
     // The report opens from the status line, with the XML check listed.
     const sbtn = [...document.querySelectorAll('#stats .breakdown-btn')].find(b => /Unsafe/.test(b.textContent));
     if (sbtn) {
@@ -354,7 +356,7 @@
       if (!sf.open || !/Not safe/.test(document.getElementById('sfStatus').textContent) || !/XML entities, includes and stylesheets/.test(sf.textContent)) problems.push('safety report: ' + document.getElementById('sfStatus').textContent);
       sf.close();
     }
-    if (name !== 'hostile.xml' && !/Entities shown as written/.test(document.getElementById('stats').textContent)) problems.push(document.getElementById('stats').textContent + ' no "entities shown as written" note');
+    if (!['hostile.xml', 'comment-trick.xml'].includes(name) && !/Entities shown as written/.test(document.getElementById('stats').textContent)) problems.push(document.getElementById('stats').textContent + ' no "entities shown as written" note');
     return problems;
   }
 
@@ -372,7 +374,14 @@
     if (!output.querySelector('pre.code-text code span')) problems.push('not coloured');
     if (!/never opened as a page/.test(output.querySelector('.csv-bar').textContent)) problems.push('no "never opened as a page" note');
     if (output.querySelector('pre.code-text code *:not(span)')) problems.push('elements other than colour spans in the code');
-    if (!/Contains code/.test(document.getElementById('stats').textContent)) problems.push('status line: ' + document.getElementById('stats').textContent.slice(0, 160));
+    if (!/Contains code/.test(document.getElementById('stats').textContent) || !/✗ Unsafe/.test(document.getElementById('stats').textContent)) problems.push('status line: ' + document.getElementById('stats').textContent.slice(0, 160));
+    // Comments: code, conditional comments, early ends and hidden commands are flagged; an ordinary note is only listed.
+    const found = new Map((lastSafety && lastSafety.findings || []).map(f => [f.id, f]));
+    for (const [id, n] of [['commentcode', 2], ['commentif', 1], ['commenttrick', 2], ['cmd-risk', 1]])
+      if (!found.has(id) || found.get(id).count < n) problems.push(`comments: ${id} ${found.has(id) ? found.get(id).count : 'missing'}`);
+    const plain = found.get('comment');
+    if (!plain || !plain.items.some(i => i.what.includes('an ordinary note'))) problems.push('ordinary comment not listed');
+    if (plain && plain.items.some(i => /script|--!>|-enc/.test(i.what))) problems.push('a risky comment listed as ordinary');
     return problems;
   }
 

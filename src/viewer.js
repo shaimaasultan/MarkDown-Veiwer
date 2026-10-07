@@ -2959,7 +2959,9 @@ function checkSafety(source) {
   };
 
   let doc = null;
-  try { doc = new DOMParser().parseFromString(`<!DOCTYPE html><body>${md.parse(text)}`, 'text/html'); } catch (e) { console.warn('Safety:', e); }
+  // XML and HTML files are read as they are (as Markdown, an indented <script> would turn into a code example).
+  const markup = isRunnableMarkup(currentPath), xmlMarkup = markup && typeOf(currentPath).id === 'xml';
+  try { doc = new DOMParser().parseFromString(`<!DOCTYPE html><body>${markup ? text : md.parse(text)}`, 'text/html'); } catch (e) { console.warn('Safety:', e); }
 
   if (doc) {
     const ACTIVE = {
@@ -2977,7 +2979,8 @@ function checkSafety(source) {
 
     for (const el of doc.body.querySelectorAll('*')) {
       if (el.closest('.katex, .katex-display')) continue;
-      const tag = el.localName.toLowerCase();
+      // In XML a prefix names the kind: <h:script> and <svg:script> are scripts to a browser showing the file.
+      const tag = xmlMarkup ? el.localName.toLowerCase().replace(/^[^:]*:/, '') : el.localName.toLowerCase();
       const outer = () => el.outerHTML.slice(0, 160);
       const where = () => lineOf(`<${el.localName}`);
 
@@ -3120,19 +3123,64 @@ function checkSafety(source) {
       }
     }
 
-    // Comments: invisible in every viewer.
-    const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_COMMENT);
-    for (let c = walker.nextNode(); c; c = walker.nextNode()) {
-      const body = c.data.trim();
-      // In XML and HTML files, <?…?> and <!ENTITY …> read as HTML become comment-like nodes: only real <!-- --> count.
-      if (isRunnableMarkup(currentPath) && !source.includes('<!--' + c.data)) continue;
-      if (body.length < 3 || /^(markdownlint|prettier|toc|end ?toc|vale|lint|cspell|textlint|omit in toc|no ?toc)\b/i.test(body)) continue;
-      const line = lineOf(c.data.slice(0, 40));
-      if (AI_INSTRUCTIONS.test(body))
+    // Comments: invisible in every viewer, so what is in them is checked too - code, commands, tricks, AI orders.
+    // XML and HTML files: read from the text itself, with each format's own end of a comment (an HTML reading of XML
+    // turns <?…?>, <!ENTITY …> and CDATA into comment-like nodes). Documents: from the cleaned page.
+    const comments = [];
+    if (markup) {
+      const COMMENTS = xmlMarkup ? /<!\[CDATA\[[\s\S]*?(?:\]\]>|$)|<!--([\s\S]*?)(-->|$)/g
+                                 : /<!--(?:(-?>)|([\s\S]*?)(--!?>|$))/g;
+      for (const m of source.matchAll(COMMENTS)) {
+        if (m[0].startsWith('<![CDATA[')) continue;                    // text in XML, not a comment
+        const body = xmlMarkup ? m[1] : m[1] !== undefined ? '' : m[2];
+        // Ended differently by different programs: <!--> and <!---> (empty to a browser), --!> (ends it in a browser,
+        // not in XML), a comment inside a comment, or "--" inside an XML comment.
+        const trick = !xmlMarkup ? m[1] !== undefined || m[3] === '--!>' || body.includes('<!--')
+                                 : /^-?>/.test(body) || body.includes('--!>') || body.includes('<!--') || body.includes('--') || body.endsWith('-');
+        comments.push({ body, raw: m[0], line: lineAt(m.index), trick });
+      }
+    } else {
+      const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_COMMENT);
+      for (let c = walker.nextNode(); c; c = walker.nextNode())
+        comments.push({ body: c.data, raw: `<!--${c.data}-->`, line: lineOf(c.data.slice(0, 40)), trick: false });
+    }
+    const COMMENT_CODE = /<\s*\/?\s*(?:[\w.-]+:)?(script|iframe|frame|frameset|object|embed|applet|form|meta|base|link|portal|template|handler|listener|foreignobject)\b|<[^>]*\son[a-z]+\s*=|\b(javascript|vbscript|livescript)\s*:|data\s*:\s*text\/html|<\?php\b|<%/i;
+    for (const c of comments) {
+      const body = c.body.trim();
+      const what = clip(c.raw);
+      let flagged = false;
+      if (c.trick) {
+        flagged = true;
+        add(SAFETY_CHECKS[0], 'commenttrick', 'risk', 'Comments that end differently in different programs',
+          'Written so that one program ends the comment earlier than another (<!-->, --!>, a comment inside a comment): text that looks hidden can be live markup — even code — in a browser. Not used here.', what, c.line, true);
+      }
+      if (/^\[if\b[^\]]*\]>|<!\[endif\]/i.test(body)) {
+        flagged = true;
+        add(SAFETY_CHECKS[0], 'commentif', 'caution', 'Conditional comments (Internet Explorer, Outlook)',
+          'Old Internet Explorer and Outlook treat the inside of <!--[if …]> comments as part of the page, so what is hidden everywhere else is live there. Not used here.', what, c.line, true);
+      }
+      if (COMMENT_CODE.test(body)) {
+        flagged = true;
+        add(SAFETY_CHECKS[0], 'commentcode', 'risk', 'Code hidden in comments',
+          'Comments are never shown or run, but the code in them is one small edit away from running — and some programs (old Internet Explorer, Outlook, template tools) read comments as part of the page. Not run here.', what, c.line, true);
+      }
+      for (const [re, does, level] of RISKY_COMMANDS) {
+        if (!re.test(body)) continue;
+        flagged = true;
+        add(SAFETY_CHECKS[10], 'cmd-' + level, level,
+          level === 'risk' ? 'Commands that can harm your computer' : 'Commands that download or change things — check before running',
+          level === 'risk' ? 'Code examples that are typical of malware: running hidden code, turning off protection, or deleting data.'
+                           : 'Code examples that run something from the internet or change Windows settings. Only run them if you trust the source.',
+          `${does} (in a comment): ${what}`, c.line);
+      }
+      if (AI_INSTRUCTIONS.test(body)) {
         add(SAFETY_CHECKS[9], 'aihidden', 'risk', 'Hidden instructions for AI assistants',
-          'Invisible text that tries to give orders to an AI tool that reads this file (prompt injection).', `<!-- ${body} -->`, line);
-      else add(SAFETY_CHECKS[8], 'comment', 'note', 'Hidden comments',
-        'HTML comments are not shown by any viewer, but AI tools and anyone reading the raw file see them.', `<!-- ${body} -->`, line);
+          'Invisible text that tries to give orders to an AI tool that reads this file (prompt injection).', `<!-- ${body} -->`, c.line);
+        continue;
+      }
+      if (flagged || body.length < 3 || /^(markdownlint|prettier|toc|end ?toc|vale|lint|cspell|textlint|omit in toc|no ?toc)\b/i.test(body)) continue;
+      add(SAFETY_CHECKS[8], 'comment', 'note', 'Hidden comments',
+        `${xmlMarkup ? 'XML' : 'HTML'} comments are not shown by any viewer, but AI tools and anyone reading the raw file see them.`, `<!-- ${body} -->`, c.line);
     }
 
     // Visible text addressed to AI tools.
@@ -3378,7 +3426,7 @@ document.getElementById('sfClose').addEventListener('click', () => document.getE
 // Code in a document never runs here (preview only). When a file contains code, the viewer says so
 // once, when the file is opened. And if the window's security policy ever has to stop something, code
 // got past the sanitizer: that is shown too, as a viewer bug to report.
-const CODE_FINDINGS = new Set(['active', 'handlers', 'codelink', 'scheme']);
+const CODE_FINDINGS = new Set(['active', 'handlers', 'codelink', 'scheme', 'commentcode', 'commenttrick']);
 const XML_FINDINGS = new Set(['xmldtd', 'xmlexternal', 'xmlentity', 'xmlbomb', 'xmlinclude', 'xmlxslt', 'xmlcss']);
 
 function showCodeAlert(text, items, policy, title) {

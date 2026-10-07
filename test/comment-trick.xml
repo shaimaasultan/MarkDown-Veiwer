@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Test file for the viewer: a comment that a browser ends early, so the script after it would be live there.
+     In XML the comment goes on to the end, so the file is not well-formed; the viewer shows it as text and flags it. -->
+<root>
+  <!-- hidden --!><script>window.PWN='comment-trick'</script> -->
+</root>
