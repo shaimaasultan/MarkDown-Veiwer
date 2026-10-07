@@ -340,7 +340,7 @@ function loadEntries(entries) {
 
   mdPaths = [...fileMap.values()]
     .map(e => e.path)
-    .filter(p => MD_RE.test(p) && !SKIP_DIRS.test(p))
+    .filter(p => DOC_RE.test(p) && !SKIP_DIRS.test(p))
     .sort((a, b) => depth(a) - depth(b) || isReadme(b) - isReadme(a) || a.localeCompare(b));
 
   buildList();
@@ -529,6 +529,27 @@ setInterval(async () => {
 // Renders currentSource (the file as read, or as edited by Find & Replace).
 function renderDoc({ anchor = null, keepScroll = false } = {}) {
   const scroll = content.scrollTop;
+  if (TABLE_RE.test(currentPath)) {
+    // A table file: never parsed as Markdown, so there is no code to report and no source view to map.
+    dropHint.hidden = true;
+    lastSafety = null;
+    renderTableDocument();
+    buildToc();
+    buildImageList();
+    buildLinkList();
+    document.getElementById('docPath').textContent = currentPath + (isEdited() ? '  •  edited (unsaved)' : '');
+    document.title = `${isEdited() ? '• ' : ''}${currentPath.split('/').pop()} — Markdown Folder Viewer`;
+    pdfBtn.disabled = false;
+    pdfBtn.title = 'Print or save the rows drawn on the page as a PDF';
+    findBtn.disabled = false;
+    copyBtn.disabled = true;
+    srcBtn.disabled = true;
+    cmpBtn.disabled = true;
+    for (const li of fileList.children) li.classList.toggle('active', key(li.dataset.path) === key(currentPath));
+    if (!findBar.hidden) runFind(keepScroll);
+    content.scrollTop = keepScroll ? scroll : 0;
+    return;
+  }
   const text = currentSource.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---\r?\n/, ''); // strip YAML front matter
 
   slugCounts = new Map();
@@ -638,7 +659,7 @@ function fixResources(root, baseDir) {
       return;
     }
     const entry = isExternal(href) ? null : (localEntry(baseDir, href) || { path: resolve(baseDir, href), missing: true });
-    if (entry && MD_RE.test(entry.path)) {
+    if (entry && DOC_RE.test(entry.path)) {
       const anchor = href.includes('#') ? href.split('#')[1] : '';
       a.addEventListener('click', ev => { ev.preventDefault(); openDoc(entry.path, anchor); });
     } else if (entry && !entry.missing && OPENABLE.test(entry.path)) {
@@ -786,6 +807,290 @@ function addTableTools(root) {
   });
 }
 
+// ---------------------------------------------------------------- CSV / TSV tables
+// A .csv or .tsv file is shown as a table of plain text: every cell goes into the page with textContent,
+// so nothing in the file can become markup, a link, a picture or code. Rows are sorted and filtered in
+// memory and drawn a page at a time, so large files stay quick.
+const TABLE_RE = /\.(csv|tsv)$/i;
+const DOC_RE = /\.(md|markdown|mdown|mkd|csv|tsv)$/i;
+const CSV_PAGE = 500;
+const csvCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+const DELIM_NAMES = { ',': 'comma', ';': 'semicolon', '\t': 'tab', '|': 'vertical bar' };
+let csvState = null;
+
+// Rows of delimited text (RFC 4180: a quoted field may hold the delimiter, line breaks and "" for a quote).
+function parseDelimited(text, delim) {
+  const rows = [];
+  let row = [], start = 0, i = 0;
+  const n = text.length;
+  while (i <= n) {
+    if (i < n && text[i] === '"' && i === start) {           // quoted field
+      let value = '', j = i + 1;
+      for (;;) {
+        const q = text.indexOf('"', j);
+        if (q < 0) { value += text.slice(j); j = n; break; }
+        value += text.slice(j, q);
+        if (text[q + 1] === '"') { value += '"'; j = q + 2; continue; }
+        j = q + 1; break;
+      }
+      // Anything between the closing quote and the next delimiter or line break is kept as written.
+      let k = j;
+      while (k < n && text[k] !== delim && text[k] !== '\n' && text[k] !== '\r') k++;
+      row.push(value + text.slice(j, k));
+      i = k;
+    } else {
+      let k = i;
+      while (k < n && text[k] !== delim && text[k] !== '\n' && text[k] !== '\r') k++;
+      row.push(text.slice(i, k));
+      i = k;
+    }
+    if (i >= n) { rows.push(row); break; }
+    if (text[i] === delim) { i++; start = i; if (i === n) { row.push(''); rows.push(row); break; } continue; }
+    i += text[i] === '\r' && text[i + 1] === '\n' ? 2 : 1;      // line break
+    rows.push(row); row = []; start = i;
+    if (i === n) break;
+  }
+  while (rows.length && rows[rows.length - 1].every(c => c === '')) rows.pop();
+  return rows;
+}
+
+// The separator: an Excel "sep=" first line, tab for .tsv, else the one that splits the first lines most evenly.
+function detectDelimiter(text, path) {
+  const sep = /^sep=([,;\t|])\r?\n/i.exec(text);
+  if (sep) return { delim: sep[1], skip: sep[0].length };
+  if (/\.tsv$/i.test(path)) return { delim: '\t', skip: 0 };
+  const lines = text.slice(0, 50000).split(/\r\n|\n|\r/).filter(l => l.trim()).slice(0, 25);
+  let best = ',', bestScore = 0;
+  for (const d of [',', ';', '\t', '|']) {
+    const counts = lines.map(l => l.replace(/"[^"]*"/g, '').split(d).length - 1);
+    if (!counts.length || !counts[0]) continue;
+    const score = counts.filter(c => c === counts[0]).length * 1000 + counts[0];
+    if (score > bestScore) { bestScore = score; best = d; }
+  }
+  return { delim: best, skip: 0 };
+}
+
+// A column filter: plain text matches anywhere in the cell (case does not matter); >, <, >=, <=, = and !=
+// followed by a number compare numbers; = and != followed by text compare the whole cell.
+function compileFilter(text) {
+  const t = text.trim();
+  if (!t) return null;
+  const m = /^(>=|<=|!=|>|<|=)\s*(.*)$/.exec(t);
+  if (m) {
+    const op = m[1], arg = m[2].trim(), num = sortValue(arg);
+    if (num !== null) {
+      return cell => {
+        const v = sortValue(cell.trim());
+        if (v === null) return false;
+        return op === '>' ? v > num : op === '<' ? v < num : op === '>=' ? v >= num : op === '<=' ? v <= num : op === '=' ? v === num : v !== num;
+      };
+    }
+    if (op === '=' || op === '!=') {
+      const want = arg.toLocaleLowerCase();
+      return op === '=' ? cell => cell.trim().toLocaleLowerCase() === want : cell => cell.trim().toLocaleLowerCase() !== want;
+    }
+  }
+  const want = t.toLocaleLowerCase();
+  return cell => cell.toLocaleLowerCase().includes(want);
+}
+
+function renderTableDocument() {
+  const text = currentSource.replace(/^﻿/, '');
+  const { delim, skip } = detectDelimiter(text, currentPath);
+  const rows = parseDelimited(text.slice(skip), delim);
+  let width = 0;
+  for (const r of rows) if (r.length > width) width = r.length;
+  const keep = csvState && csvState.path === currentPath ? csvState : null;     // same file again (reload): keep the view
+  csvState = { path: currentPath, delim, rows, width, header: keep ? keep.header : true,
+               sortCol: keep ? keep.sortCol : -1, sortDir: keep ? keep.sortDir : '',
+               filter: keep ? keep.filter : '', colFilters: keep ? keep.colFilters : [], shown: CSV_PAGE };
+  buildCsvView();
+}
+
+function buildCsvView() {
+  const s = csvState;
+  const make = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  const blank = Array.from({ length: s.width }, (_, i) => `Column ${i + 1}`);
+  s.head = s.header && s.rows.length ? blank.map((b, i) => (s.rows[0][i] || '').trim() || b) : blank;
+  s.data = s.header ? s.rows.slice(1) : s.rows;
+  // Columns that hold numbers (most filled cells) sort as numbers and line up on the right.
+  s.numeric = s.head.map((_, c) => {
+    let filled = 0, num = 0;
+    for (let r = 0; r < s.data.length && r < 2000; r++) {
+      const v = (s.data[r][c] || '').trim();
+      if (!v) continue;
+      filled++;
+      if (sortValue(v) !== null) num++;
+    }
+    return filled > 0 && num / filled >= 0.8;
+  });
+
+  const view = make('div', 'csv-view');
+  const bar = make('div', 'csv-bar');
+  const search = make('input', 'csv-search');
+  search.type = 'search';
+  search.placeholder = 'Filter all columns…';
+  search.value = s.filter;
+  search.setAttribute('aria-label', 'Filter all columns');
+  const headerLabel = make('label', 'csv-option');
+  const headerBox = make('input');
+  headerBox.type = 'checkbox';
+  headerBox.checked = s.header;
+  headerLabel.append(headerBox, document.createTextNode(' First row is the header'));
+  const clear = make('button', 'csv-btn', 'Clear filters');
+  clear.type = 'button';
+  const info = make('span', 'csv-info');
+  const copy = make('button', 'csv-btn', '⧉ Copy');
+  copy.type = 'button';
+  copy.title = 'Copy the rows shown by the filters, in this order — pastes into Excel or Word as cells';
+  const save = make('button', 'csv-btn', '⬇ Save CSV');
+  save.type = 'button';
+  save.title = 'Save the rows shown by the filters, in this order, as a CSV file';
+  bar.append(search, headerLabel, clear, info, copy, save);
+
+  const scroll = make('div', 'csv-scroll');
+  const table = make('table', 'csv-table');
+  const thead = make('thead');
+  const headRow = make('tr');
+  const filterRow = make('tr', 'csv-filters');
+  s.head.forEach((name, c) => {
+    const th = make('th', 'sortable', name);
+    th.tabIndex = 0;
+    th.title = 'Click to sort by this column (again to reverse, a third time for the file order)';
+    if (s.numeric[c]) th.classList.add('num');
+    if (s.sortCol === c && s.sortDir) th.dataset.sort = s.sortDir;
+    const sort = () => {
+      s.sortDir = s.sortCol !== c ? 'asc' : s.sortDir === 'asc' ? 'desc' : s.sortDir === 'desc' ? '' : 'asc';
+      s.sortCol = s.sortDir ? c : -1;
+      headRow.querySelectorAll('th').forEach(h => { delete h.dataset.sort; });
+      if (s.sortDir) th.dataset.sort = s.sortDir;
+      refreshCsv();
+    };
+    th.addEventListener('click', sort);
+    th.addEventListener('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); sort(); } });
+    headRow.append(th);
+    const fth = make('th');
+    const input = make('input', 'csv-col-filter');
+    input.type = 'search';
+    input.placeholder = s.numeric[c] ? 'e.g. >100' : 'filter';
+    input.title = 'Text anywhere in the cell; or >, <, >=, <=, =, != followed by a number; = or != followed by text for the whole cell';
+    input.setAttribute('aria-label', `Filter ${name}`);
+    input.value = s.colFilters[c] || '';
+    input.addEventListener('input', debounce(() => { s.colFilters[c] = input.value; s.shown = CSV_PAGE; refreshCsv(); }, 150));
+    fth.append(input);
+    filterRow.append(fth);
+  });
+  thead.append(headRow, filterRow);
+  const tbody = make('tbody');
+  table.append(thead, tbody);
+  scroll.append(table);
+  const more = make('button', 'csv-btn csv-more');
+  more.type = 'button';
+  view.append(bar, scroll, more);
+  s.dom = { tbody, info, more, search, filterRow, headRow };
+
+  search.addEventListener('input', debounce(() => { s.filter = search.value; s.shown = CSV_PAGE; refreshCsv(); }, 150));
+  headerBox.addEventListener('change', () => { s.header = headerBox.checked; s.sortCol = -1; s.sortDir = ''; s.colFilters = []; buildCsvView(); });
+  clear.addEventListener('click', () => {
+    s.filter = ''; s.colFilters = []; s.shown = CSV_PAGE;
+    search.value = '';
+    filterRow.querySelectorAll('input').forEach(i => { i.value = ''; });
+    refreshCsv();
+  });
+  more.addEventListener('click', () => { s.shown += CSV_PAGE; refreshCsv(false); });
+  copy.addEventListener('click', async () => {
+    const text = csvRowsShown().map(r => r.map(c => /[\t\r\n"]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c).join('\t')).join('\r\n');
+    showToast(await copyToClipboard(text) ? `Copied ${plural(s.view.length, 'row')} — paste them into Excel or Word.` : 'Could not copy the rows.');
+  });
+  save.addEventListener('click', async () => {
+    const csv = String.fromCharCode(0xFEFF) + csvRowsShown().map(r => r.map(c => /[,"\r\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c).join(',')).join('\r\n') + '\r\n';
+    const base = currentPath.split('/').pop().replace(TABLE_RE, '');
+    try {
+      const saved = await saveFileAs(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `${base}-filtered.csv`,
+        { description: 'CSV table', accept: { 'text/csv': ['.csv'] } });
+      if (saved) showToast(`Saved “${saved}”.`);
+    } catch (e) { showToast(`Saving failed: ${e.message}`); }
+  });
+
+  output.replaceChildren(view);
+  refreshCsv();
+}
+
+// The header and the rows the filters keep, in the shown order (all of them, not just the drawn page).
+function csvRowsShown() {
+  const s = csvState;
+  return [s.head, ...s.view.map(i => s.head.map((_, c) => s.data[i][c] || ''))];
+}
+
+function refreshCsv(redraw = true) {
+  const s = csvState;
+  const all = s.filter.trim().toLocaleLowerCase();
+  const tests = s.head.map((_, c) => compileFilter(s.colFilters[c] || ''));
+  const view = [];
+  for (let i = 0; i < s.data.length; i++) {
+    const row = s.data[i];
+    if (all && !row.some(c => c.toLocaleLowerCase().includes(all))) continue;
+    let keep = true;
+    for (let c = 0; c < tests.length; c++) if (tests[c] && !tests[c](row[c] || '')) { keep = false; break; }
+    if (keep) view.push(i);
+  }
+  if (s.sortCol >= 0 && s.sortDir) {
+    const c = s.sortCol, dir = s.sortDir === 'asc' ? 1 : -1, numeric = s.numeric[c];
+    const key = numeric ? view.map(i => sortValue((s.data[i][c] || '').trim())) : null;
+    const order = view.map((_, k) => k);
+    order.sort((a, b) => {
+      let r;
+      if (numeric) {
+        const x = key[a], y = key[b];
+        if (x === null || y === null) return x === y ? a - b : x === null ? 1 : -1;     // empty / text cells last
+        r = x - y;
+      } else r = csvCollator.compare(s.data[view[a]][c] || '', s.data[view[b]][c] || '');
+      return r * dir || a - b;
+    });
+    s.view = order.map(k => view[k]);
+  } else s.view = view;
+
+  const { tbody, info, more } = s.dom;
+  const from = redraw ? 0 : tbody.rows.length;
+  const to = Math.min(s.view.length, s.shown);
+  const frag = document.createDocumentFragment();
+  for (let k = from; k < to; k++) {
+    const row = s.data[s.view[k]];
+    const tr = document.createElement('tr');
+    for (let c = 0; c < s.width; c++) {
+      const td = document.createElement('td');
+      td.textContent = row[c] || '';
+      if (s.numeric[c]) td.className = 'num';
+      tr.append(td);
+    }
+    frag.append(tr);
+  }
+  if (redraw) tbody.replaceChildren(frag); else tbody.append(frag);
+  const filtered = s.view.length !== s.data.length;
+  info.textContent = `${filtered ? `${fmt(s.view.length)} of ${fmt(s.data.length)}` : fmt(s.data.length)} row${s.data.length === 1 ? '' : 's'}` +
+                     (to < s.view.length ? ` · first ${fmt(to)} shown` : '');
+  more.hidden = to >= s.view.length;
+  more.textContent = `Show ${fmt(Math.min(CSV_PAGE, s.view.length - to))} more`;
+  updateCsvStats();
+}
+
+function updateCsvStats() {
+  const s = csvState;
+  const stats = document.getElementById('stats');
+  if (!s || !TABLE_RE.test(currentPath || '')) return;
+  const group = (title, text) => { const g = document.createElement('span'); g.className = 'group'; g.title = title; g.textContent = text; return g; };
+  stats.replaceChildren(
+    group('The table in this file', `Table: ${plural(s.data.length, 'row')} · ${plural(s.width, 'column')} · separator: ${DELIM_NAMES[s.delim] || s.delim}` +
+          (s.header ? ' · first row is the header' : '')),
+    group('Rows kept by the filters', `Shown: ${plural(s.view.length, 'row')}`),
+    group('How this file is shown', 'Shown as plain text: nothing in a table can run, link or load anything'));
+}
+
+function debounce(fn, ms) {
+  let t = 0;
+  return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+}
+
 function disableLink(a, reason) {
   a.removeAttribute('href');
   a.classList.add('link-disabled');
@@ -838,6 +1143,7 @@ function readingTime(words) {
 function updateStats() {
   const stats = document.getElementById('stats');
   if (!currentPath) { stats.replaceChildren(); return; }
+  if (TABLE_RE.test(currentPath)) { updateCsvStats(); return; }
 
   // Original file: every line, as an editor numbers them (a final line break doesn't add a line).
   const src = currentSource.replace(/^\uFEFF/, '');
@@ -1781,6 +2087,7 @@ function showCodeAlert(text, items, policy) {
 }
 
 function alertBlockedCode() {
+  if (!lastSafety || lastSafety.source !== currentSource) return;      // e.g. a table: nothing was parsed as Markdown
   const found = (lastSafety?.findings || [])
     .filter(f => CODE_FINDINGS.has(f.id) || (f.id === 'diagramcmd' && f.level === 'risk'));
   if (!found.length) return;

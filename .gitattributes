@@ -18,3 +18,5 @@ src/** -text
 *.ttf binary
 # Saved as UTF-16 on purpose (encoding test): never convert.
 test/utf16.md -text
+# Table test data, kept byte for byte.
+test/*.csv -text

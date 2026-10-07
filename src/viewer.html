@@ -522,6 +522,24 @@
     .markdown-body th[data-sort="desc"]::after { content: ' ▼'; color: var(--accent); }
     @media print { .table-bar { display: none !important; } .table-tools { padding-top: 0; } .markdown-body th.sortable::after { content: none; } }
 
+    /* ---- CSV / TSV tables ---- */
+    .csv-view { display: flex; flex-direction: column; gap: .6rem; }
+    .csv-bar { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; font: .85rem system-ui, sans-serif; }
+    .csv-search { flex: 1 1 14rem; min-width: 10rem; padding: .35rem .55rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; }
+    .csv-option { color: var(--muted); white-space: nowrap; }
+    .csv-info { color: var(--muted); margin-inline-start: auto; white-space: nowrap; }
+    .csv-btn { border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: 600 .78rem/1 system-ui, sans-serif; padding: .4rem .6rem; cursor: pointer; }
+    .csv-btn:hover { color: var(--accent); border-color: var(--accent); }
+    .csv-more { align-self: flex-start; }
+    .csv-scroll { overflow: auto; max-height: calc(100vh - 15rem); border: 1px solid var(--border); border-radius: 6px; }
+    .markdown-body .csv-table { margin: 0; display: table; width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; }
+    .markdown-body .csv-table th, .markdown-body .csv-table td { white-space: pre-wrap; max-width: 32rem; vertical-align: top; }
+    .markdown-body .csv-table thead th { position: sticky; z-index: 1; background: var(--panel, var(--bg)); }
+    .markdown-body .csv-table thead tr:first-child th { top: 0; }
+    .markdown-body .csv-table thead tr.csv-filters th { top: 2.1rem; padding: .25rem .35rem; }
+    .markdown-body .csv-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .csv-col-filter { width: 100%; min-width: 4.5rem; box-sizing: border-box; padding: .2rem .35rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--fg); font: 400 .78rem system-ui, sans-serif; }
+    @media print { .csv-bar, .csv-more, .csv-filters { display: none !important; } .csv-scroll { max-height: none; overflow: visible; border: 0; } }
     /* ---- Compare two versions ---- */
     dialog#compare {
       width: min(1200px, calc(100vw - 32px)); height: calc(100vh - 48px); padding: 1rem 1.25rem;

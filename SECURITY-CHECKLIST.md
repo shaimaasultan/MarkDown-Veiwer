@@ -21,6 +21,8 @@ tamper tests described under each section.
 - [x] Blocked-code alert: a popup says when a file contained code that was removed
 - [x] Safety check badge and report: phishing links, look-alike addresses and letters, hidden text, AI-aimed instructions, download-and-run commands, Trojan Source (1.7.0)
 - [x] Code examples cannot be hidden or restyled (no copy-paste traps)
+- [x] **CSV / TSV tables are plain text:** a table file is never parsed as Markdown or HTML; each cell goes into the page with textContent, so script, picture, link and formula cells are shown as written and nothing in them can run, link or load. The app serves `.csv` / `.tsv` like Markdown (50 MB text limit, same folder rules); Setup offers them under Open with only (1.12.0) — tested with `test\data.csv` (script, onerror picture, `javascript:` link and `=HYPERLINK` cells, quoted commas and line breaks): drawn exactly, nothing ran, no markup; sorting and filtering checked by `Test-Viewer.cmd`
+  - [ ] Confirm on a real run: right-click a .csv file › Open with › Markdown Viewer (WebView2) → table; sort, filter, copy
 - [x] **Every file opened on its own stays sandboxed** (no scripts, so even an SVG cannot run code); because a sandboxed page cannot play video or audio, links to video and audio open in a new viewer window with its player instead of the raw file (1.9.1) — reproduced: the app's headers on the promo video gave "no source", without the sandbox it played
   - [x] Confirmed on a real run: in the installed viewer, clicking the promo video (poster or link) in README.md plays it in a new window (2026-10-06)
 

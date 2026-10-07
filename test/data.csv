@@ -1,0 +1,8 @@
+Name,City,Amount,Note
+Alice,Toronto,120.5,"plain, with comma"
+Bob,Ottawa,80,"<script>window.PWN='csv-script'</script>"
+Carol,Montréal,1000,"<img src=x onerror=""window.PWN='csv-img'"">"
+Dave,Toronto,,"=HYPERLINK(""http://example.com"",""click"")"
+Eve,Ottawa,15,"line one
+line two"
+Frank,Calgary,abc,[link](javascript:window.PWN='csv-md')
