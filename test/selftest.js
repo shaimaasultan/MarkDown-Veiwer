@@ -281,9 +281,35 @@
     if (gutter.length !== lines) problems.push(`line numbers ${gutter.length}, lines ${lines}`);
     const shown = output.querySelector('pre.code-text code').textContent.replace(/[\r]/g, '');
     if (!shown.includes(text.split(/\r?\n/)[0])) problems.push('first line missing');
+    // Each line number sits beside its line (same line height in both columns).
+    const rowTops = el => { const r = document.createRange(); r.selectNodeContents(el); return [...new Set([...r.getClientRects()].map(x => Math.round(x.top)))]; };
+    const codeTops = rowTops(output.querySelector('pre.code-text code')), numberTops = rowTops(output.querySelector('pre.code-gutter'));
+    const n = Math.min(codeTops.length, numberTops.length, 40);
+    for (let i = 0; i < n; i++)
+      if (Math.abs((codeTops[i] - codeTops[0]) - (numberTops[i] - numberTops[0])) > 1) { problems.push(`line ${i + 1} is not beside its number`); break; }
+    // Colours: each kind of word gets its colour class (the viewer's own PowerShell and batch grammars).
+    const coloured = cls => [...output.querySelectorAll('pre.code-text code .hljs-' + cls)].map(s => s.textContent);
+    const expectColours = want => {
+      for (const [cls, texts] of Object.entries(want))
+        for (const t of [].concat(texts))
+          if (!coloured(cls).some(c => c === t || (t.endsWith('…') && c.startsWith(t.slice(0, -1)))))
+            problems.push(`colour: ${t} is not ${cls} (${cls}: ${coloured(cls).slice(0, 6).join(' | ')})`);
+    };
     if (name === 'script.ps1') {
       if (!output.querySelector('pre.code-text .hc')) problems.push('hidden text-direction character not marked');
       if (!shown.includes('Remove-Item')) problems.push('ps1 text');
+      expectColours({ comment: '# Sample script - shown, never run.', keyword: 'param', type: '[string]', variable: '$Path', string: "'.'",
+                      built_in: ['Get-ChildItem', 'Where-Object', 'Remove-Item', 'Join-Path'], parameter: ['-LiteralPath', '-WhatIf'],
+                      operator: '-gt', number: '1MB' });
+      // Parameters have a colour of their own (not the variables' blue).
+      const param = output.querySelector('pre.code-text .hljs-parameter'), variable = output.querySelector('pre.code-text .hljs-variable');
+      if (!param || getComputedStyle(param).color === getComputedStyle(variable).color) problems.push('parameters are not in their own colour');
+    }
+    if (name === 'sample.cmd') {
+      expectColours({ comment: [':: Sample batch file…', 'rem Variables, labels, strings and commands.'], meta: '@',
+                      keyword: ['setlocal', 'enabledelayedexpansion', 'if', 'not', 'defined', 'goto', 'for', 'in', 'do', 'exit'],
+                      built_in: ['echo', 'set'], variable: ['%%i', '!COUNT!', '%~dp0', '%NAME%'], symbol: ':done', string: '"%NAME%"',
+                      parameter: ['/a', '/b'] });
     }
     if (ext === 'log' && !shown.includes("<script>window.PWN='log'</script>")) problems.push('log text');
     if (ext === 'yaml' && !output.querySelector('pre.code-text code span')) problems.push('yaml not coloured');

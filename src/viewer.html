@@ -585,7 +585,15 @@
     .markdown-body .code-body pre { margin: 0; padding: .75rem .9rem; border-radius: 0; background: transparent; overflow: visible; font-size: .85em; line-height: 1.5; }
     .markdown-body .code-body pre.code-gutter { position: sticky; left: 0; z-index: 1; padding-inline: .6rem; text-align: right; color: var(--muted); background: var(--panel, var(--bg)); border-inline-end: 1px solid var(--border); user-select: none; }
     .markdown-body .code-body pre.code-text { flex: 1; min-width: 0; }
-    .markdown-body .code-body pre.code-text code { background: transparent; padding: 0; white-space: pre; }
+    /* The same size and line height as the line numbers, so each number stays beside its line (the general
+       "pre code" rule makes code 85% of its block, which drifted a little further on every line). */
+    .markdown-body .code-body pre.code-text code { background: transparent; padding: 0; white-space: pre; font-size: 1em; line-height: inherit; }
+    /* Parameters and switches (PowerShell -Path, batch /s): a colour of their own, apart from variables and operators. */
+    :root { --code-param: #0a7570; }
+    @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --code-param: #3dd6c6; } }
+    :root[data-theme="dark"] { --code-param: #3dd6c6; }
+    @media print { :root { --code-param: #0a7570; } }
+    .hljs-parameter { color: var(--code-param); }
     .code-body.wrap pre.code-gutter { display: none; }
     .markdown-body .code-body.wrap pre.code-text code { white-space: pre-wrap; word-break: break-word; }
     .markdown-body pre.xml-text { margin: 0; overflow: auto; max-height: max(22rem, calc(100vh - 15rem)); font-size: .85em; }

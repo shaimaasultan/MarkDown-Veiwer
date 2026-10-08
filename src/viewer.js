@@ -1741,7 +1741,74 @@ const TYPE_BY_EXT = new Map(FILE_TYPES.flatMap(t => t.exts.map(e => [e, t])));
 const extOf = p => { const m = /\.([^./\\]+)$/.exec(p || ''); return m ? m[1].toLowerCase() : ''; };
 const typeOf = p => TYPE_BY_EXT.get(extOf(p)) || null;
 const isSpecialDoc = p => { const t = typeOf(p); return !!t && t.id !== 'md'; };
-// highlight.js language for each extension (only those in the bundled build; others show as plain text).
+// highlight.js grammars the bundled build lacks, written for this viewer: PowerShell (.ps1, .psm1, .psd1, and
+// ```powershell blocks) and batch files (.bat, .cmd, ```bat). They only pick colours for text - nothing is run.
+function hljsPowerShell(hljs) {
+  const VARIABLE = { scope: 'variable', match: /\$(?:\{[^}\r\n]*\}|(?:global|local|script|private|env|using|variable|function):[\w?]+|[\w?^]+|\$)/ };
+  const SPLAT = { scope: 'variable', match: /@[A-Za-z_]\w*\b/ };
+  const ESCAPE = { scope: 'char.escape', match: /`[\s\S]/ };
+  const SUBEXPR = { scope: 'subst', begin: /\$\(/, end: /\)/, contains: [VARIABLE, { begin: /\(/, end: /\)/, contains: ['self'] }] };
+  const STRINGS = [
+    { scope: 'string', begin: /@"[ \t]*$/, end: /^[ \t]*"@/, contains: [ESCAPE, VARIABLE, SUBEXPR] },     // here-strings
+    { scope: 'string', begin: /@'[ \t]*$/, end: /^[ \t]*'@/ },
+    { scope: 'string', begin: /"/, end: /"/, contains: [ESCAPE, { match: /""/ }, VARIABLE, SUBEXPR] },
+    { scope: 'string', begin: /'/, end: /'/, contains: [{ match: /''/ }] }
+  ];
+  return {
+    name: 'PowerShell',
+    aliases: ['ps', 'ps1', 'psm1', 'psd1', 'pwsh'],
+    case_insensitive: true,
+    keywords: {
+      $pattern: /\b[A-Za-z]\w*\b/,
+      keyword: 'if else elseif switch while do until for foreach in return break continue function filter workflow param ' +
+               'begin process end dynamicparam try catch finally throw trap exit class enum using data hidden static ' +
+               'configuration parallel sequence inlinescript'
+    },
+    contains: [
+      hljs.COMMENT(/<#/, /#>/, { contains: [{ scope: 'doctag', match: /^\s*\.[A-Z]+\b/ }] }),
+      hljs.HASH_COMMENT_MODE,
+      ...STRINGS,
+      { scope: 'literal', match: /\$(?:true|false|null)\b/ },
+      VARIABLE, SPLAT,
+      { begin: [/\b(?:function|filter)\s+/, /[\w-]+/], beginScope: { 1: 'keyword', 2: 'title.function' } },
+      { scope: 'built_in', match: /\b[A-Za-z]+-[A-Za-z][A-Za-z0-9]*\b/ },                     // cmdlets: Get-ChildItem
+      { scope: 'type', match: /\[[A-Za-z_][\w.`]*(?:\[\])?\]/ },                                // [string], [IO.File]
+      { scope: 'operator', match: /(?<![\w$-])-(?:eq|ne|gt|ge|lt|le|c?like|c?notlike|c?match|c?notmatch|contains|notcontains|in|notin|c?replace|split|join|and|or|xor|not|band|bor|bxor|bnot|shl|shr|isnot|is|as|f)\b/ },
+      { scope: 'parameter', match: /(?<![\w$-])-[A-Za-z_][\w]*/ },                               // parameters: -LiteralPath (own colour)
+      { scope: 'number', match: /\b(?:0x[0-9a-f]+|\d+(?:\.\d+)?(?:e[+-]?\d+)?)(?:kb|mb|gb|tb|pb)?\b/ }
+    ]
+  };
+}
+function hljsBatch(hljs) {
+  const VARIABLE = { scope: 'variable', match: /%~[a-z$:]*[0-9a-z]|%%~?[a-z]|%[0-9*]|%[^%\s"]+%|![^!\s"]+!/ };
+  return {
+    name: 'Batch file',
+    aliases: ['bat', 'cmd', 'batch'],
+    case_insensitive: true,
+    keywords: {
+      $pattern: /\b[A-Za-z][\w-]*\b/,
+      keyword: 'if else goto for in do call exit not exist errorlevel defined equ neq lss leq gtr geq shift setlocal endlocal ' +
+               'enabledelayedexpansion disabledelayedexpansion enableextensions disableextensions nul con',
+      built_in: 'echo set cd chdir md mkdir rd rmdir del erase copy xcopy robocopy move ren rename type pause cls title start ' +
+                'find findstr where dir attrib choice timeout pushd popd ver vol mklink reg sc net tasklist taskkill powershell ' +
+                'pwsh cmd assoc ftype path prompt color mode more sort tree icacls certutil bitsadmin schtasks wmic'
+    },
+    contains: [
+      hljs.COMMENT(/^[ \t]*@?rem\b/, /$/),
+      hljs.COMMENT(/^[ \t]*::/, /$/),
+      { scope: 'symbol', match: /^[ \t]*:[A-Za-z_][\w.-]*/ },                                    // labels: :done
+      { scope: 'meta', match: /^[ \t]*@/ },
+      { scope: 'string', begin: /"/, end: /"|$/, contains: [VARIABLE] },
+      VARIABLE,
+      { scope: 'parameter', match: /(?<=[\s(])\/[A-Za-z?][\w:-]*/ },                           // switches: /a, /b, /s, /create
+      { scope: 'number', match: /\b\d+\b/ }
+    ]
+  };
+}
+if (window.hljs && !hljs.getLanguage('powershell')) hljs.registerLanguage('powershell', hljsPowerShell);
+if (window.hljs && !hljs.getLanguage('dos')) hljs.registerLanguage('dos', hljsBatch);
+
+// highlight.js language for each extension (the bundled build plus the two grammars above; others show as plain text).
 const CODE_LANG = { py: 'python', js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript',
                     cs: 'csharp', java: 'java', kt: 'kotlin', sql: 'sql', sh: 'bash', bash: 'bash', c: 'c', h: 'c', cpp: 'cpp', hpp: 'cpp', cc: 'cpp',
                     go: 'go', rs: 'rust', rb: 'ruby', php: 'php', swift: 'swift', vb: 'vbnet', r: 'r', lua: 'lua', pl: 'perl', html: 'xml', htm: 'xml',
