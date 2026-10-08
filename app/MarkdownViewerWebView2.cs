@@ -40,15 +40,15 @@ using Microsoft.Win32.SafeHandles;
 // The program's own calls into Windows DLLs (user32, kernel32, advapi32, wintrust) load them from System32
 // only, never from the program's folder or anywhere else on the search path.
 [assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
-[assembly: AssemblyVersion("1.14.0.0")]
-[assembly: AssemblyFileVersion("1.14.0.0")]
-[assembly: AssemblyInformationalVersion("1.14.0")]
+[assembly: AssemblyVersion("1.15.0.0")]
+[assembly: AssemblyFileVersion("1.15.0.0")]
+[assembly: AssemblyInformationalVersion("1.15.0")]
 
 static class Program
 {
     const string AppName = "Markdown Viewer (WebView2)";
     const string DataFolder = "MarkdownViewerWebView2";     // %APPDATA% (settings) and %LOCALAPPDATA% (browser data)
-    const string AppVersion = "1.14.0";
+    const string AppVersion = "1.15.0";
     // Exists only inside this program's windows. Not a .local name: Windows would first spend ~2 s
     // looking for a device called "mdviewer" on the local network before the page could load.
     const string PrivateHost = "https://mdviewer.example";
@@ -1359,6 +1359,7 @@ static class Program
         else if (rest == "info") SendInfo(stream, headOnly, scope);
         else if (rest.StartsWith("app/", StringComparison.Ordinal)) SendAppFile(stream, Uri.UnescapeDataString(rest.Substring(4)), headOnly);
         else if (rest.StartsWith("fs/", StringComparison.Ordinal)) SendDiskFile(stream, Uri.UnescapeDataString(rest.Substring(3)), headOnly, range, scope);
+        else if (rest.StartsWith("check/", StringComparison.Ordinal)) SendCheck(stream, Uri.UnescapeDataString(rest.Substring(6)), headOnly, scope);
         else NotFound(stream);
     }
 
@@ -1410,24 +1411,25 @@ static class Program
         Send(s, 200, Mime(name), body, csp, headOnly);
     }
 
-    static void SendDiskFile(Stream s, string webPath, bool headOnly, string range, DocScope scope)
+    // The full path of a folder file the page may have, or null after answering 403 / 404.
+    static string AllowedFile(Stream s, string webPath, bool headOnly, DocScope scope)
     {
         string full;
         try { full = Path.GetFullPath(webPath.Replace('/', '\\')); }
-        catch { NotFound(s); return; }
+        catch { NotFound(s); return null; }
 
         string allowRoot = scope.AllowRoot;
         if (allowRoot == null || !IsUnder(full, allowRoot))
         {
             Send(s, 403, "text/plain", Encoding.UTF8.GetBytes("Forbidden"), null, headOnly);
-            return;
+            return null;
         }
         // Missing first, so the page can tell a broken link from a file type it is not given.
-        if (!File.Exists(full)) { NotFound(s); return; }
+        if (!File.Exists(full)) { NotFound(s); return null; }
         if (!ServedTypes.Contains(Path.GetExtension(full)))
         {
             Send(s, 403, "text/plain", Encoding.UTF8.GetBytes("Forbidden"), null, headOnly);
-            return;
+            return null;
         }
         // A folder link (junction, symbolic link) inside the allowed folder could lead anywhere: the file's
         // real location must be inside the allowed folder too.
@@ -1435,8 +1437,23 @@ static class Program
         if (real == null || realRoot == null || !IsUnder(real, realRoot))
         {
             Send(s, 403, "text/plain", Encoding.UTF8.GetBytes("Forbidden"), null, headOnly);
-            return;
+            return null;
         }
+        return full;
+    }
+
+    // Microsoft Defender's real-time protection refused the read: "Operation did not complete successfully because
+    // the file contains a virus" (ERROR_VIRUS_INFECTED) or "...was deleted" (ERROR_VIRUS_DELETED).
+    static bool IsVirusError(Exception e)
+    {
+        int code = Marshal.GetHRForException(e) & 0xFFFF;
+        return e is IOException && (code == 225 || code == 226);
+    }
+
+    static void SendDiskFile(Stream s, string webPath, bool headOnly, string range, DocScope scope)
+    {
+        string full = AllowedFile(s, webPath, headOnly, scope);
+        if (full == null) return;
         FileInfo info = new FileInfo(full);
         bool text = TextTypes.Contains(Path.GetExtension(full));
         if (text && info.Length > MaxTextBytes)
@@ -1453,7 +1470,155 @@ static class Program
         string etag = "\"" + info.LastWriteTimeUtc.Ticks.ToString("x") + "-" + info.Length.ToString("x") + "\"";
         if (!text) { SendMedia(s, full, info, csp, etag, headOnly, range); return; }
         string type = Path.GetExtension(full).Equals(".svg", StringComparison.OrdinalIgnoreCase) ? Mime(full) : "text/plain; charset=utf-8";
-        Send(s, 200, type, headOnly ? new byte[0] : File.ReadAllBytes(full), csp, headOnly, etag);
+        byte[] bytes;
+        try { bytes = headOnly ? new byte[0] : File.ReadAllBytes(full); }
+        catch (IOException e)
+        {
+            if (!IsVirusError(e)) throw;
+            Send(s, 451, "text/plain", Encoding.UTF8.GetBytes("Blocked by Microsoft Defender"), null, headOnly);
+            return;
+        }
+        Send(s, 200, type, bytes, csp, headOnly, etag);
+    }
+
+    // ------------------------------------------------------------------ where a file came from; Microsoft Defender
+    // GET <token>/check/<path>, for the safety report: the file's Mark of the Web (the Zone.Identifier stream Windows
+    // adds to a downloaded file: its zone and the address it came from) and what Microsoft Defender - or the antivirus
+    // registered with Windows - says about its contents, asked through AMSI. All on this computer: nothing goes online,
+    // and the file is only read, never run. Same rules as fs/: a file the page may have.
+    static void SendCheck(Stream s, string webPath, bool headOnly, DocScope scope)
+    {
+        string full = AllowedFile(s, webPath, headOnly, scope);
+        if (full == null) return;
+        Dictionary<string, string> zone = ReadZone(full);
+        string zoneId = null, host = null, referrer = null;
+        if (zone != null)
+        {
+            zone.TryGetValue("ZoneId", out zoneId);
+            zone.TryGetValue("HostUrl", out host);
+            zone.TryGetValue("ReferrerUrl", out referrer);
+        }
+        int zoneNumber;
+        if (zoneId == null || !int.TryParse(zoneId, out zoneNumber) || zoneNumber < 0 || zoneNumber > 4) zoneNumber = -1;
+
+        // Text and Excel files are scanned (what the viewer reads); pictures, video and audio are only shown.
+        string scan;
+        FileInfo info = new FileInfo(full);
+        string ext = Path.GetExtension(full);
+        if (!TextTypes.Contains(ext) && !ext.Equals(".xlsx", StringComparison.OrdinalIgnoreCase)) scan = "notscanned";
+        else if (info.Length > MaxMediaBytes) scan = "toolarge";
+        else
+        {
+            byte[] bytes = null;
+            try { bytes = File.ReadAllBytes(full); scan = "clean"; }
+            catch (IOException e) { scan = IsVirusError(e) ? "malware" : "unavailable"; }
+            catch (UnauthorizedAccessException) { scan = "unavailable"; }
+            if (bytes != null)
+            {
+                scan = AmsiScan(bytes, full);
+                // Scripts reach antivirus engines as UTF-16 text (that is how PowerShell and Windows Script Host hand
+                // them over), so a text file is asked about in that form too.
+                if (scan == "clean" && TextTypes.Contains(ext))
+                {
+                    string asText = AmsiScan(Encoding.Unicode.GetBytes(DecodeText(bytes)), full);
+                    if (asText != "clean") scan = asText;
+                }
+            }
+        }
+
+        StringBuilder sb = new StringBuilder("{");
+        sb.Append("\"zone\":").Append(zoneNumber).Append(',');
+        sb.Append("\"host\":").Append(Json(Clip(host))).Append(',');
+        sb.Append("\"referrer\":").Append(Json(Clip(referrer))).Append(',');
+        sb.Append("\"scan\":").Append(Json(scan)).Append('}');
+        Send(s, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(sb.ToString()), null, headOnly);
+    }
+
+    static string Clip(string v) { return v == null ? null : v.Length > 2000 ? v.Substring(0, 2000) : v; }
+
+    // The file's text as the page reads it: a byte-order mark first, else UTF-8 (invalid bytes replaced).
+    static string DecodeText(byte[] b)
+    {
+        if (b.Length >= 2 && b[0] == 0xFF && b[1] == 0xFE) return Encoding.Unicode.GetString(b, 2, b.Length - 2);
+        if (b.Length >= 2 && b[0] == 0xFE && b[1] == 0xFF) return Encoding.BigEndianUnicode.GetString(b, 2, b.Length - 2);
+        if (b.Length >= 3 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF) return Encoding.UTF8.GetString(b, 3, b.Length - 3);
+        return Encoding.UTF8.GetString(b);
+    }
+
+    // The Zone.Identifier stream ("[ZoneTransfer] ZoneId=3 HostUrl=…"), as names and values; null if there is none.
+    static Dictionary<string, string> ReadZone(string full)
+    {
+        using (SafeFileHandle h = CreateFileW(full + ":Zone.Identifier", 0x80000000 /* GENERIC_READ */, 7, IntPtr.Zero, 3 /* OPEN_EXISTING */, 0, IntPtr.Zero))
+        {
+            if (h.IsInvalid) return null;
+            try
+            {
+                using (FileStream f = new FileStream(h, FileAccess.Read))
+                {
+                    byte[] buf = new byte[(int)Math.Min(f.Length, 65536)];
+                    int got = 0, n;
+                    while (got < buf.Length && (n = f.Read(buf, got, buf.Length - got)) > 0) got += n;
+                    byte[] data = new byte[got];
+                    Array.Copy(buf, data, got);
+                    Dictionary<string, string> d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (string line in DecodeText(data).Split('\r', '\n'))
+                    {
+                        int eq = line.IndexOf('=');
+                        if (eq > 0) d[line.Substring(0, eq).Trim()] = line.Substring(eq + 1).Trim();
+                    }
+                    return d;
+                }
+            }
+            catch (IOException) { return null; }
+        }
+    }
+
+    // AMSI (Antimalware Scan Interface): the same check Windows gives scripts before they run, here only to tell
+    // the reader. amsi.dll comes from System32 (DefaultDllImportSearchPaths above).
+    [DllImport("amsi.dll", CharSet = CharSet.Unicode)]
+    static extern int AmsiInitialize(string appName, out IntPtr context);
+    [DllImport("amsi.dll")]
+    static extern int AmsiOpenSession(IntPtr context, out IntPtr session);
+    [DllImport("amsi.dll")]
+    static extern void AmsiCloseSession(IntPtr context, IntPtr session);
+    [DllImport("amsi.dll", CharSet = CharSet.Unicode)]
+    static extern int AmsiScanBuffer(IntPtr context, byte[] buffer, uint length, string contentName, IntPtr session, out int result);
+
+    static IntPtr amsiContext = IntPtr.Zero;
+    static bool amsiTried;
+    static readonly object amsiLock = new object();
+
+    // "clean", "malware", "blocked" (an administrator's policy blocks such content) or "unavailable".
+    static string AmsiScan(byte[] bytes, string name)
+    {
+        lock (amsiLock)
+        {
+            if (!amsiTried)
+            {
+                amsiTried = true;
+                try { if (AmsiInitialize("Markdown Viewer", out amsiContext) != 0) amsiContext = IntPtr.Zero; }
+                catch (Exception) { amsiContext = IntPtr.Zero; }       // no amsi.dll (older Windows)
+            }
+            if (amsiContext == IntPtr.Zero) return "unavailable";
+            IntPtr session = IntPtr.Zero;
+            try
+            {
+                if (AmsiOpenSession(amsiContext, out session) != 0) session = IntPtr.Zero;
+                int result;
+                if (AmsiScanBuffer(amsiContext, bytes, (uint)bytes.Length, name, session, out result) != 0) return "unavailable";
+                return AmsiVerdict(result);
+            }
+            catch (Exception) { return "unavailable"; }
+            finally { if (session != IntPtr.Zero) AmsiCloseSession(amsiContext, session); }
+        }
+    }
+
+    // AMSI_RESULT: 0 clean, 1 not detected, 0x4000-0x4FFF blocked by an administrator, 32768 and up detected.
+    static string AmsiVerdict(int result)
+    {
+        if (result >= 32768) return "malware";
+        if (result >= 0x4000 && result <= 0x4FFF) return "blocked";
+        return "clean";
     }
 
     // Pictures, video and audio. A player asks for pieces ("Range: bytes=start-end"), so a long video is
@@ -1570,7 +1735,8 @@ static class Program
     {
         string reason = status == 200 ? "OK" : status == 204 ? "No Content" : status == 206 ? "Partial Content"
                       : status == 403 ? "Forbidden" : status == 404 ? "Not Found" : status == 405 ? "Method Not Allowed"
-                      : status == 413 ? "Payload Too Large" : status == 416 ? "Range Not Satisfiable" : "Bad Request";
+                      : status == 413 ? "Payload Too Large" : status == 416 ? "Range Not Satisfiable"
+                      : status == 451 ? "Blocked By Antivirus" : "Bad Request";
         StringBuilder h = new StringBuilder();
         h.Append("HTTP/1.1 ").Append(status).Append(' ').Append(reason).Append("\r\n");
         h.Append("Content-Type: ").Append(mime).Append("\r\n");

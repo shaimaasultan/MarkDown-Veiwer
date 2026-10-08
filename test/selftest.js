@@ -413,6 +413,48 @@
     return problems;
   }
 
+  // Where the file came from: what the app reports (Mark of the Web, Microsoft Defender) shows in the status line, in
+  // the safety report and - for malware - in the red popup. The test page runs without the app, so the app's answer
+  // is set here as the app would send it.
+  async function checkOriginDisplay() {
+    const problems = [];
+    const stats = () => document.getElementById('stats').textContent;
+    const mdName = window.TESTDOCS.find(([n]) => /\.md$/i.test(n))[0];
+    await openDoc(mdName);
+    await sleep(300);
+    fileOrigin = { path: currentPath, zone: 3, host: 'https://downloads.example/file.md', referrer: 'https://mail.example/inbox', scan: 'clean' };
+    applyOrigin();
+    await sleep(100);
+    if (!stats().includes('⚠ From the internet: downloads.example')) problems.push('downloaded: status line ' + stats().slice(-200));
+    const r = withOrigin(lastSafety);
+    if (!r.findings.some(f => f.id === 'motw' && f.level === 'caution')) problems.push('downloaded: not in the safety report');
+    showSafety();
+    const sf = document.getElementById('safety');
+    if (!/Downloaded from the internet/.test(sf.textContent) || !sf.textContent.includes('Linked from: https://mail.example/inbox') ||
+        !sf.textContent.includes('Where the file came from')) problems.push('downloaded: report text');
+    sf.close();
+    // Microsoft Defender knows it as malware: red popup, red status line, "Not safe".
+    fileOrigin = { ...fileOrigin, scan: 'malware' };
+    applyOrigin();
+    await sleep(100);
+    const dlg = document.getElementById('codeAlert');
+    if (!dlg.open || document.getElementById('caTitle').textContent !== '✗ Microsoft Defender flags this file as malware') problems.push('malware: popup ' + dlg.open + ' ' + document.getElementById('caTitle').textContent);
+    if (dlg.open) dlg.close();
+    if (!stats().includes('✗ Microsoft Defender: malware') || withOrigin(lastSafety).level !== 'risk') problems.push('malware: status line or level');
+    // Other kinds of file show it too; another file does not inherit it.
+    await openDoc('data.csv');
+    await sleep(300);
+    fileOrigin = { path: currentPath, zone: 3, host: 'https://x.example/d.csv', referrer: '', scan: 'clean' };
+    applyOrigin();
+    await sleep(100);
+    if (!stats().includes('⚠ From the internet: x.example')) problems.push('csv: status line ' + stats().slice(-160));
+    await openDoc(mdName);
+    await sleep(300);
+    if (/From the internet|Microsoft Defender/.test(stats())) problems.push('another file kept the note');
+    fileOrigin = null;
+    return problems;
+  }
+
   async function run() {
     const results = [];
     // Loads while a document is open: the page's own files (fonts, libraries) are fine; anything else - another
@@ -466,6 +508,9 @@
     }
     const listProblems = await checkFileList();
     results.push({ name: '(file list and types)', rendered: true, breakdown: listProblems.length ? 'bad' : 'ok', tableProblems: listProblems,
+                   viewed: null, diagrams: 0, drawn: 0, equations: 0, pwn: window.PWN === undefined ? null : String(window.PWN), ...inspect() });
+    const originProblems = await checkOriginDisplay();
+    results.push({ name: '(file origin, Defender)', rendered: true, breakdown: originProblems.length ? 'bad' : 'ok', tableProblems: originProblems,
                    viewed: null, diagrams: 0, drawn: 0, equations: 0, pwn: window.PWN === undefined ? null : String(window.PWN), ...inspect() });
     const libs = LIBRARIES.map(l => ({ name: l.name, version: l.version, loaded: !!l.loaded() }));
     await fetch(`/${token}/result`, { method: 'POST', body: JSON.stringify({ results, pageErrors, libs }) });

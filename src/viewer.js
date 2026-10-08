@@ -409,6 +409,7 @@ async function readDoc(path) {
     catch { throw new Error('The Markdown Viewer helper has closed. Open the file again from Explorer.'); }
     if (!res.ok) throw new Error(res.status === 403
       ? `Can't open files outside the document's folder: ${path}`
+      : res.status === 451 ? `Microsoft Defender blocked this file because it contains malware, so it was not opened. Do not open it in other programs: ${path}`
       : res.status === 413 ? `File is too large to show: ${path}`
       : `File not found: ${path}`);
     return { path, stamp: res.headers.get('ETag'), ...decodeBytes(await res.arrayBuffer()) };
@@ -492,7 +493,99 @@ async function openDoc(path, anchor, { fromHistory = false, scroll = null } = {}
   if (scroll !== null) content.scrollTop = scroll;
   updateNavButtons();
   alertBlockedCode();
+  checkOrigin(currentPath);
   return true;
+}
+
+// ---------------------------------------------------------------- where the file came from; Microsoft Defender
+// App mode: the app reads the file's Mark of the Web (the tag Windows puts on a downloaded file: its zone and the
+// address it came from) and asks Microsoft Defender about its contents (AMSI, on this computer - nothing goes
+// online). Shown in the status line and the safety report; a file Defender knows as malware raises the red popup.
+let fileOrigin = null;        // { path, zone, host, referrer, scan } for the open file
+const ZONES = { 0: 'this computer', 1: 'the local network', 2: 'a trusted site', 3: 'the internet', 4: 'a restricted (untrusted) site' };
+const siteOf = u => { try { return new URL(u).hostname || u; } catch { return u; } };
+const originOfOpenFile = () => fileOrigin && currentPath && key(fileOrigin.path) === key(currentPath) ? fileOrigin : null;
+
+async function checkOrigin(path) {
+  if (source !== 'app' || !path) return;
+  let r;
+  try {
+    const res = await fetch(apiBase + 'check/' + path.split('/').map(encodeURIComponent).join('/'), { cache: 'no-store' });
+    if (!res.ok) return;
+    r = await res.json();
+  } catch { return; }
+  if (!currentPath || key(currentPath) !== key(path)) return;        // another file was opened meanwhile
+  fileOrigin = { path: currentPath, zone: Number.isInteger(r.zone) ? r.zone : -1, host: String(r.host || ''),
+                 referrer: String(r.referrer || ''), scan: String(r.scan || '') };
+  applyOrigin();
+}
+
+// The status line and the popup, with what is known about where the open file came from.
+function applyOrigin() {
+  if (isSpecialDoc(currentPath)) { if (specialStats) specialStats(); }
+  else { clearTimeout(statsTimer); updateStats(); }
+  const o = originOfOpenFile();
+  if (o && (o.scan === 'malware' || o.scan === 'blocked'))
+    showCodeAlert(o.scan === 'malware'
+        ? 'Microsoft Defender — the antivirus in Windows, asked on this computer — knows this file as harmful. Nothing in it ran here. ' +
+          'Do not open it in other programs or send it on: delete it, or ask whoever looks after your computer.'
+        : 'Your organisation\'s antivirus policy blocks this kind of content. Nothing in it ran here. Ask whoever looks after your computer before you use it.',
+      [currentPath], false, o.scan === 'malware' ? '✗ Microsoft Defender flags this file as malware' : '✗ This file is blocked by your antivirus policy');
+}
+
+// Safety-report findings about where the file came from (none when nothing is known).
+function originFindings() {
+  const o = originOfOpenFile();
+  if (!o) return [];
+  const make = (id, level, title, why, items) =>
+    ({ check: SAFETY_CHECKS[16], id, level, title, why, blocked: false, count: 1, items: items.map(what => ({ what, line: null })) });
+  const out = [];
+  if (o.scan === 'malware')
+    out.push(make('defender', 'risk', 'Microsoft Defender recognises this file as malware',
+      'Your antivirus (Microsoft Defender, asked on this computer through Windows\' AMSI) knows this file as harmful. Nothing in it ran here. Do not open it in other programs: delete it, or ask whoever looks after your computer.', [o.path]));
+  else if (o.scan === 'blocked')
+    out.push(make('defender', 'risk', 'Blocked by your organisation\'s antivirus policy',
+      'An administrator\'s antivirus policy blocks this kind of content. Nothing in it ran here.', [o.path]));
+  if (o.zone >= 3)
+    out.push(make('motw', o.zone === 4 ? 'risk' : 'caution', o.zone === 4 ? 'From a restricted (untrusted) site' : 'Downloaded from the internet',
+      'Windows marked this file when it was downloaded (Mark of the Web). Most harmful files arrive this way: make sure you know who sent it before you trust its links, commands or attachments.',
+      [`Zone: ${ZONES[o.zone]}`, o.host && `Downloaded from: ${o.host}`, o.referrer && `Linked from: ${o.referrer}`].filter(Boolean)));
+  return out;
+}
+
+// A safety result with the file-origin findings added (the content check itself is not run again).
+function withOrigin(r) {
+  const extra = originFindings();
+  const checked = !!originOfOpenFile();
+  if (!extra.length) return { ...r, origin: checked };
+  const order = { risk: 0, caution: 1, note: 2 };
+  const findings = [...extra, ...r.findings].sort((a, b) => order[a.level] - order[b.level]);
+  const count = level => findings.filter(f => f.level === level).reduce((s, f) => s + f.count, 0);
+  const counts = { risk: count('risk'), caution: count('caution'), note: count('note') };
+  return { ...r, findings, counts, origin: true, level: counts.risk ? 'risk' : counts.caution ? 'caution' : 'safe' };
+}
+
+// "⚠ From the internet: site" / "✗ Microsoft Defender: malware" for the status line, or null.
+function originGroup() {
+  const o = originOfOpenFile();
+  if (!o) return null;
+  let text = null, title = '', cls = 'warn';
+  if (o.scan === 'malware' || o.scan === 'blocked') {
+    cls = 'bad';
+    text = o.scan === 'malware' ? '✗ Microsoft Defender: malware' : '✗ Blocked by antivirus policy';
+    title = 'Microsoft Defender (asked on this computer) ' + (o.scan === 'malware' ? 'knows this file as harmful' : 'blocks this content by policy') + '. Nothing in it ran here.';
+  } else if (o.zone >= 3) {
+    if (o.zone === 4) cls = 'bad';
+    text = `⚠ From ${o.zone === 4 ? 'a restricted site' : 'the internet'}${o.host ? ': ' + siteOf(o.host) : ''}`;
+    title = `Mark of the Web: Windows marked this file as downloaded from ${ZONES[o.zone]}${o.host ? ` (${o.host})` : ''}` +
+            `${o.referrer ? `, linked from ${o.referrer}` : ''}. Be careful with its links, commands and attachments.`;
+  }
+  if (!text) return null;
+  const g = document.createElement('span');
+  g.className = 'group origin-' + cls;
+  g.title = title;
+  g.textContent = text;
+  return g;
 }
 
 // ---------------------------------------------------------------- back / forward
@@ -550,6 +643,7 @@ setInterval(async () => {
     currentBinary = entry.bytes || null;
     resetEdits();
     renderDoc({ keepScroll: true });
+    checkOrigin(currentPath);              // the new contents are checked again
     showToast('Updated — the file was changed on disk.');
   } catch { /* file gone or app closing: try again next time */ }
   finally { reloadBusy = false; }
@@ -1249,6 +1343,7 @@ function updateCsvStats() {
     group('What the filters and the column choice keep', `Shown: ${plural(s.view.length, 'row')} · ${fmt(s.cols.length)} of ${plural(s.width, 'column')}`),
     group('How this file is shown', s.kind === 'xlsx' ? 'Values only: formulas and macros are never run; nothing in a cell can run, link or load anything'
                                                     : 'Shown as plain text: nothing in a table can run, link or load anything'));
+  finishStats(stats);
 }
 
 function debounce(fn, ms) {
@@ -1623,6 +1718,7 @@ function updateJsonStats() {
   stats.replaceChildren(
     group('What this file holds', `JSON: ${what} · ${fmt(j.text.length)} characters`),
     group('How this file is shown', 'Shown as plain text: nothing in a JSON file can run, link or load anything'));
+  finishStats(stats);
 }
 
 // ---------------------------------------------------------------- file types
@@ -1744,7 +1840,14 @@ function renderCodeDocument(t) {
 function statsLine(groups) {
   const stats = document.getElementById('stats');
   stats.replaceChildren(...groups.map(([title, text]) => { const g = document.createElement('span'); g.className = 'group'; g.title = title; g.textContent = text; return g; }));
-  // XML and HTML files: the safety report (✗ Unsafe / ⚠ Safety / ✓ Safe), as for documents.
+  finishStats(stats);
+}
+
+// The end of every non-Markdown status line: where the file came from (downloaded, Microsoft Defender) and, for XML
+// and HTML files, the safety report (✗ Unsafe / ⚠ Safety / ✓ Safe) as for documents.
+function finishStats(stats) {
+  const origin = originGroup();
+  if (origin) stats.append(origin);
   if (isRunnableMarkup(currentPath) && lastSafety && lastSafety.source === currentSource) stats.append(safetyButton());
 }
 
@@ -2471,6 +2574,7 @@ function updateStats() {
           `reading time at ${READING_WPM} words per minute`,
       `Viewed: <b>${fmt(shownLines)}</b> lines · <b>${fmt(charCount(shown))}</b> chars · <b>${fmt(words)}</b> words · ` +
       `<b>${fmt(sentences)}</b> sentences · <b>${fmt(paragraphs)}</b> paragraphs · ${readingTime(words)}`),
+    ...[originGroup()].filter(Boolean),
     safetyButton(), btn, insBtn);
 }
 
@@ -2895,7 +2999,8 @@ const SAFETY_CHECKS = [
   'Look-alike letters',
   'Math and diagram commands',
   'Size and nesting',
-  'XML entities, includes and stylesheets'
+  'XML entities, includes and stylesheets',
+  'Where the file came from (Mark of the Web) and Microsoft Defender'
 ];
 
 const RISKY_FILE = /\.(exe|msi|msix|appx|appxbundle|bat|cmd|com|scr|pif|ps1|psm1|psd1|vbs|vbe|js|jse|wsf|wsh|hta|lnk|url|dll|cpl|ocx|sys|jar|reg|inf|iso|img|vhd|vhdx|docm|xlsm|pptm|dotm|xlam|apk|dmg|pkg|deb|rpm|sh|run|application|appref-ms|library-ms|search-ms|searchconnector-ms|settingcontent-ms|diagcab|msc|chm)$/i;
@@ -3330,7 +3435,7 @@ let lastSafety = null;
 
 function safetyButton() {
   if (!lastSafety || lastSafety.source !== currentSource) lastSafety = { source: currentSource, ...checkSafety(currentSource) };
-  const r = lastSafety;
+  const r = withOrigin(lastSafety);
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'breakdown-btn ' + (r.level === 'risk' ? 'bad' : r.level === 'caution' ? 'warn' : 'ok');
@@ -3344,8 +3449,8 @@ function safetyButton() {
 }
 
 function showSafety() {
-  const r = lastSafety;
-  if (!r) return;
+  if (!lastSafety) return;
+  const r = withOrigin(lastSafety);
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
   const status = document.getElementById('sfStatus');
   const blockedRisks = r.findings.filter(f => f.level === 'risk' && f.blocked).length;
@@ -3397,6 +3502,7 @@ function showSafety() {
   const ul = el('ul', 'sf-checks');
   for (const c of SAFETY_CHECKS) {
     if (c === SAFETY_CHECKS[15] && !r.xml) continue;        // the XML check: for XML files only
+    if (c === SAFETY_CHECKS[16] && !r.origin) continue;     // only when the app could check it (not dropped files)
     const fs = r.findings.filter(f => f.check === c);
     const worst = fs.find(f => f.level === 'risk') ? 'risk' : fs.find(f => f.level === 'caution') ? 'caution' : fs.length ? 'note' : 'ok';
     ul.append(el('li', worst, `${{ risk: '✗', caution: '⚠', note: 'ℹ', ok: '✓' }[worst]} ${c}`));
