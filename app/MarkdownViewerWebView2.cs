@@ -1411,8 +1411,31 @@ static class Program
         Send(s, 200, Mime(name), body, csp, headOnly);
     }
 
-    // The full path of a folder file the page may have, or null after answering 403 / 404.
-    static string AllowedFile(Stream s, string webPath, bool headOnly, DocScope scope)
+    // A checked file and its scope root held open together. The file is read through this exact handle, so a
+    // link cannot be swapped after its final path has been checked.
+    sealed class ScopedFile : IDisposable
+    {
+        public readonly string Path;
+        public readonly FileStream Content;
+        readonly SafeFileHandle root;
+
+        public ScopedFile(string path, FileStream content, SafeFileHandle root)
+        {
+            Path = path;
+            Content = content;
+            this.root = root;
+        }
+
+        public void Dispose()
+        {
+            Content.Dispose();
+            root.Dispose();
+        }
+    }
+
+    // Opens and validates the file before returning it. The root handle prevents the scope directory itself
+    // from being renamed while this request is being served; the content handle prevents replacement/deletion.
+    static ScopedFile AllowedFile(Stream s, string webPath, bool headOnly, DocScope scope)
     {
         string full;
         try { full = Path.GetFullPath(webPath.Replace('/', '\\')); }
@@ -1424,22 +1447,52 @@ static class Program
             Send(s, 403, "text/plain", Encoding.UTF8.GetBytes("Forbidden"), null, headOnly);
             return null;
         }
-        // Missing first, so the page can tell a broken link from a file type it is not given.
+        // Preserve the useful missing-file response before refusing unsupported types.
         if (!File.Exists(full)) { NotFound(s); return null; }
         if (!ServedTypes.Contains(Path.GetExtension(full)))
         {
             Send(s, 403, "text/plain", Encoding.UTF8.GetBytes("Forbidden"), null, headOnly);
             return null;
         }
-        // A folder link (junction, symbolic link) inside the allowed folder could lead anywhere: the file's
-        // real location must be inside the allowed folder too.
-        string real = RealPath(full), realRoot = RealPath(allowRoot);
-        if (real == null || realRoot == null || !IsUnder(real, realRoot))
+
+        SafeFileHandle root = CreateFileW(allowRoot, 0, 0x1 | 0x2, IntPtr.Zero, 3,
+                                          0x02000000 /* BACKUP_SEMANTICS */, IntPtr.Zero);
+        if (root.IsInvalid)
         {
+            root.Dispose();
             Send(s, 403, "text/plain", Encoding.UTF8.GetBytes("Forbidden"), null, headOnly);
             return null;
         }
-        return full;
+        FileStream content = null;
+        try
+        {
+            string realRoot = RealPath(root);
+            if (realRoot == null) throw new UnauthorizedAccessException();
+            // No write/delete sharing: the checked file identity and its bytes remain stable through the read.
+            content = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.Read);
+            string real = RealPath(content.SafeFileHandle);
+            if (real == null || !IsUnder(real, realRoot))
+            {
+                content.Dispose();
+                root.Dispose();
+                Send(s, 403, "text/plain", Encoding.UTF8.GetBytes("Forbidden"), null, headOnly);
+                return null;
+            }
+            return new ScopedFile(full, content, root);
+        }
+        catch (FileNotFoundException) { content?.Dispose(); root.Dispose(); NotFound(s); return null; }
+        catch (DirectoryNotFoundException) { content?.Dispose(); root.Dispose(); NotFound(s); return null; }
+        catch (UnauthorizedAccessException) { content?.Dispose(); root.Dispose(); Send(s, 403, "text/plain", Encoding.UTF8.GetBytes("Forbidden"), null, headOnly); return null; }
+        catch { content?.Dispose(); root.Dispose(); throw; }
+    }
+
+    static byte[] ReadBytes(Stream stream)
+    {
+        using (MemoryStream memory = new MemoryStream())
+        {
+            stream.CopyTo(memory);
+            return memory.ToArray();
+        }
     }
 
     // Microsoft Defender's real-time protection refused the read: "Operation did not complete successfully because
@@ -1452,11 +1505,15 @@ static class Program
 
     static void SendDiskFile(Stream s, string webPath, bool headOnly, string range, DocScope scope)
     {
-        string full = AllowedFile(s, webPath, headOnly, scope);
-        if (full == null) return;
-        FileInfo info = new FileInfo(full);
+        ScopedFile scoped = AllowedFile(s, webPath, headOnly, scope);
+        if (scoped == null) return;
+        using (scoped)
+        {
+        string full = scoped.Path;
+        FileStream file = scoped.Content;
+        long length = file.Length;
         bool text = TextTypes.Contains(Path.GetExtension(full));
-        if (text && info.Length > MaxTextBytes)
+        if (text && length > MaxTextBytes)
         {
             Send(s, 413, "text/plain", Encoding.UTF8.GetBytes("File too large"), null, headOnly);
             return;
@@ -1467,11 +1524,11 @@ static class Program
         const string csp = "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; font-src 'self'";
         // The version stamp lets the page notice when the file is saved again (auto-reload); a HEAD
         // request only asks for it, so the file itself is not read.
-        string etag = "\"" + info.LastWriteTimeUtc.Ticks.ToString("x") + "-" + info.Length.ToString("x") + "\"";
-        if (!text) { SendMedia(s, full, info, csp, etag, headOnly, range); return; }
+        string etag = "\"" + File.GetLastWriteTimeUtc(full).Ticks.ToString("x") + "-" + length.ToString("x") + "\"";
+        if (!text) { SendMedia(s, full, file, csp, etag, headOnly, range); return; }
         string type = Path.GetExtension(full).Equals(".svg", StringComparison.OrdinalIgnoreCase) ? Mime(full) : "text/plain; charset=utf-8";
         byte[] bytes;
-        try { bytes = headOnly ? new byte[0] : File.ReadAllBytes(full); }
+        try { bytes = headOnly ? new byte[0] : ReadBytes(file); }
         catch (IOException e)
         {
             if (!IsVirusError(e)) throw;
@@ -1479,6 +1536,7 @@ static class Program
             return;
         }
         Send(s, 200, type, bytes, csp, headOnly, etag);
+        }
     }
 
     // ------------------------------------------------------------------ where a file came from; Microsoft Defender
@@ -1488,8 +1546,11 @@ static class Program
     // and the file is only read, never run. Same rules as fs/: a file the page may have.
     static void SendCheck(Stream s, string webPath, bool headOnly, DocScope scope)
     {
-        string full = AllowedFile(s, webPath, headOnly, scope);
-        if (full == null) return;
+        ScopedFile scoped = AllowedFile(s, webPath, headOnly, scope);
+        if (scoped == null) return;
+        using (scoped)
+        {
+        string full = scoped.Path;
         Dictionary<string, string> zone = ReadZone(full);
         string zoneId = null, host = null, referrer = null;
         if (zone != null)
@@ -1503,14 +1564,14 @@ static class Program
 
         // Text and Excel files are scanned (what the viewer reads); pictures, video and audio are only shown.
         string scan;
-        FileInfo info = new FileInfo(full);
+        long length = scoped.Content.Length;
         string ext = Path.GetExtension(full);
         if (!TextTypes.Contains(ext) && !ext.Equals(".xlsx", StringComparison.OrdinalIgnoreCase)) scan = "notscanned";
-        else if (info.Length > MaxMediaBytes) scan = "toolarge";
+        else if (length > MaxMediaBytes) scan = "toolarge";
         else
         {
             byte[] bytes = null;
-            try { bytes = File.ReadAllBytes(full); scan = "clean"; }
+            try { bytes = ReadBytes(scoped.Content); scan = "clean"; }
             catch (IOException e) { scan = IsVirusError(e) ? "malware" : "unavailable"; }
             catch (UnauthorizedAccessException) { scan = "unavailable"; }
             if (bytes != null)
@@ -1532,6 +1593,7 @@ static class Program
         sb.Append("\"referrer\":").Append(Json(Clip(referrer))).Append(',');
         sb.Append("\"scan\":").Append(Json(scan)).Append('}');
         Send(s, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(sb.ToString()), null, headOnly);
+        }
     }
 
     static string Clip(string v) { return v == null ? null : v.Length > 2000 ? v.Substring(0, 2000) : v; }
@@ -1626,9 +1688,9 @@ static class Program
     // whole only when nothing asks for a piece, and then only up to MaxMediaBytes.
     const long MaxChunk = 4L << 20;
 
-    static void SendMedia(Stream s, string full, FileInfo info, string csp, string etag, bool headOnly, string range)
+    static void SendMedia(Stream s, string full, FileStream f, string csp, string etag, bool headOnly, string range)
     {
-        long len = info.Length, start = 0, end = len - 1;
+        long len = f.Length, start = 0, end = len - 1;
         Match m = range == null ? Match.Empty : Regex.Match(range, @"^bytes=(\d{0,18})-(\d{0,18})$");
         bool partial = m.Success && (m.Groups[1].Length > 0 || m.Groups[2].Length > 0);
         if (partial)
@@ -1656,16 +1718,13 @@ static class Program
         if (!headOnly && len > 0)
         {
             body = new byte[end - start + 1];
-            using (FileStream f = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            f.Seek(start, SeekOrigin.Begin);
+            int read = 0;
+            while (read < body.Length)
             {
-                f.Seek(start, SeekOrigin.Begin);
-                int read = 0;
-                while (read < body.Length)
-                {
-                    int n = f.Read(body, read, body.Length - read);
-                    if (n <= 0) break;
-                    read += n;
-                }
+                int n = f.Read(body, read, body.Length - read);
+                if (n <= 0) break;
+                read += n;
             }
         }
         string extra = "Accept-Ranges: bytes\r\n" + (partial ? "Content-Range: bytes " + start + "-" + end + "/" + len + "\r\n" : "");
@@ -1862,14 +1921,19 @@ static class Program
         using (SafeFileHandle h = CreateFileW(path, 0, 7, IntPtr.Zero, 3 /* OPEN_EXISTING */, 0x02000000 /* BACKUP_SEMANTICS: folders too */, IntPtr.Zero))
         {
             if (h.IsInvalid) return null;
-            StringBuilder sb = new StringBuilder(1024);
-            uint n = GetFinalPathNameByHandleW(h, sb, (uint)sb.Capacity, 0);
-            if (n == 0 || n >= sb.Capacity) return null;
-            string p = sb.ToString();
-            if (p.StartsWith(@"\\?\UNC\", StringComparison.Ordinal)) return @"\\" + p.Substring(8);
-            if (p.StartsWith(@"\\?\", StringComparison.Ordinal)) return p.Substring(4);
-            return p;
+            return RealPath(h);
         }
+    }
+
+    static string RealPath(SafeFileHandle h)
+    {
+        StringBuilder sb = new StringBuilder(1024);
+        uint n = GetFinalPathNameByHandleW(h, sb, (uint)sb.Capacity, 0);
+        if (n == 0 || n >= sb.Capacity) return null;
+        string p = sb.ToString();
+        if (p.StartsWith(@"\\?\UNC\", StringComparison.Ordinal)) return @"\\" + p.Substring(8);
+        if (p.StartsWith(@"\\?\", StringComparison.Ordinal)) return p.Substring(4);
+        return p;
     }
 
     static string ToWeb(string p) { return p.Replace('\\', '/').TrimEnd('/'); }
