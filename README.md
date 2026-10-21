@@ -5,9 +5,9 @@ window with figures, math, code colouring and diagrams — and the app never run
 and never goes online. It also shows CSV/TSV tables, JSON, Excel workbooks, XML, Jupyter notebooks, source
 code, config files and logs the same way: as data and text, never run.
 
-[![Watch the one-minute promo video](docs/promo-poster.png)](docs/promo.mp4)
+[![Watch the promo video](docs/promo-poster.png)](docs/promo.mp4)
 
-▶ **[Watch the one-minute promo video](docs/promo.mp4)** (MP4, 1080p, no sound)
+▶ **[Watch the promo video](docs/promo.mp4)** (MP4, 1080p, 1:16, no sound)
 
 ## Features
 
