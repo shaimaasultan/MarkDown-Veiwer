@@ -107,6 +107,10 @@
       margin: .75rem; padding: .4rem .6rem; border: 1px solid var(--border); border-radius: 6px;
       background: var(--bg); color: var(--fg); font: inherit; font-size: .85rem;
     }
+    #folderResultFilter { display: flex; align-items: center; gap: .45rem; margin: 0 .75rem .55rem; }
+    #folderResultFilter[hidden] { display: none; }
+    #folderResultFilter .btn { flex: 1; padding: .35rem .45rem; font-size: .8rem; white-space: nowrap; }
+    #folderResultFilterCount { color: var(--muted); font-size: .75rem; white-space: nowrap; }
     #fileList { list-style: none; margin: 0; padding: 0 0 1rem; overflow: auto; font-size: .85rem; }
     #fileList li {
       padding: .3rem .9rem; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -400,11 +404,18 @@
     #findInput.invalid { border-color: var(--bad); }
     #findCount { font-size: .8rem; color: var(--muted); min-width: 5.5rem; text-align: center; font-variant-numeric: tabular-nums; }
     #findCount.none { color: var(--bad); }
+    #folderFindResults { flex-basis: 100%; max-height: min(45vh, 24rem); overflow: auto; border-top: 1px solid var(--border); }
+    #folderFindResults[hidden] { display: none; }
+    .folder-find-result { display: block; width: 100%; padding: .45rem .6rem; border: 0; border-bottom: 1px solid var(--border); text-align: left; color: var(--fg); background: transparent; cursor: pointer; }
+    .folder-find-result:hover, .folder-find-result:focus-visible { background: var(--active); }
+    .folder-find-path { display: block; font-size: .82rem; font-weight: 600; }
+    .folder-find-snippet { display: block; margin-top: .15rem; color: var(--muted); font: .78rem ui-monospace, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
     .find-btn {
       border: 1px solid var(--border); background: var(--bg); color: var(--fg); border-radius: 6px;
       padding: .25rem .55rem; cursor: pointer; font: inherit; font-size: .85rem;
     }
     .find-btn:hover { background: var(--active); }
+    .find-btn.on { background: var(--active); border-color: var(--accent); }
     .find-opt { display: inline-flex; align-items: center; gap: .2rem; font-size: .8rem; color: var(--muted); cursor: pointer; user-select: none; }
     ::highlight(find) { background-color: #fff3a3; color: #1f2328; }
     ::highlight(find-current) { background-color: #ff9632; color: #1f2328; }
@@ -981,6 +992,11 @@
   <main>
     <aside id="sidebar" hidden>
       <input id="filter" type="search" placeholder="Filter files…" />
+      <div id="folderResultFilter" role="group" aria-label="Choose which files to show" hidden>
+        <button id="folderAllFiles" class="btn secondary" type="button" aria-pressed="true" title="Show all supported files">☷ All files</button>
+        <button id="folderResultsOnly" class="btn secondary" type="button" aria-pressed="false" title="Show only files matching the latest folder search">🔎 Search results</button>
+        <span id="folderResultFilterCount"></span>
+      </div>
       <ul id="fileList"></ul>
     </aside>
     <section id="content">
@@ -989,11 +1005,15 @@
         <span id="findCount" aria-live="polite"></span>
         <button id="findPrev" class="find-btn" title="Previous match (Shift+Enter)" aria-label="Previous match">↑</button>
         <button id="findNext" class="find-btn" title="Next match (Enter)" aria-label="Next match">↓</button>
+        <button id="folderFindBtn" class="find-btn" type="button" aria-pressed="false" title="Search supported text files in the opened folder; Excel and files over 2 MB are skipped">🔎 Search folder</button>
+        <button id="folderSimilarityBtn" class="find-btn" type="button" aria-pressed="false" title="Include approximate paragraph matches and show their similarity percentage" disabled>≈ Similar</button>
+        <button id="folderSearchDetailsBtn" class="find-btn" type="button" aria-expanded="false" aria-controls="folderFindResults" title="Show or hide folder search result details" disabled>⌄ Search details</button>
         <label class="find-opt" title="Match case"><input type="checkbox" id="findCase"> Aa</label>
         <label class="find-opt" title="Whole words only"><input type="checkbox" id="findWord"> Word</label>
         <label class="find-opt" title="Regular expression"><input type="checkbox" id="findRegex"> .*</label>
         <button id="replaceToggle" class="find-btn" title="Find and replace (Ctrl+H)" aria-label="Show replace" aria-expanded="false">⇄ Replace</button>
         <button id="findClose" class="find-btn" title="Close (Esc)" aria-label="Close find">✕</button>
+        <div id="folderFindResults" role="group" aria-label="Folder search results" hidden></div>
         <div id="replaceRow" hidden>
           <input id="replaceInput" type="text" placeholder="Replace with…" aria-label="Replace with" autocomplete="off" spellcheck="false">
           <button id="replaceOne" class="find-btn" title="Replace this match and go to the next (Enter in the replace box; Ctrl+Enter replaces all)">Replace</button>

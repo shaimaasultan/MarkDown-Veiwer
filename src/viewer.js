@@ -19,6 +19,10 @@ const fileMap = new Map();   // lowercase path -> { path, file }
 const urlCache = new Map();  // lowercase path -> blob URL
 let mdPaths = [];
 let currentPath = null;
+let folderSearchPaths = new Set();
+let folderSearchOnly = false;
+let folderSearchComplete = false;
+let folderSearchQueryKey = null;
 
 // App mode: shown by MarkdownViewerWebView2.exe at its private address, which hands out files from disk
 // at <token>/fs/<path>.
@@ -122,29 +126,25 @@ const SAFE_IMG_DATA = /^data:image\/(png|gif|jpe?g|webp|bmp|avif|svg\+xml)[;,]/i
 const safeLink = v => ['', 'http', 'https', 'mailto'].includes(scheme(v));
 const safeSrc = v => ['', 'http', 'https'].includes(scheme(v)) || SAFE_IMG_DATA.test(v.trim());
 
-function sanitize(html, { diagram = false, allowStyles = false } = {}) {
-  const doc = new DOMParser().parseFromString(allowStyles ? html : `<!DOCTYPE html><body>${html}`, 'text/html');
-  // Full HTML documents put their stylesheets in <head>; retain those only for the isolated HTML preview.
-  const headStyles = allowStyles ? [...doc.head.querySelectorAll('style')] : [];
-  cleanChildren(doc.head, diagram, allowStyles);
-  cleanChildren(doc.body, diagram, allowStyles);
+function sanitize(html, { diagram = false } = {}) {
+  const doc = new DOMParser().parseFromString(`<!DOCTYPE html><body>${html}`, 'text/html');
+  cleanChildren(doc.head, diagram);
+  cleanChildren(doc.body, diagram);
   const frag = document.createDocumentFragment();
-  for (const style of headStyles) if (style.isConnected) frag.appendChild(document.adoptNode(style));
   while (doc.body.firstChild) frag.appendChild(document.adoptNode(doc.body.firstChild));
   return frag;
 }
 
-function cleanChildren(node, diagram, allowStyles) {
+function cleanChildren(node, diagram) {
   for (const child of [...node.childNodes]) {
     if (child.nodeType === Node.TEXT_NODE) continue;
     if (child.nodeType !== Node.ELEMENT_NODE) { child.remove(); continue; }  // comments, PIs, …
     const tag = child.localName.toLowerCase();
     // Mermaid's own diagram output needs its <style> sheet and HTML labels; both are still filtered.
     const diagramExtra = diagram && (tag === 'style' || tag === 'foreignobject');
-    const previewStyle = allowStyles && tag === 'style';
-    if (DROP_TAGS.has(tag) && !diagramExtra && !previewStyle) { child.remove(); continue; }
-    cleanChildren(child, diagram, allowStyles);
-    if (!ALLOWED_TAGS.has(tag) && !diagramExtra && !previewStyle) { child.replaceWith(...child.childNodes); continue; }
+    if (DROP_TAGS.has(tag) && !diagramExtra) { child.remove(); continue; }
+    cleanChildren(child, diagram);
+    if (!ALLOWED_TAGS.has(tag) && !diagramExtra) { child.replaceWith(...child.childNodes); continue; }
     cleanAttributes(child, tag, diagram);
   }
 }
@@ -338,6 +338,10 @@ function loadEntries(entries) {
   for (const u of urlCache.values()) URL.revokeObjectURL(u);
   urlCache.clear();
   fileMap.clear();
+  folderSearchPaths.clear();
+  folderSearchOnly = false;
+  folderSearchComplete = false;
+  folderSearchQueryKey = null;
 
   for (const e of entries) fileMap.set(key(e.path), { path: norm(e.path), file: e.file });
   source = 'local';
@@ -370,8 +374,10 @@ function buildList() {
   const q = filter.value.trim().toLowerCase();
   const hidden = hiddenTypes();
   buildToolbarTypeToggles();
+  updateFolderResultFilter();
   fileList.innerHTML = '';
   for (const p of mdPaths) {
+    if (folderSearchOnly && !folderSearchPaths.has(key(p))) continue;
     const shown = listBase && key(p).startsWith(key(listBase)) ? p.slice(listBase.length) : p;
     if (q && !shown.toLowerCase().includes(q)) continue;
     const t = typeOf(p);
@@ -382,9 +388,25 @@ function buildList() {
     li.title = p;
     li.dataset.path = p;
     if (currentPath && key(p) === key(currentPath)) li.className = 'active';
-    li.onclick = () => openDoc(p);
+    li.onclick = async () => {
+      if (await openDoc(p) && folderSearchComplete && folderSearchPaths.has(key(p)) && findInput.value.trim())
+        highlightFolderMatchesInOpenDocument(findInput.value);
+    };
     fileList.appendChild(li);
   }
+}
+
+function updateFolderResultFilter() {
+  const wrap = document.getElementById('folderResultFilter');
+  const allButton = document.getElementById('folderAllFiles');
+  const button = document.getElementById('folderResultsOnly');
+  if (!wrap || !button) return;
+  wrap.hidden = !folderSearchComplete;
+  allButton.classList.toggle('on', !folderSearchOnly);
+  allButton.setAttribute('aria-pressed', String(!folderSearchOnly));
+  button.classList.toggle('on', folderSearchOnly);
+  button.setAttribute('aria-pressed', String(folderSearchOnly));
+  document.getElementById('folderResultFilterCount').textContent = `${fmt(folderSearchPaths.size)} ${folderSearchPaths.size === 1 ? 'file' : 'files'}`;
 }
 
 // An Excel workbook: its bytes, unchanged (it is unpacked and read by renderXlsxDocument).
@@ -2057,22 +2079,108 @@ function layOutHtml(text) {
   return out.join('\n') + '\n';
 }
 
-// HTML files can be previewed in an isolated, script-free frame. The sanitizer removes active elements,
-// links are disabled, and the frame CSP blocks external requests; only scoped local or embedded media can load.
+// CSS is treated only as styling data. Parse it without attaching it, discard resource-loading declarations
+// and at-rules, and serialize only ordinary style rules. The frame also has no script permission and a strict CSP.
+function previewCssText(css) {
+  try {
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(css);
+    const safeRules = rules => {
+      let out = '';
+      for (const rule of rules) {
+        if (rule.type === CSSRule.STYLE_RULE || rule.type === CSSRule.KEYFRAME_RULE) {
+          const style = document.createElement('div').style;
+          for (let i = 0; i < rule.style.length; i++) {
+            const name = rule.style[i], value = rule.style.getPropertyValue(name);
+            if (/url\s*\(|image-set\s*\(|cross-fade\s*\(|element\s*\(|paint\s*\(|expression\s*\(|-moz-binding|behavior\s*:/i.test(value)) continue;
+            style.setProperty(name, value, rule.style.getPropertyPriority(name));
+          }
+          if (style.length) out += `${rule.selectorText || rule.keyText}{${style.cssText}}`;
+        } else if ([CSSRule.MEDIA_RULE, CSSRule.SUPPORTS_RULE, CSSRule.CONTAINER_RULE, CSSRule.LAYER_BLOCK_RULE,
+                    CSSRule.KEYFRAMES_RULE, CSSRule.WEBKIT_KEYFRAMES_RULE].includes(rule.type) && rule.cssRules) {
+          const nested = safeRules(rule.cssRules);
+          if (!nested) continue;
+          if (rule.type === CSSRule.MEDIA_RULE) out += `@media ${rule.conditionText}{${nested}}`;
+          else if (rule.type === CSSRule.SUPPORTS_RULE) out += `@supports ${rule.conditionText}{${nested}}`;
+          else if (rule.type === CSSRule.CONTAINER_RULE) out += `@container ${rule.conditionText}{${nested}}`;
+          else if (rule.type === CSSRule.LAYER_BLOCK_RULE) out += `@layer ${rule.name || ''}{${nested}}`;
+          else if (rule.type === CSSRule.KEYFRAMES_RULE || rule.type === CSSRule.WEBKIT_KEYFRAMES_RULE) out += `@keyframes ${rule.name}{${nested}}`;
+        }
+        // Imports, font faces, namespaces, unknown rules and all URL-bearing declarations are omitted.
+      }
+      return out;
+    };
+    // Escape HTML's raw-text closing delimiter before embedding in srcdoc.
+    return safeRules(sheet.cssRules).replace(/</g, '\\3c ');
+  } catch { return ''; } // Unsupported or malformed CSS fails closed.
+}
+
+async function readPreviewStylesheet(path) {
+  const maxBytes = 1024 * 1024;
+  if (source !== 'app') {
+    const entry = fileMap.get(key(path));
+    if (!entry || entry.file.size > maxBytes) return '';
+    return previewCssText(decodeBytes(await entry.file.arrayBuffer()).text);
+  }
+  try {
+    const response = await fetch(fsURL(path), { cache: 'no-store' });
+    if (!response.ok || Number(response.headers.get('Content-Length')) > maxBytes) return '';
+    if (!response.body) return '';
+    const reader = response.body.getReader(), chunks = [];
+    let total = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) { await reader.cancel(); return ''; }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    return previewCssText(decodeBytes(bytes.buffer).text);
+  } catch { return ''; }
+}
+
+// HTML files can be previewed in an isolated, script-free frame. Only relative local stylesheets are read,
+// through the same selected-folder scope as other assets. CSS imports and resource URLs are discarded.
 function renderHtmlPreview() {
+  const previewPath = currentPath;
+  const parsed = new DOMParser().parseFromString(currentSource, 'text/html');
+  const styles = [...parsed.querySelectorAll('style')].map(style => style.textContent);
+  const styleLinks = [...parsed.querySelectorAll('link[rel][href]')].filter(link =>
+    link.relList.contains('stylesheet') && !link.disabled && (!link.type || link.type.toLowerCase() === 'text/css'));
   const safe = document.createElement('div');
-  safe.append(sanitize(currentSource, { allowStyles: true }));
-  fixResources(safe, dirOf(currentPath));
+  safe.append(sanitize(currentSource));
+  // Keep styling in the filtered sheets above; per-element CSS can otherwise carry resource URLs too.
+  safe.querySelectorAll('[style]').forEach(el => el.removeAttribute('style'));
+  fixResources(safe, dirOf(previewPath));
   safe.querySelectorAll('a').forEach(a => { a.removeAttribute('href'); a.removeAttribute('target'); a.removeAttribute('rel'); });
 
   const frame = document.createElement('iframe');
   frame.className = 'html-preview-frame';
-  frame.title = `Safe preview of ${currentPath.split('/').pop()}`;
+  frame.title = `Safe preview of ${previewPath.split('/').pop()}`;
   frame.setAttribute('sandbox', '');
   frame.referrerPolicy = 'no-referrer';
   const localOrigin = location.origin && location.origin !== 'null' ? ' ' + location.origin : '';
   const policy = `default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data: blob:${localOrigin}; media-src data: blob:${localOrigin}; font-src data:${localOrigin}; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'`;
-  frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Safe HTML preview</title></head><body>${safe.innerHTML}</body></html>`;
+  (async () => {
+    const linkedStyles = [];
+    for (const link of styleLinks.slice(0, 16)) {
+      const href = link.getAttribute('href') || '';
+      const entry = localEntry(dirOf(previewPath), href);
+      if (!entry || !/\.css$/i.test(entry.path || '')) continue;
+      const css = await readPreviewStylesheet(entry.path);
+      if (css) linkedStyles.push(css);
+    }
+    const inlineStyles = [];
+    for (const style of styles) {
+      const css = previewCssText(style);
+      if (css) inlineStyles.push(css);
+    }
+    const styleMarkup = [...linkedStyles, ...inlineStyles].map(css => `<style>${css}</style>`).join('');
+    frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Safe HTML preview</title>${styleMarkup}</head><body>${safe.innerHTML}</body></html>`;
+  })();
   return frame;
 }
 
@@ -2116,7 +2224,7 @@ function renderCodeDocument(t) {
     previewBtn.addEventListener('click', () => { htmlPreviewPath = currentPath; renderCodeDocument(t); if (specialStats) specialStats(); });
     modes.append(sourceBtn, previewBtn);
     bar.append(modes, make('span', 'csv-info', previewing
-      ? 'Sanitized preview — scripts, links and external resources are disabled'
+      ? 'Sandboxed preview — local styles and pictures only; scripts and external requests are blocked'
       : 'Source view — this file is shown as text by default'));
   }
   if (laidOut) bar.append(make('span', 'csv-info code-laid-out', 'Minified file laid out for reading: line breaks and indentation added here only — the file is unchanged'));
@@ -2149,7 +2257,7 @@ function renderCodeDocument(t) {
       ['What this file holds', `${what}${lang ? ` (${LANG_NAMES[lang] || lang})` : ''}: ${plural(lines, 'line')} · ${fmt(text.length)} characters` +
                                (minKind ? ' · minified' + (laidOut ? ` (laid out: ${plural(shownLines, 'line')})` : '') : '') +
                                (shown.length > CODE_RICH && lang ? ' · large file: shown without colours' : '')],
-      previewing ? ['How this file is shown', 'Sanitized HTML preview: scripts, links and external resources are disabled']
+      previewing ? ['How this file is shown', 'Sandboxed HTML preview: CSS cannot run scripts; only filtered local styles and pictures can load']
         : markupCodeNote() || ['How this file is shown', t.id === 'code' ? 'Shown as text only: nothing in it is run' : 'Shown as plain text: nothing in it can run, link or load anything']]);
   };
 }
@@ -3996,11 +4104,20 @@ const findBar = document.getElementById('findBar');
 const findInput = document.getElementById('findInput');
 const findCount = document.getElementById('findCount');
 const findBtn = document.getElementById('findBtn');
+const folderFindBtn = document.getElementById('folderFindBtn');
+const folderSimilarityBtn = document.getElementById('folderSimilarityBtn');
+const folderSearchDetailsBtn = document.getElementById('folderSearchDetailsBtn');
+const folderFindResults = document.getElementById('folderFindResults');
 const findOpts = { case: document.getElementById('findCase'), word: document.getElementById('findWord'), regex: document.getElementById('findRegex') };
 const canHighlight = typeof CSS !== 'undefined' && CSS.highlights && typeof Highlight === 'function';
 const BLOCKS = 'p, li, h1, h2, h3, h4, h5, h6, td, th, pre, blockquote, dt, dd, figcaption, summary, div, table, tr';
 let findMatches = [];      // Range objects
 let findIndex = -1;
+let folderFindMode = false;
+let folderSimilarityMode = false;
+let folderSearchDetailsOpen = false;
+let folderFindRun = 0;
+const FOLDER_SEARCH_QUERY_MAX = 10000;
 
 // The searchable text: visible text nodes in reading order, with a line break between blocks
 // so a match never runs from one paragraph, list item or table cell into the next.
@@ -4043,6 +4160,7 @@ function buildPattern(q) {
 }
 
 function runFind(keepPosition) {
+  if (folderFindMode) { searchFolderFiles(); return; }
   const q = findInput.value;
   findMatches = [];
   findInput.classList.remove('invalid');
@@ -4068,6 +4186,291 @@ function runFind(keepPosition) {
     start = Math.max(0, findMatches.findIndex(r => r.getBoundingClientRect().bottom >= top));
   } else start = Math.min(Math.max(findIndex, 0), findMatches.length - 1);
   renderFind(findMatches.length ? start : -1, !keepPosition);
+}
+
+function setFolderFindMode(on) {
+  folderFindMode = !!on;
+  if (!folderFindMode) folderSearchDetailsOpen = false;
+  folderFindBtn.classList.toggle('on', folderFindMode);
+  folderFindBtn.setAttribute('aria-pressed', String(folderFindMode));
+  folderFindResults.hidden = !folderFindMode || !folderSearchDetailsOpen;
+  folderSearchDetailsBtn.disabled = !folderFindMode;
+  folderSearchDetailsBtn.classList.toggle('on', folderSearchDetailsOpen);
+  folderSearchDetailsBtn.setAttribute('aria-expanded', String(folderSearchDetailsOpen));
+  folderSearchDetailsBtn.textContent = `${folderSearchDetailsOpen ? '⌃' : '⌄'} Search details`;
+  folderSimilarityBtn.disabled = !folderFindMode;
+  folderSimilarityBtn.classList.toggle('on', folderSimilarityMode);
+  folderSimilarityBtn.setAttribute('aria-pressed', String(folderSimilarityMode));
+  folderFindResults.setAttribute('aria-busy', 'false');
+  findOpts.regex.disabled = folderFindMode;
+  findOpts.regex.title = folderFindMode ? 'Regular expressions are unavailable in folder search; the query is treated as text' : 'Regular expression';
+  document.getElementById('findPrev').disabled = folderFindMode;
+  document.getElementById('findNext').disabled = folderFindMode;
+  document.getElementById('replaceToggle').disabled = folderFindMode;
+  clearFindHighlights();
+  findMatches = [];
+  folderFindRun++;
+}
+
+// Approximate search compares query words against nearby text windows. It is deliberately
+// opt-in: short queries are too ambiguous to produce useful similarity scores.
+function bestFolderSimilarity(query, text, minWords = 4) {
+  const tokenize = value => [...value.matchAll(/[\p{L}\p{N}_]+/gu)];
+  const queryTokens = tokenize(query);
+  const queryWords = new Set(queryTokens.map(match => match[0].toLocaleLowerCase()));
+  if (queryWords.size < minWords) return null;
+  let best = null;
+  const tokens = tokenize(text);
+  const windowSize = Math.max(queryTokens.length, queryWords.size);
+  const stride = Math.max(1, Math.floor(windowSize / 5));
+  for (let start = 0; start < tokens.length; start += stride) {
+    const end = Math.min(tokens.length, start + windowSize);
+    const words = new Set(tokens.slice(start, end).map(match => match[0].toLocaleLowerCase()));
+    let overlap = 0;
+    for (const word of queryWords) if (words.has(word)) overlap++;
+    const score = Math.round(200 * overlap / (queryWords.size + words.size));
+    if (!best || score > best.score) {
+      const startAt = tokens[start].index;
+      const endAt = tokens[end - 1].index + tokens[end - 1][0].length;
+      best = { score, index: startAt, end: endAt, snippet: text.slice(startAt, endAt).replace(/\s+/g, ' ').trim() };
+    }
+    if (end === tokens.length) break;
+  }
+  return best;
+}
+
+function highlightSimilarPassage(query, reportedScore) {
+  const { text, parts } = searchIndex();
+  if (!parts.length) return false;
+  // This is a display fallback after a folder result has already been confirmed. Allow short
+  // queries here so comment-prefix normalization or rendered markup cannot lose the highlight.
+  const best = bestFolderSimilarity(query, text, 1);
+  if (!best || best.score < 25) return false;
+  const start = locate(parts, best.index, false);
+  const end = locate(parts, best.end, true);
+  const range = document.createRange();
+  range.setStart(start.node, start.offset);
+  range.setEnd(end.node, end.offset);
+  findMatches = [range];
+  renderFind(0);
+  findCount.textContent = `Closest passage · ${fmt(reportedScore ?? best.score)}% similar`;
+  scrollToRange(range);
+  return true;
+}
+
+function highlightFolderMatchesInOpenDocument(query) {
+  const { text, parts } = searchIndex();
+  if (!parts.length) return false;
+  const normalizedQuery = query.trim().replace(/\s+/g, ' ');
+  if (!normalizedQuery) return false;
+  const isCode = typeOf(currentPath)?.id === 'code';
+  const queries = [normalizedQuery];
+  if (isCode) {
+    const withoutCommentMarkers = normalizedQuery.replace(/(^|\s)\/\/(?=\s|$)/g, '$1').replace(/\s+/g, ' ').trim();
+    if (withoutCommentMarkers && withoutCommentMarkers !== normalizedQuery) queries.push(withoutCommentMarkers);
+  }
+  const escapeLiteral = value => value.split(' ').map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+');
+  let ranges = [];
+  for (const candidate of queries) {
+    try {
+      const literal = escapeLiteral(candidate);
+      const source = findOpts.word.checked
+        ? `(?<![\\p{L}\\p{N}_])(?:${literal})(?![\\p{L}\\p{N}_])`
+        : literal;
+      const pattern = new RegExp(source, 'gu' + (findOpts.case.checked ? '' : 'i'));
+      for (const match of text.matchAll(pattern)) {
+        if (!match[0]) continue;
+        const start = locate(parts, match.index, false);
+        const end = locate(parts, match.index + match[0].length, true);
+        const range = document.createRange();
+        range.setStart(start.node, start.offset);
+        range.setEnd(end.node, end.offset);
+        ranges.push(range);
+        if (ranges.length >= 5000) break;
+      }
+    } catch { /* A folder query is literal; an unbuildable highlight should not interrupt opening the file. */ }
+    if (ranges.length) break;
+  }
+  if (ranges.length) {
+    findMatches = ranges;
+    findIndex = 0;
+    clearFindHighlights();
+    if (canHighlight) {
+      CSS.highlights.set('find', new Highlight(...ranges.slice(1)));
+      CSS.highlights.set('find-current', new Highlight(ranges[0]));
+    } else {
+      const selection = getSelection();
+      selection.removeAllRanges();
+      selection.addRange(ranges[0]);
+    }
+    scrollToRange(ranges[0]);
+    return true;
+  }
+  return highlightSimilarPassage(queries[queries.length - 1]);
+}
+
+// Stream app files and reject oversized inputs before buffering them. The file path still goes through
+// the app's scoped /fs/ endpoint, which applies the same folder boundary and Defender checks as Open.
+async function readFolderSearchText(path, maxBytes = 2 * 1024 * 1024) {
+  if (source !== 'app') {
+    try {
+      const entry = fileMap.get(key(path));
+      if (!entry || entry.file.size > maxBytes) return null;
+      return decodeBytes(await entry.file.arrayBuffer()).text;
+    } catch { return null; }
+  }
+  try {
+    const response = await fetch(fsURL(path), { cache: 'no-store' });
+    if (!response.ok || Number(response.headers.get('Content-Length')) > maxBytes || !response.body) return null;
+    const reader = response.body.getReader(), chunks = [];
+    let total = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) { await reader.cancel(); return null; }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    return decodeBytes(bytes.buffer).text;
+  } catch { return null; }
+}
+
+async function searchFolderFiles() {
+  const query = findInput.value;
+  const queryKey = JSON.stringify([query, findOpts.case.checked, findOpts.word.checked, folderSimilarityMode]);
+  if (query && folderSearchComplete && folderSearchQueryKey === queryKey) {
+    if (folderFindMode && currentPath && folderSearchPaths.has(key(currentPath)))
+      highlightFolderMatchesInOpenDocument(query);
+    return;
+  }
+  const run = ++folderFindRun;
+  folderSearchPaths.clear();
+  folderSearchOnly = false;
+  folderSearchComplete = false;
+  folderSearchQueryKey = null;
+  buildList();
+  folderFindResults.replaceChildren();
+  folderFindResults.setAttribute('aria-busy', 'false');
+  const normalizedQuery = query.trim().replace(/\s+/g, ' ');
+  if (!query) { folderFindResults.setAttribute('aria-busy', 'false'); findCount.textContent = ''; findCount.className = ''; return; }
+  if (query.length > FOLDER_SEARCH_QUERY_MAX) { findInput.classList.add('invalid'); findCount.textContent = `Search is too long (limit: ${fmt(FOLDER_SEARCH_QUERY_MAX)} characters)`; findCount.className = 'none'; return; }
+  if (!normalizedQuery) { findCount.textContent = ''; findCount.className = ''; return; }
+  let pattern;
+  const escapeLiteral = value => value.split(' ').map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+');
+  try {
+    const escaped = escapeLiteral(normalizedQuery);
+    pattern = new RegExp(findOpts.word.checked ? `(?<![\\p{L}\\p{N}_])(?:${escaped})(?![\\p{L}\\p{N}_])` : escaped,
+      'gu' + (findOpts.case.checked ? '' : 'i'));
+  } catch { findInput.classList.add('invalid'); findCount.textContent = 'Invalid search'; findCount.className = 'none'; return; }
+  findInput.classList.remove('invalid');
+  folderSearchQueryKey = queryKey;
+  const candidates = mdPaths.filter(path => typeOf(path) && typeOf(path).id !== 'xlsx' && !SKIP_DIRS.test(path));
+  const found = [];
+  folderFindResults.setAttribute('aria-busy', 'true');
+  let skipped = 0, totalMatches = 0, countTruncated = false;
+  findCount.className = '';
+  for (let i = 0; i < candidates.length; i++) {
+    if (run !== folderFindRun || !folderFindMode) return;
+    const path = candidates[i];
+    findCount.textContent = `Searching ${i + 1}/${candidates.length}`;
+    const text = await readFolderSearchText(path);
+    if (text === null) { skipped++; continue; }
+    let searchText = text;
+    let matchPattern = pattern;
+    matchPattern.lastIndex = 0;
+    let match = matchPattern.exec(searchText);
+    // A copied source-code passage may contain line-leading // markers that the input collapses between lines.
+    // If the direct search misses, retry without those comment prefixes while preserving line breaks.
+    if (!match && typeOf(path)?.id === 'code') {
+      const commentQuery = normalizedQuery.replace(/(^|\s)\/\/(?=\s|$)/g, '$1').replace(/\s+/g, ' ').trim();
+      if (commentQuery && commentQuery !== normalizedQuery) {
+        searchText = text.replace(/^[\t ]*\/\/[\t ]?/gm, '');
+        const commentPattern = new RegExp(findOpts.word.checked
+          ? `(?<![\\p{L}\\p{N}_])(?:${escapeLiteral(commentQuery)})(?![\\p{L}\\p{N}_])`
+          : escapeLiteral(commentQuery), 'gu' + (findOpts.case.checked ? '' : 'i'));
+        match = commentPattern.exec(searchText);
+        if (match) matchPattern = commentPattern;
+      }
+    }
+    if (!match) {
+      if (folderSimilarityMode) {
+        const similarityText = typeOf(path)?.id === 'code'
+          ? text.replace(/^[\t ]*\/\/[\t ]?/gm, '')
+          : text;
+        const normalizedSimilarityQuery = typeOf(path)?.id === 'code'
+          ? normalizedQuery.replace(/(^|\s)\/\/(?=\s|$)/g, '$1').replace(/\s+/g, ' ').trim()
+          : normalizedQuery;
+        const similarity = bestFolderSimilarity(normalizedSimilarityQuery, similarityText);
+        if (similarity && similarity.score >= 60) {
+          const line = similarityText.slice(0, similarity.index).split(/\r\n|\r|\n/).length;
+          const rawLine = text.split(/\r\n|\r|\n/)[line - 1]?.trim() || similarity.snippet;
+          const snippet = rawLine.length > 240 ? `${rawLine.slice(0, 110)}…${rawLine.slice(-110)}` : rawLine;
+          found.push({ path, line, count: 0, capped: false, snippet, similarity: similarity.score, approximate: true });
+          totalMatches++;
+        }
+      }
+      continue;
+    }
+    const first = match.index;
+    let count = 1;
+    while (count < 10000 && matchPattern.exec(searchText)) count++;
+    const capped = count === 10000 && matchPattern.exec(searchText) !== null;
+    countTruncated ||= capped;
+    totalMatches += count;
+    const line = searchText.slice(0, first).split(/\r\n|\r|\n/).length;
+    const rawLine = text.split(/\r\n|\r|\n/)[line - 1]?.trim() || '';
+    const snippet = rawLine.length > 240 ? `${rawLine.slice(0, 110)}…${rawLine.slice(-110)}` : rawLine;
+    found.push({ path, line, count, capped, snippet, similarity: folderSimilarityMode ? 100 : null });
+  }
+  if (run !== folderFindRun || !folderFindMode) return;
+  folderFindResults.setAttribute('aria-busy', 'false');
+  folderSearchComplete = true;
+  found.forEach(item => folderSearchPaths.add(key(item.path)));
+  folderSearchOnly = true;
+  buildList();
+  if (folderSimilarityMode) found.sort((a, b) => b.similarity - a.similarity);
+  findCount.textContent = folderSimilarityMode
+    ? `${fmt(found.length)} similar results${skipped ? ` · ${fmt(skipped)} skipped` : ''}`
+    : `${fmt(totalMatches)}${countTruncated ? '+' : ''} matches in ${fmt(found.length)} files${skipped ? ` · ${fmt(skipped)} skipped` : ''}`;
+  if (!found.length) {
+    const empty = document.createElement('div');
+    empty.className = 'folder-find-result';
+    empty.textContent = `${folderSimilarityMode ? 'No similar results (minimum 60%; query needs at least 4 distinct words)' : 'No matches'}${skipped ? ` · ${fmt(skipped)} file(s) skipped (over 2 MB or unavailable)` : ''}`;
+    folderFindResults.append(empty);
+    return;
+  }
+  for (const item of found) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'folder-find-result';
+    const pathLabel = document.createElement('span');
+    pathLabel.className = 'folder-find-path';
+    pathLabel.textContent = `${item.path} · ${item.similarity !== null && item.similarity !== undefined ? `${item.similarity}% similar` : `${fmt(item.count)}${item.capped ? '+' : ''} ${item.count === 1 ? 'match' : 'matches'}`} · line ${fmt(item.line)}`;
+    const snippet = document.createElement('span');
+    snippet.className = 'folder-find-snippet';
+    snippet.textContent = item.snippet;
+    button.append(pathLabel, snippet);
+    button.addEventListener('click', async () => {
+      setFolderFindMode(false);
+      if (await openDoc(item.path)) {
+        findInput.focus();
+        runFind(false);
+        if (!findMatches.length) highlightSimilarPassage(findInput.value, item.similarity);
+      }
+    });
+    folderFindResults.append(button);
+  }
+  if (skipped) {
+    const note = document.createElement('div');
+    note.className = 'folder-find-result';
+    note.textContent = `${fmt(skipped)} file(s) skipped (over 2 MB or unavailable).`;
+    folderFindResults.append(note);
+  }
+  if (currentPath && folderSearchPaths.has(key(currentPath)))
+    highlightFolderMatchesInOpenDocument(findInput.value);
 }
 
 function clearFindHighlights() {
@@ -4105,6 +4508,7 @@ function scrollToRange(range) {
 }
 
 function stepFind(dir) {
+  if (folderFindMode) return;
   if (replaceMode) {
     if (!srcMatches.length) return;
     srcIndex = (srcIndex + dir + srcMatches.length) % srcMatches.length;
@@ -4132,6 +4536,7 @@ function openFind() {
 }
 
 function closeFind() {
+  if (folderFindMode) setFolderFindMode(false);
   findBar.hidden = true;
   findBtn.classList.remove('on');
   findMatches = [];
@@ -4149,6 +4554,39 @@ document.getElementById('findNext').addEventListener('click', () => stepFind(1))
 document.getElementById('findPrev').addEventListener('click', () => stepFind(-1));
 document.getElementById('findClose').addEventListener('click', closeFind);
 findBtn.addEventListener('click', () => (findBar.hidden ? openFind() : closeFind()));
+folderFindBtn.addEventListener('click', () => {
+  if (folderFindMode) { setFolderFindMode(false); runFind(false); }
+  else {
+    setFolderFindMode(true);
+    if (replaceMode) setReplaceMode(false);
+    folderSearchOnly = true;
+    buildList();
+    runFind(false);
+  }
+});
+folderSimilarityBtn.addEventListener('click', () => {
+  if (!folderFindMode) return;
+  folderSimilarityMode = !folderSimilarityMode;
+  folderSimilarityBtn.classList.toggle('on', folderSimilarityMode);
+  folderSimilarityBtn.setAttribute('aria-pressed', String(folderSimilarityMode));
+  runFind(false);
+});
+folderSearchDetailsBtn.addEventListener('click', () => {
+  if (!folderFindMode) return;
+  folderSearchDetailsOpen = !folderSearchDetailsOpen;
+  folderFindResults.hidden = !folderSearchDetailsOpen;
+  folderSearchDetailsBtn.classList.toggle('on', folderSearchDetailsOpen);
+  folderSearchDetailsBtn.setAttribute('aria-expanded', String(folderSearchDetailsOpen));
+  folderSearchDetailsBtn.textContent = `${folderSearchDetailsOpen ? '⌃' : '⌄'} Search details`;
+});
+document.getElementById('folderAllFiles').addEventListener('click', () => {
+  folderSearchOnly = false;
+  buildList();
+});
+document.getElementById('folderResultsOnly').addEventListener('click', () => {
+  folderSearchOnly = true;
+  buildList();
+});
 
 // ---------------------------------------------------------------- ⇄ Find & replace (edits the Markdown source)
 // The page is a rendering, so replacements are made in the Markdown text and the page is redrawn.
@@ -6282,7 +6720,7 @@ document.addEventListener('keydown', ev => {
   const mod = ev.ctrlKey || ev.metaKey;
   if (mod && !ev.shiftKey && ev.key.toLowerCase() === 'f') { ev.preventDefault(); openFind(); }
   else if (mod && !ev.shiftKey && ev.key.toLowerCase() === 'h') {
-    ev.preventDefault(); openFind(); if (!replaceMode) setReplaceMode(true); replaceInput.focus();
+    ev.preventDefault(); openFind(); if (folderFindMode) setFolderFindMode(false); if (!replaceMode) setReplaceMode(true); replaceInput.focus();
   }
   else if (mod && !ev.shiftKey && ev.key.toLowerCase() === 'z' && undoStack.length &&
            !/^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)) { ev.preventDefault(); undoEdit(); }
