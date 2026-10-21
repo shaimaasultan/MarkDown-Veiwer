@@ -1018,12 +1018,28 @@ static class Program
             AutoScaleMode = AutoScaleMode.Dpi;
             Text = AppName;
             ClientSize = new System.Drawing.Size(1200, 860);
-            StartPosition = FormStartPosition.WindowsDefaultLocation;
+            // A file opened from Explorer should appear on the monitor where it was opened.
+            System.Drawing.Rectangle openingArea = Screen.FromPoint(Cursor.Position).WorkingArea;
+            StartPosition = FormStartPosition.Manual;
+            Location = openingArea.Location;
             try { Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
             web.Dock = DockStyle.Fill;
             Controls.Add(web);
             ResumeLayout(true);
+            Shown += (s, e) => FitToWorkingArea();
             Load += async (s, e) => await StartAsync();
+        }
+
+        // Keep the initial window inside the usable area of the screen it opened on. ClientSize is
+        // intentionally allowed to shrink below its usual 1200 x 860 on smaller displays.
+        void FitToWorkingArea()
+        {
+            System.Drawing.Rectangle area = Screen.FromHandle(Handle).WorkingArea;
+            int width = Math.Min(Width, area.Width);
+            int height = Math.Min(Height, area.Height);
+            Bounds = new System.Drawing.Rectangle(area.Left + (area.Width - width) / 2,
+                                                  area.Top + (area.Height - height) / 2,
+                                                  width, height);
         }
 
         async Task StartAsync()
@@ -1480,10 +1496,10 @@ static class Program
             }
             return new ScopedFile(full, content, root);
         }
-        catch (FileNotFoundException) { content?.Dispose(); root.Dispose(); NotFound(s); return null; }
-        catch (DirectoryNotFoundException) { content?.Dispose(); root.Dispose(); NotFound(s); return null; }
-        catch (UnauthorizedAccessException) { content?.Dispose(); root.Dispose(); Send(s, 403, "text/plain", Encoding.UTF8.GetBytes("Forbidden"), null, headOnly); return null; }
-        catch { content?.Dispose(); root.Dispose(); throw; }
+        catch (FileNotFoundException) { if (content != null) content.Dispose(); root.Dispose(); NotFound(s); return null; }
+        catch (DirectoryNotFoundException) { if (content != null) content.Dispose(); root.Dispose(); NotFound(s); return null; }
+        catch (UnauthorizedAccessException) { if (content != null) content.Dispose(); root.Dispose(); Send(s, 403, "text/plain", Encoding.UTF8.GetBytes("Forbidden"), null, headOnly); return null; }
+        catch { if (content != null) content.Dispose(); root.Dispose(); throw; }
     }
 
     static byte[] ReadBytes(Stream stream)
