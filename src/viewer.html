@@ -87,11 +87,15 @@
     .toolbar-nav h1 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .toolbar-view { border-inline-end: 0; }
     .toolbar-document-menu { margin-inline-start: auto; border-inline-end: 0; }
-    .folder-type-counts { display: flex; flex: 1 1 18rem; min-width: 12rem; max-width: 30rem; align-items: center; gap: .3rem; flex-wrap: wrap; color: var(--muted); font-size: .76rem; line-height: 1.4; }
-    .folder-type-counts[hidden] { display: none; }
-    .folder-type-counts .folder-total { margin-inline-end: .15rem; white-space: nowrap; }
-    .folder-type-counts .type-toggle { display: inline-flex; width: auto; min-width: 2.35rem; height: 2.1rem; align-items: center; justify-content: center; gap: .2rem; padding: .2rem .4rem; font-size: .76rem; }
-    .type-toggle[aria-pressed="false"] { opacity: .48; }
+    #documentMenuGroup[hidden] { display: none; }
+    #typeMenuWrap[hidden] { display: none; }
+    .type-filter-menu { min-width: 230px; max-height: min(70vh, 520px); overflow-y: auto; }
+    .type-filter-menu .folder-total { padding: .3rem .65rem .45rem; color: var(--muted); font-size: .8rem; }
+    .type-filter-option { display: flex; align-items: center; gap: .5rem; padding: .42rem .65rem; border-radius: 6px; cursor: pointer; font-size: .88rem; }
+    .type-filter-option:hover, .type-filter-option:focus-within { background: var(--active); }
+    .type-filter-option input { margin: 0; accent-color: var(--accent); }
+    .type-filter-option .type-icon { width: 1.5em; text-align: center; }
+    .type-filter-option .type-count { margin-inline-start: auto; color: var(--muted); font-size: .8rem; }
 
     main { flex: 1; display: flex; min-height: 0; }
     aside {
@@ -438,8 +442,12 @@
       display: block; width: 100%; text-align: left; border: 0; background: transparent; color: var(--fg);
       padding: .5rem .65rem; border-radius: 6px; cursor: pointer; font: inherit; font-size: .88rem;
     }
+    .menu button[hidden] { display: none; }
     .menu button:hover, .menu button:focus-visible { background: var(--active); outline: none; }
     .menu button span { display: block; color: var(--muted); font-size: .78rem; margin-top: .1rem; }
+    #documentMenu button[aria-pressed]::after { content: "Off"; float: right; margin-inline-start: 1rem; padding: .04rem .45rem; border-radius: 999px; background: var(--panel); color: var(--muted); font-size: .72rem; }
+    #documentMenu button[aria-pressed="true"]::after { content: "On"; background: var(--active); color: var(--accent); }
+    #themeMenu button[role="menuitemradio"][aria-checked="true"]::after { content: "✓"; float: right; color: var(--accent); }
     .menu hr { border: 0; border-top: 1px solid var(--border); margin: .3rem 0; }
     .menu-label { padding: .3rem .65rem .2rem; font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
     #toast {
@@ -593,6 +601,7 @@
     /* ---- Code, text and config files ---- */
     .code-file { display: flex; flex-direction: column; gap: .6rem; }
     .code-body { display: flex; align-items: flex-start; border: 1px solid var(--border); border-radius: 6px; overflow-x: auto; overflow-y: hidden; }
+    .html-preview-frame { display: block; width: 100%; height: clamp(12rem, calc(100vh - 20rem), 56rem); border: 1px solid var(--border); border-radius: 6px; background: #fff; }
     .markdown-body .code-body pre { margin: 0; padding: .75rem .9rem; border-radius: 0; background: transparent; overflow: visible; font-size: .85em; line-height: 1.5; }
     .markdown-body .code-body pre.code-gutter { position: sticky; left: 0; z-index: 1; padding-inline: .6rem; text-align: right; color: var(--muted); background: var(--panel, var(--bg)); border-inline-end: 1px solid var(--border); user-select: none; }
     .markdown-body .code-body pre.code-text { flex: 1; min-width: 0; }
@@ -814,36 +823,41 @@
           <button id="pdfBtn" type="button" role="menuitem" data-action="pdf" disabled title="Open a document first">🖨️ Save as PDF<span>Print this document or save it as a PDF</span></button>
         </div>
       </div>
-      <div id="folderTypeCounts" class="folder-type-counts" role="group" aria-label="Folder file type counts and filters" hidden></div>
     </div>
     <div class="toolbar-group toolbar-document" role="group" aria-label="Document tools">
       <button id="cmpBtn" class="btn secondary" disabled title="Compare this document with another version">⇄ Compare</button>
     </div>
     <div class="toolbar-group toolbar-view" role="group" aria-label="View settings">
       <button id="hiddenBtn" class="btn secondary" title="Show invisible characters in the document (Ctrl+Shift+H)">¶ Hidden</button>
+      <div id="typeMenuWrap" class="menu-wrap" hidden>
+        <button id="typeMenuBtn" class="btn secondary" aria-haspopup="true" aria-expanded="false" aria-controls="folderTypeCounts">☷ View File types ▾</button>
+        <div id="folderTypeCounts" class="menu type-filter-menu" role="group" aria-label="Filter files by type" hidden></div>
+      </div>
       <button id="findBtn" class="btn secondary" disabled title="Find in document (Ctrl+F)">🔎 Find</button>
       <button id="picBtn" class="btn secondary" aria-pressed="true">🙈 Hide pictures</button>
       <button id="sizeDown" class="btn secondary icon" aria-label="Smaller text">A−</button>
       <button id="sizeUp" class="btn secondary icon" aria-label="Larger text">A+</button>
       <button id="widthBtn" class="btn secondary icon">↔</button>
       <div class="menu-wrap">
-        <button id="settingsMenuBtn" class="btn secondary" aria-haspopup="menu" aria-expanded="false">⚙️ More ▾</button>
-        <div id="settingsMenu" class="menu" role="menu" hidden>
-          <div class="menu-label">Appearance and information</div>
-          <button id="themeBtn" type="button" role="menuitem" title="Theme: follow Windows, light or dark">🖥️ Auto</button>
-          <button id="aboutBtn" type="button" role="menuitem" title="Versions and sources of the libraries used">ℹ️ About</button>
+        <button id="themeBtn" class="btn secondary" aria-haspopup="menu" aria-expanded="false" aria-controls="themeMenu">🎨 Theme: Auto ▾</button>
+        <div id="themeMenu" class="menu" role="menu" hidden>
+          <div class="menu-label">Color theme</div>
+          <button type="button" role="menuitemradio" data-theme="auto" aria-checked="true">🖥️ Auto</button>
+          <button type="button" role="menuitemradio" data-theme="light" aria-checked="false">☀️ Light</button>
+          <button type="button" role="menuitemradio" data-theme="dark" aria-checked="false">🌙 Dark</button>
         </div>
       </div>
+      <button id="aboutBtn" class="btn secondary" type="button" title="Versions and sources of the libraries used">ℹ️ About</button>
     </div>
-    <div class="toolbar-group toolbar-document-menu" role="group" aria-label="Document panels">
+    <div id="documentMenuGroup" class="toolbar-group toolbar-document-menu" role="group" aria-label="Document panels" hidden>
       <div class="menu-wrap">
         <button id="documentMenuBtn" class="btn secondary" aria-haspopup="menu" aria-expanded="false">📚 Document ▾</button>
         <div id="documentMenu" class="menu" role="menu" hidden>
           <div class="menu-label">Document panels</div>
-          <button id="tocBtn" type="button" role="menuitem" disabled title="Show/hide the table of contents (Ctrl+Shift+O)">📑 Contents</button>
-          <button id="imgBtn" type="button" role="menuitem" disabled title="Show/hide the list of pictures in this document (Ctrl+Shift+G)">🖼️ Images</button>
-          <button id="linkBtn" type="button" role="menuitem" disabled title="Show/hide the list of links in this document (Ctrl+Shift+L)">🔗 Links</button>
-          <button id="srcBtn" type="button" role="menuitem" disabled title="Show the Markdown source next to the document (Ctrl+Shift+U)">&lt;/&gt; Source</button>
+          <button id="tocBtn" type="button" role="menuitem" aria-pressed="false" disabled title="Show/hide the table of contents (Ctrl+Shift+O)">📑 Contents</button>
+          <button id="imgBtn" type="button" role="menuitem" aria-pressed="false" disabled title="Show/hide the list of pictures in this document (Ctrl+Shift+G)">🖼️ Images</button>
+          <button id="linkBtn" type="button" role="menuitem" aria-pressed="false" disabled title="Show/hide the list of links in this document (Ctrl+Shift+L)">🔗 Links</button>
+          <button id="srcBtn" type="button" role="menuitem" aria-pressed="false" disabled title="Show the Markdown source next to the document (Ctrl+Shift+U)">&lt;/&gt; Source</button>
         </div>
       </div>
     </div>

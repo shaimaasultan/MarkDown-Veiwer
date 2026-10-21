@@ -122,24 +122,29 @@ const SAFE_IMG_DATA = /^data:image\/(png|gif|jpe?g|webp|bmp|avif|svg\+xml)[;,]/i
 const safeLink = v => ['', 'http', 'https', 'mailto'].includes(scheme(v));
 const safeSrc = v => ['', 'http', 'https'].includes(scheme(v)) || SAFE_IMG_DATA.test(v.trim());
 
-function sanitize(html, { diagram = false } = {}) {
-  const doc = new DOMParser().parseFromString(`<!DOCTYPE html><body>${html}`, 'text/html');
-  cleanChildren(doc.body, diagram);
+function sanitize(html, { diagram = false, allowStyles = false } = {}) {
+  const doc = new DOMParser().parseFromString(allowStyles ? html : `<!DOCTYPE html><body>${html}`, 'text/html');
+  // Full HTML documents put their stylesheets in <head>; retain those only for the isolated HTML preview.
+  const headStyles = allowStyles ? [...doc.head.querySelectorAll('style')] : [];
+  cleanChildren(doc.head, diagram, allowStyles);
+  cleanChildren(doc.body, diagram, allowStyles);
   const frag = document.createDocumentFragment();
+  for (const style of headStyles) if (style.isConnected) frag.appendChild(document.adoptNode(style));
   while (doc.body.firstChild) frag.appendChild(document.adoptNode(doc.body.firstChild));
   return frag;
 }
 
-function cleanChildren(node, diagram) {
+function cleanChildren(node, diagram, allowStyles) {
   for (const child of [...node.childNodes]) {
     if (child.nodeType === Node.TEXT_NODE) continue;
     if (child.nodeType !== Node.ELEMENT_NODE) { child.remove(); continue; }  // comments, PIs, …
     const tag = child.localName.toLowerCase();
     // Mermaid's own diagram output needs its <style> sheet and HTML labels; both are still filtered.
     const diagramExtra = diagram && (tag === 'style' || tag === 'foreignobject');
-    if (DROP_TAGS.has(tag) && !diagramExtra) { child.remove(); continue; }
-    cleanChildren(child, diagram);
-    if (!ALLOWED_TAGS.has(tag) && !diagramExtra) { child.replaceWith(...child.childNodes); continue; }
+    const previewStyle = allowStyles && tag === 'style';
+    if (DROP_TAGS.has(tag) && !diagramExtra && !previewStyle) { child.remove(); continue; }
+    cleanChildren(child, diagram, allowStyles);
+    if (!ALLOWED_TAGS.has(tag) && !diagramExtra && !previewStyle) { child.replaceWith(...child.childNodes); continue; }
     cleanAttributes(child, tag, diagram);
   }
 }
@@ -667,9 +672,11 @@ function renderDoc({ anchor = null, keepScroll = false } = {}) {
     pdfBtn.disabled = false;
     pdfBtn.title = 'Print or save the rows drawn on the page as a PDF';
     findBtn.disabled = false;
-    copyBtn.disabled = true;
+    copyBtn.disabled = !!currentBinary;
     srcBtn.disabled = true;
-    cmpBtn.disabled = true;
+    cmpBtn.disabled = !!currentBinary;
+    updateExportMenuForCurrentFile();
+    updateDocumentMenuAvailability();
     for (const li of fileList.children) li.classList.toggle('active', key(li.dataset.path) === key(currentPath));
     if (!findBar.hidden) runFind(keepScroll);
     content.scrollTop = keepScroll ? scroll : 0;
@@ -714,6 +721,8 @@ function renderDoc({ anchor = null, keepScroll = false } = {}) {
   findBtn.disabled = false;
   srcBtn.disabled = false;
   cmpBtn.disabled = false;
+  updateExportMenuForCurrentFile();
+  updateDocumentMenuAvailability();
   for (const li of fileList.children) li.classList.toggle('active', key(li.dataset.path) === key(currentPath));
 
   if (keepScroll) content.scrollTop = scroll;
@@ -1733,9 +1742,11 @@ const FILE_TYPES = [
   { id: 'ipynb',  icon: '📓', label: 'Notebooks',       exts: ['ipynb'] },
   { id: 'code',   icon: '</>', label: 'Source code',    exts: ['ps1', 'psm1', 'psd1', 'py', 'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'cs', 'java', 'kt', 'sql', 'sh', 'bash',
                                                                   'bat', 'cmd', 'c', 'h', 'cpp', 'hpp', 'cc', 'go', 'rs', 'rb', 'php', 'swift', 'vb', 'r', 'lua', 'pl',
-                                                                  'html', 'htm', 'css', 'scss', 'less', 'vue', 'diff', 'patch'] },
+                                                                  'css', 'scss', 'less', 'vue', 'diff', 'patch'] },
   { id: 'config', icon: '⚙',  label: 'Config',          exts: ['yaml', 'yml', 'toml', 'ini', 'cfg', 'conf', 'properties', 'env', 'editorconfig', 'gitignore', 'gitattributes', 'npmrc'] },
-  { id: 'text',   icon: '🗎',  label: 'Text and logs',   exts: ['txt', 'text', 'log', 'out', 'rst'] }
+  { id: 'text',   icon: '🗎',  label: 'Text and logs',   exts: ['txt', 'text', 'log', 'out', 'rst'] },
+  // Appended so stored type-filter bitmasks for existing categories retain their meaning.
+  { id: 'html',   icon: '🌐', label: 'HTML',            exts: ['html', 'htm'] }
 ];
 const TYPE_BY_EXT = new Map(FILE_TYPES.flatMap(t => t.exts.map(e => [e, t])));
 const extOf = p => { const m = /\.([^./\\]+)$/.exec(p || ''); return m ? m[1].toLowerCase() : ''; };
@@ -1859,48 +1870,287 @@ function markupCodeNote() {
 // ---- text, logs, source code and config: line numbers, colours, Wrap
 const CODE_RICH = 2e6;           // up to this many characters: colours; above: plain text
 let codeWrap = false;
+let htmlPreviewPath = null;
+
+// ---- minified code laid out for reading (with Wrap long lines on). Only whitespace is added: line breaks and
+// indentation. Strings, template text, regular expressions and comments are copied exactly as they are, and if
+// the result ever differs from the file by anything but whitespace, the file is shown as it is.
+const MIN_KINDS = { js: 'js', mjs: 'js', cjs: 'js', jsx: 'js', ts: 'js', tsx: 'js', css: 'css', scss: 'css', less: 'css', html: 'html', htm: 'html' };
+const MIN_LAYOUT_LIMIT = 1e7;    // characters; larger files are shown as they are
+
+// A few very long lines: minified (or a ".min." name).
+function looksMinified(text, path) {
+  if (/\.min\.[a-z]+$/i.test(path || '')) return true;
+  const lines = text.split('\n');
+  let longest = 0;
+  for (const l of lines) if (l.length > longest) longest = l.length;
+  return longest > 500 && text.length / lines.length > 150;
+}
+
+function layOutMinified(text, kind) {
+  if (text.length > MIN_LAYOUT_LIMIT) return null;
+  let out;
+  try { out = kind === 'html' ? layOutHtml(text) : layOutCode(text, kind); } catch { return null; }
+  // Safety net: nothing but whitespace may differ from the file.
+  return out && out.replace(/\s+/g, '') === text.replace(/\s+/g, '') ? out : null;
+}
+
+// JavaScript / TypeScript ('js') and CSS ('css'): a line break after { ; and (in JS) , inside a block, before },
+// indentation by { } depth. Inside ( ) and [ ] nothing is broken (for (;;), url(data:…;…), argument lists).
+function layOutCode(text, kind) {
+  const js = kind === 'js', n = text.length, out = [];
+  const stack = [];
+  let braces = 0, line = '', prev = '', i = 0;
+  const indent = () => '  '.repeat(braces);
+  const top = () => stack[stack.length - 1];
+  const newline = () => { if (line.trim()) out.push(line.replace(/\s+$/, '')); line = indent(); };
+  const quoted = (q, j) => { j++; while (j < n && text[j] !== q && text[j] !== '\n') j += text[j] === '\\' ? 2 : 1; return Math.min(j + 1, n); };
+  const skipTemplate = j => {                     // `…${ … }…` (nested strings and templates too)
+    j++;
+    while (j < n) {
+      const ch = text[j];
+      if (ch === '\\') { j += 2; continue; }
+      if (ch === '`') return j + 1;
+      if (ch === '$' && text[j + 1] === '{') {
+        let depth = 1; j += 2;
+        while (j < n && depth) {
+          const d = text[j];
+          if (d === '"' || d === "'") { j = quoted(d, j); continue; }
+          if (d === '`') { j = skipTemplate(j); continue; }
+          if (d === '{') depth++; else if (d === '}') depth--;
+          j++;
+        }
+        continue;
+      }
+      j++;
+    }
+    return n;
+  };
+  const regexAllowed = () => prev === '' || /^[(,=:[!&|?{};+\-*%<>~^]$/.test(prev) ||
+    /^(return|typeof|case|do|else|in|of|new|delete|void|throw|instanceof|yield|await)$/.test(prev);
+  line = indent();
+  while (i < n) {
+    const c = text[i];
+    if (c === '\r') { i++; continue; }
+    if (c === '\n') {
+      // A line break just before ; or , (minifiers put some there): the ; or , stays on the line it ends.
+      let j = i + 1;
+      while (j < n && /\s/.test(text[j])) j++;
+      if (text[j] === ';' || text[j] === ',') { i = j; continue; }
+      newline(); i++; continue;
+    }
+    if ((c === ' ' || c === '\t') && !line.trim()) { i++; continue; }           // the indentation is ours
+    if (c === '/' && text[i + 1] === '*') {
+      const e = text.indexOf('*/', i + 2), end = e < 0 ? n : e + 2;
+      line += text.slice(i, end); i = end; continue;
+    }
+    if (js && c === '/' && text[i + 1] === '/') {
+      const e = text.indexOf('\n', i), end = e < 0 ? n : e;
+      line += text.slice(i, end); i = end; continue;
+    }
+    if (c === '"' || c === "'") { const j = quoted(c, i); line += text.slice(i, j); i = j; prev = 'a'; continue; }
+    if (js && c === '`') { const j = skipTemplate(i); line += text.slice(i, j); i = j; prev = 'a'; continue; }
+    if (js && c === '/' && regexAllowed()) {
+      let j = i + 1, inClass = false;
+      while (j < n && text[j] !== '\n') {
+        const d = text[j];
+        if (d === '\\') { j += 2; continue; }
+        if (d === '[') inClass = true; else if (d === ']') inClass = false;
+        else if (d === '/' && !inClass) { j++; break; }
+        j++;
+      }
+      while (j < n && /[a-z]/i.test(text[j])) j++;                              // flags
+      line += text.slice(i, j); i = j; prev = 'a'; continue;
+    }
+    if (/[\w$]/.test(c)) {
+      let j = i + 1;
+      while (j < n && /[\w$]/.test(text[j])) j++;
+      prev = text.slice(i, j); line += prev; i = j; continue;
+    }
+    if (c === '{') {
+      let j = i + 1;
+      while (j < n && (text[j] === ' ' || text[j] === '\t')) j++;
+      if (text[j] === '}') { line += '{}'; i = j + 1; prev = '}'; continue; }    // an empty block stays {}
+      if (/[\w)\]$'"`]$/.test(line)) line += ' ';
+      line += '{'; stack.push('{'); braces++; i++; prev = '{';
+      newline(); continue;
+    }
+    if (c === '}') {
+      while (stack.length && top() !== '{') stack.pop();                       // unclosed ( or [ inside the block
+      if (stack.length) { stack.pop(); braces--; }
+      newline();
+      line += '}'; i++; prev = '}';
+      let j = i;
+      while (j < n && (text[j] === ' ' || text[j] === '\t')) j++;
+      const rest = text.slice(j, j + 8);
+      if (/^[;,)\].:?]/.test(rest) || (js && /^(else|catch|finally|while)\b/.test(rest))) {
+        if (/^[a-z]/.test(rest)) line += ' ';
+        i = j; continue;
+      }
+      newline(); continue;
+    }
+    if (c === '(' || c === '[') { stack.push(c); line += c; i++; prev = c; continue; }
+    if (c === ')' || c === ']') { if (top() === (c === ')' ? '(' : '[')) stack.pop(); line += c; i++; prev = c; continue; }
+    if (c === ';') {
+      line += ';'; i++; prev = ';';
+      if (!stack.length || top() === '{') newline();
+      continue;
+    }
+    if (js && c === ',' && top() === '{') { line += ','; i++; prev = ','; newline(); continue; }
+    line += c; i++;
+    if (c !== ' ' && c !== '\t') prev = c;
+  }
+  newline();
+  return out.join('\n') + '\n';
+}
+
+// HTML: each tag and each run of text on its own line, indented by nesting; <script> and <style> contents laid
+// out as JavaScript and CSS; <pre> and <textarea> contents kept exactly.
+function layOutHtml(text) {
+  const VOID = /^(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/i;
+  const out = [];
+  let depth = 0, i = 0;
+  const n = text.length;
+  const put = s => { for (const l of s.split('\n')) if (l.trim()) out.push('  '.repeat(depth) + l.trim()); };
+  while (i < n) {
+    if (text.startsWith('<!--', i)) {
+      const e = text.indexOf('-->', i + 4), end = e < 0 ? n : e + 3;
+      out.push('  '.repeat(depth) + text.slice(i, end).trim()); i = end; continue;
+    }
+    if (text[i] === '<' && /[A-Za-z\/!?]/.test(text[i + 1] || '')) {
+      let j = i + 1, q = null;
+      while (j < n && (q || text[j] !== '>')) { if (q) { if (text[j] === q) q = null; } else if (text[j] === '"' || text[j] === "'") q = text[j]; j++; }
+      const tag = text.slice(i, Math.min(j + 1, n));
+      i = Math.min(j + 1, n);
+      const m = /^<(\/?)([A-Za-z][\w:-]*)/.exec(tag);
+      if (!m) { out.push('  '.repeat(depth) + tag); continue; }                  // <!DOCTYPE …>, <?…?>
+      const [, closing, name] = m;
+      if (closing) { depth = Math.max(0, depth - 1); out.push('  '.repeat(depth) + tag); continue; }
+      out.push('  '.repeat(depth) + tag);
+      if (VOID.test(name) || /\/>$/.test(tag)) continue;
+      const raw = /^(script|style|pre|textarea)$/i.test(name);
+      if (!raw) { depth++; continue; }
+      // Raw content up to its closing tag.
+      const close = text.toLowerCase().indexOf('</' + name.toLowerCase(), i);
+      const end = close < 0 ? n : close;
+      const content = text.slice(i, end);
+      i = end;
+      if (content.trim()) {
+        if (/^(pre|textarea)$/i.test(name)) out.push(content);                    // kept exactly
+        else {
+          depth++;
+          const inner = layOutCode(content, /^style$/i.test(name) ? 'css' : 'js');
+          for (const l of inner.split('\n')) if (l.trim()) out.push('  '.repeat(depth) + l);
+          depth--;
+        }
+      }
+      depth++;                                                                     // its closing tag brings it back
+      continue;
+    }
+    // Text up to the next tag.
+    let j = text.indexOf('<', i + 1);
+    while (j >= 0 && !/[A-Za-z\/!?]/.test(text[j + 1] || '')) j = text.indexOf('<', j + 1);
+    const end = j < 0 ? n : j;
+    put(text.slice(i, end));
+    i = end;
+  }
+  return out.join('\n') + '\n';
+}
+
+// HTML files can be previewed in an isolated, script-free frame. The sanitizer removes active elements,
+// links are disabled, and the frame CSP blocks external requests; only scoped local or embedded media can load.
+function renderHtmlPreview() {
+  const safe = document.createElement('div');
+  safe.append(sanitize(currentSource, { allowStyles: true }));
+  fixResources(safe, dirOf(currentPath));
+  safe.querySelectorAll('a').forEach(a => { a.removeAttribute('href'); a.removeAttribute('target'); a.removeAttribute('rel'); });
+
+  const frame = document.createElement('iframe');
+  frame.className = 'html-preview-frame';
+  frame.title = `Safe preview of ${currentPath.split('/').pop()}`;
+  frame.setAttribute('sandbox', '');
+  frame.referrerPolicy = 'no-referrer';
+  const localOrigin = location.origin && location.origin !== 'null' ? ' ' + location.origin : '';
+  const policy = `default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data: blob:${localOrigin}; media-src data: blob:${localOrigin}; font-src data:${localOrigin}; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'`;
+  frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Safe HTML preview</title></head><body>${safe.innerHTML}</body></html>`;
+  return frame;
+}
 
 function renderCodeDocument(t) {
   const make = csvMake;
   const text = currentSource.replace(/^﻿/, '');
   const ext = extOf(currentPath);
+  const htmlSource = ext === 'html' || ext === 'htm';
+  const previewing = htmlSource && htmlPreviewPath === currentPath;
   let lang = t.id === 'text' ? null : CODE_LANG[ext] || null;
   if (lang && !(window.hljs && hljs.getLanguage(lang))) lang = null;
-  const lines = text === '' ? 0 : text.split(/\r\n|\n|\r/).length - (/(\r\n|\n|\r)$/.test(text) ? 1 : 0);
+  const countLines = s => s === '' ? 0 : s.split(/\r\n|\n|\r/).length - (/(\r\n|\n|\r)$/.test(s) ? 1 : 0);
+  const lines = countLines(text);
+  // A minified file (all on a few very long lines) is laid out for reading while Wrap long lines is on.
+  const minKind = MIN_KINDS[ext] && looksMinified(text, currentPath) ? MIN_KINDS[ext] : null;
+  const laidOut = codeWrap && minKind ? layOutMinified(text, minKind) : null;
+  const shown = laidOut || text;
+  const shownLines = laidOut ? countLines(laidOut) : lines;
   const view = make('div', 'code-file');
   const bar = make('div', 'csv-bar');
-  const wrapLabel = make('label', 'csv-option');
-  const wrapBox = make('input');
-  wrapBox.type = 'checkbox';
-  wrapBox.checked = codeWrap;
-  wrapLabel.append(wrapBox, document.createTextNode(' Wrap long lines'));
-  bar.append(wrapLabel);
-  if (ext === 'html' || ext === 'htm') bar.append(make('span', 'csv-info', 'The source of a web page — shown as text, never opened as a page'));
+  let wrapBox = null;
+  if (!previewing) {
+    const wrapLabel = make('label', 'csv-option');
+    wrapBox = make('input');
+    wrapBox.type = 'checkbox';
+    wrapBox.checked = codeWrap;
+    wrapLabel.append(wrapBox, document.createTextNode(minKind ? ' Wrap long lines and lay out (minified file)' : ' Wrap long lines'));
+    bar.append(wrapLabel);
+  }
+  if (htmlSource) {
+    const modes = make('div', 'json-modes');
+    modes.setAttribute('role', 'group');
+    modes.setAttribute('aria-label', 'HTML file view');
+    const sourceBtn = make('button', 'csv-btn' + (!previewing ? ' on' : ''), '</> Source');
+    sourceBtn.type = 'button';
+    sourceBtn.setAttribute('aria-pressed', String(!previewing));
+    const previewBtn = make('button', 'csv-btn' + (previewing ? ' on' : ''), '🌐 Preview');
+    previewBtn.type = 'button';
+    previewBtn.setAttribute('aria-pressed', String(previewing));
+    sourceBtn.addEventListener('click', () => { htmlPreviewPath = null; renderCodeDocument(t); if (specialStats) specialStats(); });
+    previewBtn.addEventListener('click', () => { htmlPreviewPath = currentPath; renderCodeDocument(t); if (specialStats) specialStats(); });
+    modes.append(sourceBtn, previewBtn);
+    bar.append(modes, make('span', 'csv-info', previewing
+      ? 'Sanitized preview — scripts, links and external resources are disabled'
+      : 'Source view — this file is shown as text by default'));
+  }
+  if (laidOut) bar.append(make('span', 'csv-info code-laid-out', 'Minified file laid out for reading: line breaks and indentation added here only — the file is unchanged'));
   const body = make('div', 'code-body' + (codeWrap ? ' wrap' : ''));
   const gutter = make('pre', 'code-gutter');
   gutter.setAttribute('aria-hidden', 'true');
   let numbers = '';
-  for (let i = 1; i <= Math.max(lines, 1); i++) numbers += i + '\n';
+  for (let i = 1; i <= Math.max(shownLines, 1); i++) numbers += i + '\n';
   gutter.textContent = numbers;
   const pre = make('pre', 'code-text');
   const code = make('code', 'hljs');
-  code.textContent = text;
-  if (lang && text.length <= CODE_RICH) {
+  code.textContent = shown;
+  if (lang && shown.length <= CODE_RICH) {
     // highlight.js turns the text into escaped HTML with only <span class="hljs-…"> around words.
-    try { code.innerHTML = hljs.highlight(text, { language: lang, ignoreIllegals: true }).value; } catch { code.textContent = text; }
+    try { code.innerHTML = hljs.highlight(shown, { language: lang, ignoreIllegals: true }).value; } catch { code.textContent = shown; }
   }
   pre.append(code);
   body.append(gutter, pre);
-  view.append(bar, body);
+  view.append(bar, previewing ? renderHtmlPreview() : body);
   output.replaceChildren(view);
-  if (text.length <= CODE_RICH) markHiddenChars(code);       // hidden and text-direction characters stay visible (Trojan Source)
-  wrapBox.addEventListener('change', () => { codeWrap = wrapBox.checked; body.classList.toggle('wrap', codeWrap); });
+  if (!previewing && shown.length <= CODE_RICH) markHiddenChars(code); // hidden and text-direction characters stay visible (Trojan Source)
+  if (wrapBox) wrapBox.addEventListener('change', () => {
+    codeWrap = wrapBox.checked;
+    if (minKind) { renderCodeDocument(t); if (specialStats) specialStats(); }    // laid out, or back to the file as it is
+    else body.classList.toggle('wrap', codeWrap);
+  });
   specialStats = () => {
-    const what = t.id === 'text' ? 'Text' : t.id === 'config' ? 'Config' : 'Code';
+    const what = t.id === 'html' ? 'HTML' : t.id === 'text' ? 'Text' : t.id === 'config' ? 'Config' : 'Code';
     statsLine([
       ['What this file holds', `${what}${lang ? ` (${LANG_NAMES[lang] || lang})` : ''}: ${plural(lines, 'line')} · ${fmt(text.length)} characters` +
-                               (text.length > CODE_RICH && lang ? ' · large file: shown without colours' : '')],
-      markupCodeNote() || ['How this file is shown', t.id === 'code' ? 'Shown as text only: nothing in it is run' : 'Shown as plain text: nothing in it can run, link or load anything']]);
+                               (minKind ? ' · minified' + (laidOut ? ` (laid out: ${plural(shownLines, 'line')})` : '') : '') +
+                               (shown.length > CODE_RICH && lang ? ' · large file: shown without colours' : '')],
+      previewing ? ['How this file is shown', 'Sanitized HTML preview: scripts, links and external resources are disabled']
+        : markupCodeNote() || ['How this file is shown', t.id === 'code' ? 'Shown as text only: nothing in it is run' : 'Shown as plain text: nothing in it can run, link or load anything']]);
   };
 }
 
@@ -2440,44 +2690,54 @@ function setHiddenTypes(set) {
 
 function buildToolbarTypeToggles() {
   const countsLabel = document.getElementById('folderTypeCounts');
+  const typeMenuWrap = document.getElementById('typeMenuWrap');
   const counts = new Map();
   for (const p of mdPaths) { const t = typeOf(p); if (t) counts.set(t.id, (counts.get(t.id) || 0) + 1); }
   const present = FILE_TYPES.filter(t => counts.get(t.id));
   const hidden = hiddenTypes();
+  const activeType = document.activeElement?.dataset.type;
+  const restoreFocus = !countsLabel.hidden && activeType;
   countsLabel.replaceChildren();
-  countsLabel.hidden = present.length === 0;
+  typeMenuWrap.hidden = present.length === 0;
   if (present.length) {
     const total = document.createElement('span');
     total.className = 'folder-total';
-    total.textContent = `${fmt(mdPaths.length)} files`;
+    total.textContent = `${fmt(mdPaths.length)} files · select types to show`;
     countsLabel.appendChild(total);
   }
-  const makeToggle = (t, count, className) => {
+  const makeOption = (t, count) => {
     const isShown = !hidden.has(t.id);
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = className;
-    btn.setAttribute('aria-pressed', String(isShown));
-    btn.setAttribute('aria-label', `${t.label}: ${fmt(count)} file${count === 1 ? '' : 's'}; ${isShown ? 'shown' : 'hidden'}. Toggle file type`);
-    btn.title = `${t.label} — ${fmt(count)} file${count === 1 ? '' : 's'}; click to ${isShown ? 'hide' : 'show'}`;
+    const label = document.createElement('label');
+    label.className = 'type-filter-option';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = isShown;
+    checkbox.dataset.type = t.id;
+    checkbox.setAttribute('aria-label', `${t.label}: ${fmt(count)} file${count === 1 ? '' : 's'}`);
+    checkbox.addEventListener('change', () => {
+      const h = hiddenTypes();
+      if (checkbox.checked) h.delete(t.id); else h.add(t.id);
+      setHiddenTypes(h);
+      buildList();
+      document.querySelector(`#folderTypeCounts input[data-type="${t.id}"]`)?.focus();
+    });
     const icon = document.createElement('span');
     icon.setAttribute('aria-hidden', 'true');
     icon.textContent = t.icon;
+    icon.className = 'type-icon';
+    const name = document.createElement('span');
+    name.textContent = t.label;
     const number = document.createElement('span');
     number.textContent = fmt(count);
-    btn.append(icon, number);
-    btn.addEventListener('click', () => {
-      const h = hiddenTypes();
-      if (h.has(t.id)) h.delete(t.id); else h.add(t.id);
-      setHiddenTypes(h);
-      buildList();
-    });
-    return btn;
+    number.className = 'type-count';
+    label.append(checkbox, icon, name, number);
+    return label;
   };
   for (const t of present) {
     const count = counts.get(t.id);
-    countsLabel.appendChild(makeToggle(t, count, 'btn secondary type-toggle'));
+    countsLabel.appendChild(makeOption(t, count));
   }
+  if (restoreFocus) countsLabel.querySelector(`input[data-type="${restoreFocus}"]`)?.focus();
 }
 
 function disableLink(a, reason) {
@@ -4108,7 +4368,8 @@ function cleanExport(what) {
   if (what === 'source') text = currentSource;
   else {
     output.classList.add('measuring');
-    text = output.innerText;
+    const code = ['code', 'html'].includes(typeOf(currentPath)?.id) ? output.querySelector('.code-text code') : null;
+    text = code ? code.innerText : output.innerText;
     output.classList.remove('measuring');
     text = text.replace(/\n{3,}/g, '\n\n').trim() + '\n';
     if (/\r\n/.test(currentSource)) text = text.replace(/\n/g, '\r\n');
@@ -4130,18 +4391,25 @@ async function copyClean(what) {
   if (!currentPath) return;
   const r = cleanExport(what);
   if (!await copyToClipboard(r.text)) { showToast('Copying failed — your browser blocked access to the clipboard.'); return; }
-  showToast(`Copied the ${what === 'source' ? 'Markdown source' : 'text as shown'} (${fmt(charCount(r.text))} characters). ${cleanSummary(r)}`);
+  const sourceLabel = isSpecialDoc(currentPath) ? 'source file' : 'Markdown source';
+  showToast(`Copied the ${what === 'source' ? sourceLabel : 'text as shown'} (${fmt(charCount(r.text))} characters). ${cleanSummary(r)}`);
 }
 
 // Saves as UTF-8 through Windows' Save As dialog where available, otherwise as a download.
 async function saveClean(what) {
   if (!currentPath) return;
   const r = cleanExport(what);
-  const base = currentPath.split('/').pop().replace(MD_RE, '');
-  const name = what === 'source' ? `${base}.clean.md` : `${base}.txt`;
-  const type = what === 'source' ? { description: 'Markdown', accept: { 'text/markdown': ['.md', '.markdown'] } }
-                                 : { description: 'Plain text', accept: { 'text/plain': ['.txt'] } };
-  const blob = new Blob([r.text], { type: what === 'source' ? 'text/markdown;charset=utf-8' : 'text/plain;charset=utf-8' });
+  const file = currentPath.split('/').pop();
+  const special = isSpecialDoc(currentPath);
+  const ext = extOf(file);
+  const base = special ? file.replace(/\.[^.]+$/, '') : file.replace(MD_RE, '');
+  const name = what === 'source' ? (special ? `${base}.clean.${ext}` : `${base}.clean.md`) : `${base}.txt`;
+  const type = what === 'source' && !special
+    ? { description: 'Markdown', accept: { 'text/markdown': ['.md', '.markdown'] } }
+    : what === 'source'
+      ? { description: `${FILE_TYPES.find(t => t.id === typeOf(currentPath)?.id)?.label || 'Text'} source`, accept: { 'text/plain': [`.${ext}`] } }
+      : { description: 'Plain text', accept: { 'text/plain': ['.txt'] } };
+  const blob = new Blob([r.text], { type: what === 'source' && !special ? 'text/markdown;charset=utf-8' : 'text/plain;charset=utf-8' });
   let savedAs = name;
   if (window.showSaveFilePicker) {
     let handle;
@@ -4171,6 +4439,16 @@ async function saveClean(what) {
 
 const copyBtn = document.getElementById('copyBtn');
 const copyMenu = document.getElementById('copyMenu');
+function updateExportMenuForCurrentFile() {
+  const special = isSpecialDoc(currentPath);
+  const sourceSave = copyMenu.querySelector('[data-action="save"][data-what="source"]');
+  const sourceCopy = copyMenu.querySelector('[data-action="copy"][data-what="source"]');
+  const ext = extOf(currentPath);
+  sourceSave.querySelector('b').textContent = special ? `💾 Save clean source file (.${ext})` : '💾 Save clean Markdown (.md)';
+  sourceSave.querySelector('span').textContent = special ? 'The current file, cleaned — choose where to save it' : 'The .md file, cleaned — choose where to save it';
+  sourceCopy.querySelector('b').textContent = special ? '📋 Copy clean source file' : '📋 Copy clean Markdown';
+  sourceCopy.querySelector('span').textContent = special ? 'The current file, cleaned' : 'To paste back into an editor';
+}
 function wireDropdown(button, menu, { onSelect } = {}) {
   const setOpen = open => {
     menu.hidden = !open;
@@ -4178,27 +4456,62 @@ function wireDropdown(button, menu, { onSelect } = {}) {
     if (!open) return;
     menu.classList.remove('align-left');
     if (menu.getBoundingClientRect().left < 8) menu.classList.add('align-left');
-    menu.querySelector('button:not(:disabled)')?.focus();
+    menu.querySelector('button:not(:disabled):not([hidden])')?.focus();
   };
   button.addEventListener('click', ev => { ev.stopPropagation(); setOpen(menu.hidden); });
   menu.addEventListener('click', ev => {
-    const item = ev.target.closest('[role="menuitem"]');
+    const item = ev.target.closest('[role^="menuitem"]');
     if (item && !item.disabled) { setOpen(false); onSelect?.(item); }
   });
   document.addEventListener('click', ev => { if (!menu.hidden && !ev.target.closest('.menu-wrap')) setOpen(false); });
   menu.addEventListener('keydown', ev => {
-    const items = [...menu.querySelectorAll('[role="menuitem"]:not(:disabled)')];
+    const items = [...menu.querySelectorAll('[role^="menuitem"]:not(:disabled):not([hidden])')];
     const i = items.indexOf(document.activeElement);
     if (ev.key === 'Escape') { setOpen(false); button.focus(); }
     else if (ev.key === 'ArrowDown') { ev.preventDefault(); items[(i + 1) % items.length]?.focus(); }
     else if (ev.key === 'ArrowUp') { ev.preventDefault(); items[(i - 1 + items.length) % items.length]?.focus(); }
   });
 }
+const typeMenuBtn = document.getElementById('typeMenuBtn');
+const typeMenu = document.getElementById('folderTypeCounts');
+function setTypeMenuOpen(open) {
+  typeMenu.hidden = !open;
+  typeMenuBtn.setAttribute('aria-expanded', String(open));
+  if (!open) return;
+  typeMenu.classList.remove('align-left');
+  if (typeMenu.getBoundingClientRect().left < 8) typeMenu.classList.add('align-left');
+  typeMenu.querySelector('input:not(:disabled)')?.focus();
+}
+typeMenuBtn.addEventListener('click', ev => { ev.stopPropagation(); setTypeMenuOpen(typeMenu.hidden); });
+document.addEventListener('click', ev => {
+  if (!typeMenu.hidden && !ev.target.closest('#typeMenuWrap')) setTypeMenuOpen(false);
+});
+document.addEventListener('keydown', ev => {
+  if (!typeMenu.hidden && ev.key === 'Escape') { setTypeMenuOpen(false); typeMenuBtn.focus(); }
+}, true);
 wireDropdown(document.getElementById('openMenuBtn'), document.getElementById('openMenu'), {
   onSelect: item => (item.dataset.open === 'folder' ? picker : filePicker).click()
 });
-wireDropdown(document.getElementById('documentMenuBtn'), document.getElementById('documentMenu'));
-wireDropdown(document.getElementById('settingsMenuBtn'), document.getElementById('settingsMenu'));
+const documentMenuBtn = document.getElementById('documentMenuBtn');
+const documentMenu = document.getElementById('documentMenu');
+const documentMenuGroup = document.getElementById('documentMenuGroup');
+function updateDocumentMenuAvailability() {
+  const items = [...documentMenu.querySelectorAll('[role^="menuitem"]')];
+  for (const item of items) item.hidden = item.disabled;
+  const available = items.some(item => !item.hidden);
+  documentMenuGroup.hidden = !available;
+  if (!available) {
+    documentMenu.hidden = true;
+    documentMenuBtn.setAttribute('aria-expanded', 'false');
+  }
+}
+wireDropdown(documentMenuBtn, documentMenu);
+wireDropdown(document.getElementById('themeBtn'), document.getElementById('themeMenu'), {
+  onSelect: item => {
+    applyTheme(item.dataset.theme, true);
+    if (currentPath) renderDiagrams(output);
+  }
+});
 function setCopyMenu(open) {
   copyMenu.hidden = !open;
   copyBtn.setAttribute('aria-expanded', String(open));
@@ -4685,7 +4998,9 @@ function setRootPref(name, value) {
 // ---------------------------------------------------------------- theme
 // Auto follows Windows; Light/Dark override it.
 const THEME_LABELS = { auto: '🖥\uFE0F Auto', light: '☀\uFE0F Light', dark: '🌙 Dark' };
+const THEME_NAMES = { auto: 'Auto', light: 'Light', dark: 'Dark' };
 const themeBtn = document.getElementById('themeBtn');
+const themeMenu = document.getElementById('themeMenu');
 const systemDark = matchMedia('(prefers-color-scheme: dark)');
 let theme = 'auto';
 const isDark = () => theme === 'dark' || (theme === 'auto' && systemDark.matches);
@@ -4698,16 +5013,13 @@ function applyTheme(next, save) {
     theme === 'auto' ? 'print, (prefers-color-scheme: light)' : theme === 'light' ? 'all' : 'print';
   document.getElementById('hljsDark').media =
     theme === 'auto' ? 'screen and (prefers-color-scheme: dark)' : theme === 'dark' ? 'screen' : 'not all';
-  themeBtn.textContent = THEME_LABELS[theme];
-  themeBtn.title = `Theme: ${theme === 'auto' ? 'follows Windows' : theme} (click to change)`;
+  themeBtn.textContent = `🎨 Theme: ${THEME_NAMES[theme]} ▾`;
+  themeBtn.title = `Color theme: ${theme === 'auto' ? 'follows Windows' : theme}; choose Auto, Light or Dark`;
+  for (const option of themeMenu.querySelectorAll('[data-theme]')) {
+    option.setAttribute('aria-checked', String(option.dataset.theme === theme));
+  }
   if (save) savePref('theme', theme);
 }
-
-themeBtn.addEventListener('click', () => {
-  const order = Object.keys(THEME_LABELS);
-  applyTheme(order[(order.indexOf(theme) + 1) % order.length], true);
-  if (currentPath) renderDiagrams(output);
-});
 systemDark.addEventListener('change', () => { if (theme === 'auto' && currentPath) renderDiagrams(output); });
 applyTheme(loadPref('theme'), false);
 
@@ -4752,6 +5064,7 @@ function buildToc() {
   toc.hidden = !useful;
   tocBtn.disabled = !useful;
   updateTocButton();
+  updateDocumentMenuAvailability();
   if (!useful) return;
 
   const top = Math.min(...headings.map(h => +h.tagName[1]));
@@ -4793,11 +5106,16 @@ content.addEventListener('scroll', () => {
   if (!tocFrame) tocFrame = requestAnimationFrame(() => { tocFrame = 0; updateTocActive(); });
 });
 
+function setDocumentMenuToggle(button, on) {
+  button.setAttribute('aria-pressed', String(on));
+  button.classList.toggle('on', on);
+}
+
 function updateTocButton() {
   const open = !('imgsOpen' in document.documentElement.dataset) && !('linksOpen' in document.documentElement.dataset) &&
     !('srcOpen' in document.documentElement.dataset) &&
     (narrowScreen.matches ? 'tocOpen' in document.documentElement.dataset : loadPrefLive('toc') === 'shown');
-  tocBtn.classList.toggle('on', open && !tocBtn.disabled);
+  setDocumentMenuToggle(tocBtn, open && !tocBtn.disabled);
 }
 
 function toggleToc() {
@@ -4973,6 +5291,7 @@ function buildImageList() {
   imgList.replaceChildren();
   imgEntries = [];
   imgBtn.disabled = !imgs.length;
+  updateDocumentMenuAvailability();
   imgBtn.textContent = imgs.length ? `🖼️ Images (${fmt(imgs.length)})` : '🖼️ Images';
   document.getElementById('imgTitle').textContent = `Images (${fmt(imgs.length)})`;
   if (!imgs.length) closeImages();
@@ -5049,7 +5368,7 @@ content.addEventListener('scroll', () => {
 });
 
 function updateImgButton() {
-  imgBtn.classList.toggle('on', 'imgsOpen' in document.documentElement.dataset && !imgBtn.disabled);
+  setDocumentMenuToggle(imgBtn, 'imgsOpen' in document.documentElement.dataset && !imgBtn.disabled);
 }
 
 function closeImages() {
@@ -5109,6 +5428,7 @@ function buildLinkList() {
   linkList.replaceChildren();
   linkEntries = [];
   linkBtn.disabled = !links.length;
+  updateDocumentMenuAvailability();
   linkBtn.textContent = links.length ? `🔗 Links (${fmt(links.length)})` : '🔗 Links';
   const flagged = links.filter(a => linkFlags(a.dataset.origHref || a.getAttribute('href')).length).length;
   document.getElementById('linkTitle').textContent = `Links (${fmt(links.length)})` + (flagged ? ` · ⚠ ${fmt(flagged)} flagged` : '');
@@ -5221,7 +5541,7 @@ content.addEventListener('scroll', () => {
 });
 
 function updateLinkButton() {
-  linkBtn.classList.toggle('on', 'linksOpen' in document.documentElement.dataset && !linkBtn.disabled);
+  setDocumentMenuToggle(linkBtn, 'linksOpen' in document.documentElement.dataset && !linkBtn.disabled);
 }
 
 function closeLinks() {
@@ -5463,9 +5783,10 @@ function stepCompare(dir) {
 function openCompare() {
   if (!currentPath) return;
   document.getElementById('cmpThis').textContent = fileName(currentPath) + (isEdited() ? ' (with unsaved replacements)' : '');
+  cmpFile.accept = FILE_TYPES.filter(t => t.id !== 'xlsx').flatMap(t => t.exts.map(ext => '.' + ext)).join(',');
   cmpOther.replaceChildren(new Option('Choose the other version…', ''));
   for (const p of mdPaths) {
-    if (key(p) === key(currentPath)) continue;
+    if (key(p) === key(currentPath) || !typeOf(p) || typeOf(p).id === 'xlsx') continue;
     cmpOther.append(new Option(listBase && key(p).startsWith(key(listBase)) ? p.slice(listBase.length) : p, p));
   }
   cmpOther.value = '';
@@ -5474,7 +5795,7 @@ function openCompare() {
   document.getElementById('cmpPos').textContent = '';
   cmpBody.replaceChildren();
   cmpSummary.className = 'cmp-summary';
-  cmpSummary.textContent = 'Pick the other version: a Markdown file from this folder, or “Other file…” for one anywhere on your PC.';
+  cmpSummary.textContent = 'Pick another text file from this folder, or “Other file…” for one anywhere on your PC.';
   cmpDlg.showModal();
 }
 
@@ -5573,7 +5894,7 @@ function showSourceLine(n) {
 }
 
 function updateSrcButton() {
-  srcBtn.classList.toggle('on', srcIsOpen() && !srcBtn.disabled);
+  setDocumentMenuToggle(srcBtn, srcIsOpen() && !srcBtn.disabled);
 }
 function closeSource() {
   delete document.documentElement.dataset.srcOpen;
@@ -6195,13 +6516,13 @@ async function walk(entry, prefix, out) {
 // Every library is bundled with the app (lib folder; marked next to the page). Versions are the bundled
 // copies' versions; the "running" version is read from the library itself where it reports one.
 const LIBRARIES = [
-  { name: 'marked', version: '18.1.0', use: 'Markdown → HTML', match: /marked/i,
+  { name: 'marked', version: '18.1.1', use: 'Markdown → HTML', match: /marked/i,
     loaded: () => typeof window.marked?.Marked === 'function' },
   { name: 'KaTeX', version: '0.19.0', use: 'Math equations', match: /katex/i,
     loaded: () => typeof window.katex?.renderToString === 'function', actual: () => window.katex?.version },
   { name: 'highlight.js', version: '11.12.0', use: 'Code colouring', match: /highlight/i,
     loaded: () => typeof window.hljs?.highlightElement === 'function', actual: () => window.hljs?.versionString },
-  { name: 'Mermaid', version: '12.1.0', use: 'Diagrams (```mermaid)', match: /mermaid/i,
+  { name: 'Mermaid', version: '12.2.0', use: 'Diagrams (```mermaid)', match: /mermaid/i,
     loaded: () => typeof window.mermaid?.render === 'function' }
 ];
 
