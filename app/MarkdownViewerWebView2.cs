@@ -1823,7 +1823,7 @@ static class Program
         { "hiddenchars", new[] { "off", "on" } },
         { "pictures", new[] { "shown", "blocked" } },
         { "size", new[] { "normal", "small", "large", "larger", "largest" } },
-        { "width", new[] { "normal", "wide", "full" } },
+        { "width", new[] { "full", "normal", "wide" } },
         { "types", new[] { "all" }.Concat(Enumerable.Range(1, 511).Select(i => "t" + i)).ToArray() }
     };
     static readonly object prefLock = new object();

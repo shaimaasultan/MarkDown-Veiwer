@@ -81,6 +81,19 @@
     }
     .btn.secondary { background: transparent; color: var(--fg); border: 1px solid var(--border); }
     input[type=file] { display: none; }
+    .toolbar-group { display: flex; flex: 0 1 auto; align-items: center; gap: .45rem; flex-wrap: wrap; max-width: 100%; padding: .1rem .65rem; border-inline-end: 1px solid var(--border); }
+    .toolbar-group:last-child { border-inline-end: 0; }
+    .toolbar-nav { flex: 1 1 26rem; flex-wrap: nowrap; padding-inline-start: 0; }
+    .toolbar-nav h1 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .toolbar-view { border-inline-end: 0; }
+    .folder-type-counts { flex: 1 1 18rem; min-width: 12rem; max-width: 30rem; color: var(--muted); font-size: .76rem; line-height: 1.4; }
+    .folder-type-counts[hidden] { display: none; }
+    .type-filter-group { margin: 0 .75rem .5rem; padding: .5rem; border: 1px solid var(--border); border-radius: 8px; }
+    #typeFilterGroup[hidden] { display: none; }
+    .type-filter-title { margin: 0 0 .4rem .1rem; color: var(--muted); font-size: .7rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
+    #typeToggles { display: flex; align-items: center; gap: .3rem; flex-wrap: wrap; }
+    .btn.icon.type-toggle { min-width: 2.35rem; width: 2.35rem; height: 2.35rem; padding: .25rem; font-size: .95rem; }
+    .type-toggle[aria-pressed="false"] { opacity: .48; }
 
     main { flex: 1; display: flex; min-height: 0; }
     aside {
@@ -225,7 +238,7 @@
     body.dragging #drop, body.dragging #content { outline: 3px dashed var(--accent); outline-offset: -8px; }
 
     /* ---- Rendered markdown (GitHub-like) ---- */
-    .markdown-body { max-width: 980px; margin: 0 auto; padding: 1rem 2rem 3rem; line-height: 1.6; font-size: 16px; }
+    .markdown-body { max-width: none; margin: 0 auto; padding: 1rem 2rem 3rem; line-height: 1.6; font-size: 16px; }
     /* A document cannot draw outside its own area (e.g. a fixed box over the toolbar or a fake badge). */
     .markdown-body { contain: layout paint; }
     .markdown-body h1, .markdown-body h2 { border-bottom: 1px solid var(--border); padding-bottom: .3em; }
@@ -497,8 +510,8 @@
       :root[data-size="large"] .markdown-body { font-size: 18px; }
       :root[data-size="larger"] .markdown-body { font-size: 20px; }
       :root[data-size="largest"] .markdown-body { font-size: 23px; }
+      :root[data-width="normal"] .markdown-body { max-width: 980px; }
       :root[data-width="wide"] .markdown-body { max-width: 1320px; }
-      :root[data-width="full"] .markdown-body { max-width: none; }
     }
 
     /* ---- Footnotes ---- */
@@ -581,7 +594,7 @@
     @media print { .json-bar { display: none !important; } .markdown-body pre.json-text, .json-tree { max-height: none; overflow: visible; } }
     /* ---- Code, text and config files ---- */
     .code-file { display: flex; flex-direction: column; gap: .6rem; }
-    .code-body { display: flex; align-items: flex-start; border: 1px solid var(--border); border-radius: 6px; overflow: auto; max-height: max(22rem, calc(100vh - 15rem)); }
+    .code-body { display: flex; align-items: flex-start; border: 1px solid var(--border); border-radius: 6px; overflow-x: auto; overflow-y: hidden; }
     .markdown-body .code-body pre { margin: 0; padding: .75rem .9rem; border-radius: 0; background: transparent; overflow: visible; font-size: .85em; line-height: 1.5; }
     .markdown-body .code-body pre.code-gutter { position: sticky; left: 0; z-index: 1; padding-inline: .6rem; text-align: right; color: var(--muted); background: var(--panel, var(--bg)); border-inline-end: 1px solid var(--border); user-select: none; }
     .markdown-body .code-body pre.code-text { flex: 1; min-width: 0; }
@@ -610,8 +623,6 @@
     .markdown-body pre.nb-error, .markdown-body pre.nb-stderr { color: #d1242f; }
     .nb-outputs img { max-width: 100%; align-self: flex-start; }      /* its own size, not stretched to the column */
     /* ---- The file list's types ---- */
-    .type-filter { margin: 0 .75rem .5rem; }
-    .type-filter .csv-cols-panel { width: 16rem; }
     #fileList .type-icon { display: inline-block; width: 1.6em; text-align: center; color: var(--muted); font-size: .8em; }
     .csv-col-choice .type-icon { width: 1.6em; text-align: center; color: var(--muted); }
     /* ---- Compare two versions ---- */
@@ -771,43 +782,52 @@
 </head>
 <body>
   <header>
-    <button id="sidebarBtn" class="btn secondary icon" disabled title="Show/hide the file list (Ctrl+B)" aria-label="Show or hide the file list">☰</button>
-    <button id="backBtn" class="btn secondary icon" disabled title="Back (Alt+←)" aria-label="Back">←</button>
-    <button id="fwdBtn" class="btn secondary icon" disabled title="Forward (Alt+→)" aria-label="Forward">→</button>
-    <h1>📁 Markdown Folder Viewer</h1>
-    <label for="picker" class="btn">📁 Choose Folder</label>
-    <input type="file" id="picker" webkitdirectory directory multiple />
-    <label for="filePicker" class="btn secondary">📄 Open Files</label>
-    <input type="file" id="filePicker" multiple />
-    <button id="pdfBtn" class="btn secondary" disabled title="Open a markdown file first">🖨️ Save as PDF</button>
-    <button id="findBtn" class="btn secondary" disabled title="Find in document (Ctrl+F)">🔎 Find</button>
-    <button id="tocBtn" class="btn secondary" disabled title="Show/hide the table of contents (Ctrl+Shift+O)">📑 Contents</button>
-    <button id="imgBtn" class="btn secondary" disabled title="Show/hide the list of pictures in this document (Ctrl+Shift+G)">🖼️ Images</button>
-    <button id="linkBtn" class="btn secondary" disabled title="Show/hide the list of links in this document (Ctrl+Shift+L)">🔗 Links</button>
-    <button id="srcBtn" class="btn secondary" disabled title="Show the Markdown source next to the document (Ctrl+Shift+U)">&lt;/&gt; Source</button>
-    <button id="cmpBtn" class="btn secondary" disabled title="Compare this document with another version">⇄ Compare</button>
-    <div class="menu-wrap">
-      <button id="copyBtn" class="btn secondary" disabled aria-haspopup="menu" aria-expanded="false"
-              title="Save or copy the document without hidden characters">💾 Export ▾</button>
-      <div id="copyMenu" class="menu" role="menu" hidden>
-        <div class="menu-label">Without hidden characters</div>
-        <button role="menuitem" data-action="save" data-what="source"><b>💾 Save clean Markdown (.md)</b><span>The .md file, cleaned — choose where to save it</span></button>
-        <button role="menuitem" data-action="save" data-what="text"><b>💾 Save clean text (.txt)</b><span>The readable text, without Markdown symbols</span></button>
-        <hr>
-        <button role="menuitem" data-action="copy" data-what="source"><b>📋 Copy clean Markdown</b><span>To paste back into an editor</span></button>
-        <button role="menuitem" data-action="copy" data-what="text"><b>📋 Copy clean text</b><span>To paste into an email or document</span></button>
-        <hr>
-        <div class="menu-label">As shown</div>
-        <button role="menuitem" data-action="html"><b>🌐 Save as web page (.html)</b><span>One self-contained file with pictures, math and diagrams — no scripts</span></button>
+    <div class="toolbar-group toolbar-nav" role="group" aria-label="Navigation">
+      <button id="sidebarBtn" class="btn secondary icon" disabled title="Show/hide the file list (Ctrl+B)" aria-label="Show or hide the file list">☰</button>
+      <button id="backBtn" class="btn secondary icon" disabled title="Back (Alt+←)" aria-label="Back">←</button>
+      <button id="fwdBtn" class="btn secondary icon" disabled title="Forward (Alt+→)" aria-label="Forward">→</button>
+      <h1>📁 Markdown Folder Viewer</h1>
+    </div>
+    <div class="toolbar-group toolbar-files" role="group" aria-label="Open and find files">
+      <label for="picker" class="btn">📁 Choose Folder</label>
+      <input type="file" id="picker" webkitdirectory directory multiple />
+      <label for="filePicker" class="btn secondary">📄 Open Files</label>
+      <input type="file" id="filePicker" multiple />
+      <button id="pdfBtn" class="btn secondary" disabled title="Open a markdown file first">🖨️ Save as PDF</button>
+      <button id="findBtn" class="btn secondary" disabled title="Find in document (Ctrl+F)">🔎 Find</button>
+      <span id="folderTypeCounts" class="folder-type-counts" role="status" aria-live="polite" hidden></span>
+    </div>
+    <div class="toolbar-group toolbar-document" role="group" aria-label="Document tools">
+      <button id="tocBtn" class="btn secondary" disabled title="Show/hide the table of contents (Ctrl+Shift+O)">📑 Contents</button>
+      <button id="imgBtn" class="btn secondary" disabled title="Show/hide the list of pictures in this document (Ctrl+Shift+G)">🖼️ Images</button>
+      <button id="linkBtn" class="btn secondary" disabled title="Show/hide the list of links in this document (Ctrl+Shift+L)">🔗 Links</button>
+      <button id="srcBtn" class="btn secondary" disabled title="Show the Markdown source next to the document (Ctrl+Shift+U)">&lt;/&gt; Source</button>
+      <button id="cmpBtn" class="btn secondary" disabled title="Compare this document with another version">⇄ Compare</button>
+      <div class="menu-wrap">
+        <button id="copyBtn" class="btn secondary" disabled aria-haspopup="menu" aria-expanded="false"
+                title="Save or copy the document without hidden characters">💾 Export ▾</button>
+        <div id="copyMenu" class="menu" role="menu" hidden>
+          <div class="menu-label">Without hidden characters</div>
+          <button role="menuitem" data-action="save" data-what="source"><b>💾 Save clean Markdown (.md)</b><span>The .md file, cleaned — choose where to save it</span></button>
+          <button role="menuitem" data-action="save" data-what="text"><b>💾 Save clean text (.txt)</b><span>The readable text, without Markdown symbols</span></button>
+          <hr>
+          <button role="menuitem" data-action="copy" data-what="source"><b>📋 Copy clean Markdown</b><span>To paste back into an editor</span></button>
+          <button role="menuitem" data-action="copy" data-what="text"><b>📋 Copy clean text</b><span>To paste into an email or document</span></button>
+          <hr>
+          <div class="menu-label">As shown</div>
+          <button role="menuitem" data-action="html"><b>🌐 Save as web page (.html)</b><span>One self-contained file with pictures, math and diagrams — no scripts</span></button>
+        </div>
       </div>
     </div>
-    <button id="hiddenBtn" class="btn secondary" title="Show invisible characters in the document (Ctrl+Shift+H)">¶ Hidden</button>
-    <button id="picBtn" class="btn secondary" aria-pressed="true">🖼️ Pictures on</button>
-    <button id="sizeDown" class="btn secondary icon" aria-label="Smaller text">A−</button>
-    <button id="sizeUp" class="btn secondary icon" aria-label="Larger text">A+</button>
-    <button id="widthBtn" class="btn secondary icon">↔</button>
-    <button id="themeBtn" class="btn secondary" title="Theme: follow Windows, light or dark">🖥️ Auto</button>
-    <button id="aboutBtn" class="btn secondary" title="Versions and sources of the libraries used">ℹ️ About</button>
+    <div class="toolbar-group toolbar-view" role="group" aria-label="View settings">
+      <button id="hiddenBtn" class="btn secondary" title="Show invisible characters in the document (Ctrl+Shift+H)">¶ Hidden</button>
+      <button id="picBtn" class="btn secondary" aria-pressed="true">🖼️ Pictures on</button>
+      <button id="sizeDown" class="btn secondary icon" aria-label="Smaller text">A−</button>
+      <button id="sizeUp" class="btn secondary icon" aria-label="Larger text">A+</button>
+      <button id="widthBtn" class="btn secondary icon">↔</button>
+      <button id="themeBtn" class="btn secondary" title="Theme: follow Windows, light or dark">🖥️ Auto</button>
+      <button id="aboutBtn" class="btn secondary" title="Versions and sources of the libraries used">ℹ️ About</button>
+    </div>
   </header>
 
   <div id="standaloneNote" role="note" hidden>
@@ -928,6 +948,10 @@
   <main>
     <aside id="sidebar" hidden>
       <input id="filter" type="search" placeholder="Filter files…" />
+      <div id="typeFilterGroup" class="type-filter-group" hidden>
+        <div class="type-filter-title">File types</div>
+        <div id="typeToggles" role="group" aria-label="Filter file list by type"></div>
+      </div>
       <ul id="fileList"></ul>
     </aside>
     <section id="content">

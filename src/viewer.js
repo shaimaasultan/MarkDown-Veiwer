@@ -364,7 +364,7 @@ const isReadme = p => /(^|\/)readme\.[^/]+$/i.test(p) ? 1 : 0;
 function buildList() {
   const q = filter.value.trim().toLowerCase();
   const hidden = hiddenTypes();
-  buildTypeFilter();
+  buildTypeToggles();
   fileList.innerHTML = '';
   for (const p of mdPaths) {
     const shown = listBase && key(p).startsWith(key(listBase)) ? p.slice(listBase.length) : p;
@@ -2424,7 +2424,7 @@ function renderNotebookDocument() {
     ['How this file is shown', 'Code is shown, never run; Markdown and HTML outputs are cleaned like documents']]);
 }
 
-// ---- the file list's type filter (☰ Types), remembered
+// ---- file type toggles in the top toolbar, remembered
 const TYPE_PREF_VALUES = ['all', ...Array.from({ length: (1 << FILE_TYPES.length) - 1 }, (_, i) => 't' + (i + 1))];
 function hiddenTypes() {
   const v = loadPref('types');
@@ -2438,58 +2438,39 @@ function setHiddenTypes(set) {
   savePref('types', v);
 }
 
-function buildTypeFilter() {
-  const make = csvMake;
-  let wrap = document.getElementById('typeFilter');
-  if (!wrap) {
-    wrap = make('div', 'csv-cols type-filter');
-    wrap.id = 'typeFilter';
-    filter.insertAdjacentElement('afterend', wrap);
-  }
+function buildTypeToggles() {
+  const group = document.getElementById('typeFilterGroup');
+  const wrap = document.getElementById('typeToggles');
+  const countsLabel = document.getElementById('folderTypeCounts');
   const counts = new Map();
   for (const p of mdPaths) { const t = typeOf(p); if (t) counts.set(t.id, (counts.get(t.id) || 0) + 1); }
   const present = FILE_TYPES.filter(t => counts.get(t.id));
   const hidden = hiddenTypes();
-  const wasOpen = wrap.querySelector('.csv-cols-panel') && !wrap.querySelector('.csv-cols-panel').hidden;
   wrap.replaceChildren();
-  wrap.hidden = present.length < 2;
-  const btn = make('button', 'csv-btn csv-cols-btn', `☰ Types: ${present.filter(t => !hidden.has(t.id)).length} of ${present.length}`);
-  btn.type = 'button';
-  btn.title = 'Choose which kinds of files the list shows';
-  const panel = make('div', 'csv-cols-panel');
-  panel.hidden = !wasOpen;
-  const tools = make('div', 'csv-cols-tools');
-  const all = make('button', 'csv-btn', 'Show all');
-  all.type = 'button';
-  const none = make('button', 'csv-btn', 'Hide all');
-  none.type = 'button';
-  tools.append(all, none);
-  const list = make('div', 'csv-cols-list');
+  group.hidden = present.length === 0;
+  countsLabel.hidden = present.length === 0;
+  countsLabel.textContent = present.length
+    ? `Folder list: ${fmt(mdPaths.length)} files · ${present.map(t => `${t.label} ${fmt(counts.get(t.id))}`).join(' · ')}`
+    : '';
+  countsLabel.title = present.map(t => `${t.label}: ${fmt(counts.get(t.id))}`).join('\n');
   for (const t of present) {
-    const label = make('label', 'csv-col-choice');
-    const box = make('input');
-    box.type = 'checkbox';
-    box.checked = !hidden.has(t.id);
-    box.addEventListener('change', () => {
+    const isShown = !hidden.has(t.id);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn secondary icon type-toggle';
+    btn.textContent = t.icon;
+    btn.setAttribute('aria-pressed', String(isShown));
+    btn.setAttribute('aria-label', `${t.label} (${fmt(counts.get(t.id))} files)`);
+    btn.title = `${t.label} — ${fmt(counts.get(t.id))} file${counts.get(t.id) === 1 ? '' : 's'}; click to ${isShown ? 'hide' : 'show'}`;
+    btn.addEventListener('click', () => {
       const h = hiddenTypes();
-      if (box.checked) h.delete(t.id); else h.add(t.id);
+      if (h.has(t.id)) h.delete(t.id); else h.add(t.id);
       setHiddenTypes(h);
       buildList();
     });
-    label.append(box, make('span', 'type-icon', t.icon), make('span', '', `${t.label} (${fmt(counts.get(t.id))})`));
-    list.append(label);
+    wrap.appendChild(btn);
   }
-  all.addEventListener('click', () => { setHiddenTypes(new Set()); buildList(); });
-  none.addEventListener('click', () => { setHiddenTypes(new Set(present.map(t => t.id))); buildList(); });
-  panel.append(tools, list);
-  wrap.append(btn, panel);
-  btn.addEventListener('click', () => { panel.hidden = !panel.hidden; });
 }
-document.addEventListener('click', ev => {
-  const w = document.getElementById('typeFilter');
-  const p = w && w.querySelector('.csv-cols-panel');
-  if (p && !p.hidden && !w.contains(ev.target)) p.hidden = true;
-});
 
 function disableLink(a, reason) {
   a.removeAttribute('href');
@@ -4642,7 +4623,7 @@ async function renderDiagrams(root, forceTheme) {
 // Remembered view settings. The app stores them itself (in its settings file) and puts them on
 // <html data-…> before the page is shown; the standalone page uses localStorage. The first value is the default.
 const PREFS = { theme: ['auto', 'light', 'dark'], sidebar: ['shown', 'hidden'], toc: ['shown', 'hidden'], hiddenchars: ['off', 'on'],
-                pictures: ['shown', 'blocked'], size: ['normal', 'small', 'large', 'larger', 'largest'], width: ['normal', 'wide', 'full'],
+                pictures: ['shown', 'blocked'], size: ['normal', 'small', 'large', 'larger', 'largest'], width: ['full', 'normal', 'wide'],
                 types: TYPE_PREF_VALUES };
 
 function loadPref(name) {
@@ -4838,7 +4819,7 @@ picBtn.addEventListener('click', togglePictures);
 // Both are remembered. (Printing and PDF keep their own size.)
 const SIZE_STEPS = ['small', 'normal', 'large', 'larger', 'largest'];
 const SIZE_NAMES = { small: 'Small', normal: 'Normal', large: 'Large', larger: 'Larger', largest: 'Largest' };
-const WIDTH_STEPS = ['normal', 'wide', 'full'];
+const WIDTH_STEPS = ['full', 'normal', 'wide'];
 const WIDTH_NAMES = { normal: 'Normal', wide: 'Wide', full: 'Full window' };
 const sizeDown = document.getElementById('sizeDown');
 const sizeUp = document.getElementById('sizeUp');
