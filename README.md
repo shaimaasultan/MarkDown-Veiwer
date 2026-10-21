@@ -23,7 +23,7 @@ code, config files and logs the same way: as data and text, never run.
 - **Breakdown** that reconciles the source file with what is shown, and a **Characters** inspector (encoding, escapes, zero-width and hidden characters, leftover placeholders)
 - **Safety check**: a ✓ Safe / ⚠ / ✗ Unsafe badge for every document, with a report of tricks aimed at you, at AI assistants or at other apps. It looks for scripts and active content, links whose text shows another address, look-alike addresses and letters, links to programs, network-share links, tracking pixels, hidden text and copy-paste traps, hidden instructions for AI tools, commands that download and run code, and Trojan Source text-direction tricks
 - **Toolbar menus**: Open groups **Open Folder** and **Open Files**; Export groups clean source/text copy and save, Save as web page, and Save as PDF. Find sits beside **¶ Hidden**. **🎨 Theme** lets you choose Auto, Light or Dark, and **About** is a separate button.
-- **Find in folder**: toggle **🔎 Search folder** in Find to search the opened folder's supported text files (case and whole-word options, literal query). When the search completes, **🔎 Search results** is selected in the sidebar and shows only matching files. Result details stay collapsed until **⌄ Search details** is opened; each result includes a matching line and excerpt, and clicking it opens the file. Turn on **≈ Similar** for approximate paragraph matching, ranked with a similarity percentage (minimum 60%; queries need at least four distinct words). Excel workbooks and files over 2 MB are skipped.
+- **Find in folder**: toggle **🔎 Search folder** in Find to search the opened folder's supported text files (literal queries up to 10,000 characters, with case and whole-word options). When the search completes, **🔎 Search results** is selected in the sidebar and shows only matching files. Result details stay collapsed until **⌄ Search details** is opened; each result includes a matching line and excerpt. Clicking a result opens the file and restores its match highlight; **≈ Similar** searches also highlight the closest passage when there is no literal match. Turn on **≈ Similar** for approximate paragraph matching, ranked with a similarity percentage (minimum 60%; queries need at least four distinct words). Excel workbooks and files over 2 MB are skipped.
 - **¶ Hidden** highlighting, **Find & Replace** (current Markdown file), **Export** (save or copy without hidden characters), **Save as PDF**
 - **Auto-reload**: when another program saves the open file, the new version is shown at the same place (unsaved replacements are never thrown away)
 - **Back / Forward** (← → buttons, Alt+← / Alt+→, mouse side buttons) between documents reached through links or the file list
@@ -41,7 +41,7 @@ code, config files and logs the same way: as data and text, never run.
 - **CSV and TSV tables**: a `.csv` or `.tsv` file (opened with right-click › Open with › Choose another app, from a link in a document, from the file list or by dropping it) is shown as a table: click a column to sort it (numbers as numbers), filter all columns at once (hidden ones too: a hidden column where the text is found is shown again) or each column on its own (text anywhere in the cell, or `>100`, `<=5`, `=Toronto`, `!=0`…), choose which columns to show (☰ Columns: tick or untick each, find a column by name, Show all / Hide all; the count shows how many of all columns are shown), and copy or save the rows the filters keep - only the shown columns - in the shown order. The separator (comma, semicolon, tab, `|`) is detected; quoted cells may hold commas and line breaks. Every cell is plain text - nothing in a table can become a link, a picture or code. Large files stay quick: 500 rows are drawn at a time.
 - **JSON files**: `.json`, and `.jsonl` / `.ndjson` (one JSON value per line), open the same ways as tables and can be shown three ways: **{ } Text** - indented and coloured with line numbers, re-indented from the file's own characters so every number and string stays exactly as written (a 20-digit id is not rounded); **🌳 Tree** - objects and arrays you open and close, with item counts, Expand all / Collapse all, 500 items drawn at a time; **▦ Table** - one of its arrays (chosen from a list such as `$.items (120 items)`, or the top object's keys and values), each element a row and nested fields as columns like `stock.store`, with the same sorting, filters, ☰ Columns, Copy and Save CSV as CSV files. Text that is not valid JSON is shown as it is, with the line and column where it breaks. Every key and value is plain text - nothing in a JSON file can become a link, a picture or code.
 - **Source code, config, text and logs**: `.ps1`, `.py`, `.js`, `.ts`, `.cs`, `.java`, `.sql`, `.sh`, `.bat`/`.cmd`, `.c`/`.cpp`, `.go`, `.rs`, `.css` and more, `.yaml`, `.toml`, `.ini`, `.env`…, `.txt`, `.log`: coloured (highlight.js, plus the viewer's own grammars for PowerShell and batch files: cmdlets, `$variables`, `[types]`, `%variables%`, labels, strings and comments each in their colour, and parameters - PowerShell `-Path`, batch `/s` - in a teal of their own) with line numbers beside each line and **Wrap long lines**; shown as text, never run. Hidden and text-direction characters are marked, so "Trojan Source" tricks stay visible.
-- **HTML files** (`.html`, `.htm`): separate **Source** and **Preview** modes. Source shows the file with line numbers. Preview renders a sanitized page in a sandbox; embedded styles and relative local `.css` files can style it, along with eligible local pictures. Scripts cannot run: the frame has no script permission and `script-src 'none'`; CSS imports, CSS resource URLs, forms, links, and external requests are removed or blocked. Script files and external linked resources are never loaded.
+- **HTML files** (`.html`, `.htm`): separate **</> Source** and **🌐 Preview** buttons switch between the source and preview. Source shows the file with line numbers. Preview renders a sanitized page in a sandbox; embedded styles and relative local `.css` files can style it, along with eligible local pictures. Scripts cannot run: the frame has no script permission and `script-src 'none'`; CSS imports, CSS resource URLs, forms, links, and external requests are removed or blocked. Script files and external linked resources are never loaded.
 - **XML**: `.xml`, `.xsd`, `.xslt`, `.config`, `.csproj`, `.resx`…: **Text** (coloured), **Tree** (elements with attributes and child counts, opened and closed) and **Table** (repeated elements such as `/catalog/book` as rows: attributes as `@name`, child text as columns), with the same table tools as CSV. Read with the browser's XML parser, without the file's DOCTYPE: entities (`&name;`) are shown as written, never expanded, and nothing in the file is loaded or run. XML that other programs would act on - external entities (XXE), an external DTD, an entity bomb, XInclude, XSLT - is flagged red ("⚠ Unsafe XML", a popup and a "✗ Unsafe" safety report); XML and HTML files have the safety report button like documents. Comments are checked for what they hide: code in a comment, a comment that a browser ends earlier than XML does, conditional comments (`<!--[if IE]>`) and harmful commands are flagged. An XML or HTML file holding code (script elements, `on…` handlers, `javascript:` links) gets the same ⚠ warning as a document. XML remains data; HTML source shows the code as text, and its optional Preview removes active elements and never runs document scripts.
 - **Excel workbooks** (`.xlsx`): pick a sheet and it is shown with the CSV table tools (sort, filters, ☰ Columns, Copy, Save CSV). Values as last saved by Excel, dates as dates; formulas and macros are never run. The file is unpacked by the browser itself with size limits (a "zip bomb" stops at the limit).
 - **Jupyter notebooks** (`.ipynb`): Markdown cells rendered like documents (cleaned the same way), code cells coloured with their `In [n]` number, outputs as text, pictures and cleaned HTML tables, with **Show outputs** on or off. Code is shown, never run; code in Markdown cells or HTML outputs is removed and reported like in documents.
@@ -60,7 +60,7 @@ Every point below, with where it is implemented and how it was tested, is listed
 
 - **Preview only.** Scripts, event handlers, `javascript:` links, frames, forms and plugins in rendered documents are removed before display and also blocked by the window's Content-Security-Policy. Supported text files are shown as text; HTML has an optional sanitized preview in a sandboxed frame with no script permission and `script-src 'none'`. CSS is parsed as styling data; imports and resource URLs are discarded, and external requests are blocked. No document code is executed.
 - **No network port.** The page lives at a private address (`https://mdviewer.example`) that exists only inside the app window; every request is answered by the program itself.
-- **Never goes online.** All libraries are bundled (`src\lib\`) and packed into the signed Content DLL. The WebView2 engine is started so that it cannot look up any internet address, without background networking, component updates, pings, SmartScreen checks or Microsoft-account sign-in. Pictures a document links to on the web are shown as *not loaded*. (Only the optional `Check-Updates.cmd`, when you run it, asks two fixed sites for version numbers - see [Checking for updates](#checking-for-updates).)
+- **Never goes online.** All libraries are bundled (`app\source\lib\`) and packed into the signed Content DLL. The WebView2 engine is started so that it cannot look up any internet address, without background networking, component updates, pings, SmartScreen checks or Microsoft-account sign-in. Pictures a document links to on the web are shown as *not loaded*. (Only the optional `Check-Updates.cmd`, when you run it, asks two fixed sites for version numbers - see [Checking for updates](#checking-for-updates).)
 - **Links ask first.** Web and mail links open outside the app only after a question that shows the real address.
 - **Private.** The window runs InPrivate, so no history of the documents you view is kept. Camera, microphone, location, notifications and clipboard reading are refused; downloads come only from the viewer itself; the right-click menu has no Share, web capture or other browser extras.
 - **Stays in the document's folder.** Folder links (junctions, symbolic links) cannot lead outside it, and very large files (over 50 MB of text, or 200 MB of media or Excel) are not opened. A document cannot draw over the viewer's own controls, and a diagram cannot add CSS of its own.
@@ -81,7 +81,7 @@ Every point below, with where it is implemented and how it was tested, is listed
 - **No developer access.** Developer tools are off; the app refuses to show documents if WebView2 remote debugging has been switched on, or if it cannot check.
 - **Safe install.** The app is installed in Program Files, where only an administrator can change it, by Setup (also what `Install.cmd` runs). Only the copy step runs with administrator rights: Windows PowerShell from System32 with a short readable command - what the administrator prompt's "Show more details" shows - that runs only the copy step from Setup's bytes after checking their SHA-256, so a swapped Setup never runs and nothing is started elevated from the Downloads folder. It trusts nothing it is handed: it works out the folder itself, checks every file's SHA-256 and signature in a staging folder only administrators can change, and writes nothing into your folders. No script file is installed. All scripts use only Windows PowerShell's own modules (limited with plain text before any command runs) and start PowerShell by full path; neither the build nor the installer runs from an administrator window. See [Install](#install).
 - **Firewall rules with every install.** Setup's administrator step adds two Windows Firewall rules that block all traffic in and out of the installed `MarkdownViewerWebView2.exe` (it takes no path from outside, so they can only ever be made for this app); `Uninstall.exe` removes them. They do not cover the WebView2 engine (`msedgewebview2.exe`), which Windows shares with other apps.
-- **Check the project folder.** Every `Install.cmd` install records the SHA-256 of every project file (all except `.git\`, `app\dist\` and `app\release\`) in Program Files, next to the program, where only an administrator can change the record. `app\Check-Source.cmd` lists every file changed, added or removed since the last install - also changes made by another program running as you. It runs the project's `app\check-source.ps1` only if that is exactly the copy the record lists (read once, SHA-256 checked, run from those bytes), so a changed checker cannot hide changes; it says so instead. `Install.cmd` runs the same check before it builds: if the folder changed since the last install, it lists the changes and builds only after you answer Y. The new record is taken before the build and compared again after it: if the sources change while building, nothing is installed. Run it before installing an update you did not expect: changes you made or pulled yourself show up too, so only unexplained ones are a warning.
+- **Check the project folder.** Every `Install.cmd` install records the SHA-256 of every project file (all except `.git\`, `app\dist\` and `app\release\`) in Program Files, next to the program, where only an administrator can change the record. `app\Setup Scripts\cmd\Check-Source.cmd` lists every file changed, added or removed since the last install - also changes made by another program running as you. It runs the project's `app\Setup Scripts\check-source.ps1` only if that is exactly the copy the record lists (read once, SHA-256 checked, run from those bytes), so a changed checker cannot hide changes; it says so instead. `Install.cmd` runs the same check before it builds: if the folder changed since the last install, it lists the changes and builds only after you answer Y. The new record is taken before the build and compared again after it: if the sources change while building, nothing is installed. Run it before installing an update you did not expect: changes you made or pulled yourself show up too, so only unexplained ones are a warning.
 
 **What this does not cover.** Windows' administrator prompt is not a security boundary against programs
 already running as you: they could change this repository's scripts or sources before you run
@@ -102,8 +102,10 @@ before then. `Install.cmd` warns once less than a year is left.
 
 ## Install
 
+All double-click `.cmd` launchers are grouped in `app\Setup Scripts\cmd\`; PowerShell setup and maintenance scripts are in `app\Setup Scripts\`.
+
 1. Download or clone this repository.
-2. Run `app\Install.cmd` (double-click it; not "Run as administrator"). It checks the project folder against
+2. Run `app\Setup Scripts\cmd\Install.cmd` (double-click it; not "Run as administrator"). It checks the project folder against
    the last install, builds and signs the app as you, and installs it with the Setup that build made - the
    same steps as on any other PC (see below): one administrator prompt copies it to
    `C:\Program Files\MarkdownViewerWebView2`, where only an administrator can change the program's files (no
@@ -122,7 +124,7 @@ A new signing certificate or open viewer windows are asked about in a Yes/No box
 
 ### Setup
 
-Every install (and `app\build.ps1`) makes `app\release\MarkdownViewer-Setup-<version>.exe`: one signed file
+Every install (and `app\Setup Scripts\build.ps1`) makes `app\release\MarkdownViewer-Setup-<version>.exe`: one signed file
 with the built program inside, for installing on another PC without building - or here, without the console
 window. Double-click it (not "Run as administrator"): a window with the logo shows the version, who signed it
 and whether the viewer is installed, with **Install** / **Update**, **Uninstall**, **Open the viewer** and
@@ -158,9 +160,9 @@ rules**; `Uninstall.exe` does the opposite.
 ### Uninstall
 
 `Uninstall.exe`, installed next to the program and signed with the same certificate (built from
-`app\Setup.cs`), **uninstalls, unregisters and removes the firewall rules**. Start it from Settings › Apps ›
+`app\source\Setup.cs`), **uninstalls, unregisters and removes the firewall rules**. Start it from Settings › Apps ›
 Markdown Viewer (WebView2) › Uninstall (a window with Uninstall, Open the viewer and Close), with
-`app\Uninstall.cmd`, or with **Uninstall** in Setup (both without the window: `--uninstall`).
+`app\Setup Scripts\cmd\Uninstall.cmd`, or with **Uninstall** in Setup (both without the window: `--uninstall`).
 
 - It acts only as the copy in Program Files (only an administrator can change it) and refuses to run from
   anywhere else, checks its own signature at start, and has the same start-up protections as the viewer.
@@ -175,13 +177,13 @@ Markdown Viewer (WebView2) › Uninstall (a window with Uninstall, Open the view
 ## Build only
 
 ```bash
-powershell -NoProfile -ExecutionPolicy Bypass -File app\build.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File "app\Setup Scripts\build.ps1"
 ```
 
 Output goes to `app\dist\` (for testing; it is not installed) and the Setup file to `app\release\`. The build checks the compiler's and the
 WebView2 files' Microsoft signatures and the WebView2 files' exact SHA-256, that the bundled libraries match
 the versions listed in `viewer.js` and that the page loads nothing from the internet. It then packs the page
-and libraries into `MarkdownViewerWebView2.Content.dll`, builds `Uninstall.exe` and Setup (`app\Setup.cs`), and signs
+and libraries into `MarkdownViewerWebView2.Content.dll`, builds `Uninstall.exe` and Setup (`app\source\Setup.cs`), and signs
 the program, that DLL, `Uninstall.exe` and Setup with one certificate (Windows asks you to confirm the signing). Run it
 from a normal window: it refuses to build with administrator rights.
 
@@ -209,12 +211,12 @@ made), it shows both thumbprints and installs only after you answer Yes.
 To sign with a certificate bought from a certificate authority instead, run:
 
 ```bash
-powershell -NoProfile -ExecutionPolicy Bypass -File app\build.ps1 -CertificateThumbprint <thumbprint>
+powershell -NoProfile -ExecutionPolicy Bypass -File "app\Setup Scripts\build.ps1" -CertificateThumbprint <thumbprint>
 ```
 
 Windows doesn't trust a certificate made on your own PC by default. The app's start-up check works either
 way. If you also want Windows (file Properties › Digital Signatures) to show the signature as valid, run
-`app\Trust-Certificate.cmd`. It adds the certificate to your Trusted Roots only, not to Trusted Publishers
+`app\Setup Scripts\cmd\Trust-Certificate.cmd`. It adds the certificate to your Trusted Roots only, not to Trusted Publishers
 (Office macros and AllSigned PowerShell scripts from those publishers run without asking). It takes the
 certificate only from the program installed in Program Files, only if that is signed by your own signing
 certificate (the one on this PC with its private key), and adds it straight from memory - no temporary file
@@ -223,8 +225,8 @@ that could be swapped.
 
 ## Checking for updates
 
-```bash
-app\Check-Updates.cmd
+```powershell
+& ".\app\Setup Scripts\cmd\Check-Updates.cmd"
 ```
 
 Shows whether a newer stable WebView2 SDK is out on nuget.org, and newer releases of the bundled libraries
@@ -242,17 +244,17 @@ The SDK files are pinned by SHA-256, so an update is a deliberate step:
 1. **WebView2 SDK:** download the `Microsoft.Web.WebView2` package of the new version from nuget.org (a
    `.nupkg` is a zip file). Take `lib\net462\Microsoft.Web.WebView2.Core.dll`,
    `lib\net462\Microsoft.Web.WebView2.WinForms.dll` and `runtimes\win-x64\native\WebView2Loader.dll` and
-   replace the three files in `webview2\`. Check that each carries Microsoft's valid signature (file
+   replace the three files in `app\Setup Scripts\webview2\`. Check that each carries Microsoft's valid signature (file
    Properties › Digital Signatures), then put their SHA-256 (`Get-FileHash`) into `$sdkHashes` in
-   `app\build.ps1` and the new version in its comment and in the table below.
-2. **Libraries:** double-click `app\Update-Libraries.cmd`. It first shows the plan - for each library the
-   new version, the exact download and which files in `src\` it replaces - and asks before downloading
+   `app\Setup Scripts\build.ps1` and the new version in its comment and in the table below.
+2. **Libraries:** double-click `app\Setup Scripts\cmd\Update-Libraries.cmd`. It first shows the plan - for each library the
+   new version, the exact download and which files in `app\source\` it replaces - and asks before downloading
    anything. Then it downloads each package from registry.npmjs.org only (HTTPS, no redirects, size limit),
    checks it against the SHA-512 the registry publishes, takes out only the expected files (never anything
-   else, never outside `src\`), checks they really are the new version (as the build does) and only then
+   else, never outside `app\source\`), checks they really are the new version (as the build does) and only then
    replaces them and updates the version in `viewer.js` and in the table below. A release that lacks an
    expected file (e.g. no ready-made browser file) is left untouched with an explanation. For one library:
-   `app\update-libs.ps1 -Library KaTeX` (plan) or add `-Apply`. Undo with `git checkout -- src README.md`.
+   `& "app\Setup Scripts\update-libs.ps1" -Library KaTeX` (plan) or add `-Apply`. Undo with `git checkout -- app/source README.md`.
    A release published less than 7 days ago is held back (a release pushed through a hijacked npm account
    is usually withdrawn within days); add `-AllowNew` to take it anyway. After replacing files it runs the
    viewer test (below) and says "Do not install this" if it fails. A new major version can change how
@@ -262,39 +264,39 @@ The SDK files are pinned by SHA-256, so an update is a deliberate step:
 
 ### Testing the viewer page
 
-Double-click `app\Test-Viewer.cmd` (it changes nothing). It opens every document in `test\` (every type the viewer shows,
+Double-click `app\Setup Scripts\cmd\Test-Viewer.cmd` (it changes nothing). It opens every document in `docs\test\fixtures\` (every type the viewer shows,
 up to 4 MB each) in the viewer page, in Microsoft Edge without a window, and fails unless each one is shown,
 its breakdown adds up (✓), no element, attribute or address that could run code reaches the page, no payload
-in `test\attack.md` ran and all four libraries load. For the tables it also checks that `test\data.csv`
+in `docs\test\fixtures\markdown\attack.md` ran and all four libraries load. For the tables it also checks that `docs\test\fixtures\tables\data.csv`
 (payload cells, quoted commas and line breaks) is drawn exactly as text and sorts and filters correctly, and
-that choosing columns in `test\wide.csv` (40 columns) works; for JSON, that `test\sample.json` is shown as text (with its 20-digit number exact), as a tree and as tables of its arrays, that `test\events.jsonl` becomes a table, and that `test\broken.json` shows where it breaks; for the other types, that code, logs and config keep every line (with the hidden text-direction character in `test\script.ps1` marked, PowerShell in `test\script.ps1` and batch in `test\sample.cmd` coloured word by word, and every line number beside its line), that `test\catalog.xml` works as text, tree and table and raises the "contains code" warning, and that the hostile `test\page.html`, `hostile.xml`, `entities.xml`, `entity-bomb.xml` and `comment-trick.xml` stay inert (with their code, unsafe XML and risky comments flagged; the HTML file opens in Source mode by default; entities are shown as written and never expanded; `win.ini` is never read), that `test\book.xlsx` shows its sheets, dates and values, and that `test\notebook.ipynb` renders its cells and outputs. Add your own documents with
-`Test-Viewer.cmd -Folder C:\path\to\folder`. To try a large table, `test\make-million-csv.ps1` writes
-`test\million-rows.csv` (1,000,000 rows, about 45 MB; not kept in git). The page
-runs from a temporary copy of `src\` (removed afterwards), served on 127.0.0.1 only under a random path, in
+that choosing columns in `docs\test\fixtures\tables\wide.csv` (40 columns) works; for JSON, that `docs\test\fixtures\json\sample.json` is shown as text (with its 20-digit number exact), as a tree and as tables of its arrays, that `docs\test\fixtures\json\events.jsonl` becomes a table, and that `docs\test\fixtures\json\broken.json` shows where it breaks; for the other types, that code, logs and config keep every line (with the hidden text-direction character in `docs\test\fixtures\code\script.ps1` marked, PowerShell in `docs\test\fixtures\code\script.ps1` and batch in `docs\test\fixtures\code\sample.cmd` coloured word by word, and every line number beside its line), that `docs\test\fixtures\xml\catalog.xml` works as text, tree and table and raises the "contains code" warning, and that the hostile `docs\test\fixtures\html\page.html`, `docs\test\fixtures\xml\hostile.xml`, `docs\test\fixtures\xml\entities.xml`, `docs\test\fixtures\xml\entity-bomb.xml` and `docs\test\fixtures\xml\comment-trick.xml` stay inert (with their code, unsafe XML and risky comments flagged; the HTML file opens in Source mode by default; entities are shown as written and never expanded; `win.ini` is never read), that `docs\test\fixtures\spreadsheets\book.xlsx` shows its sheets, dates and values, and that `docs\test\fixtures\notebooks\notebook.ipynb` renders its cells and outputs. Add your own documents with
+`app\Setup Scripts\cmd\Test-Viewer.cmd -Folder C:\path\to\folder`. To try a large table, `docs\test\tools\make-million-csv.ps1` writes
+`docs\test\fixtures\tables\million-rows.csv` (1,000,000 rows, about 45 MB; not kept in git). The page
+runs from a temporary copy of `app\source\` (removed afterwards), served on 127.0.0.1 only under a random path, in
 a new empty Edge profile that cannot look up any host name.
 
-**Current test limitation:** `test\selftest.js` still searches for the removed `#typeFilter` panel. As written, `Test-Viewer.cmd` can stop during its file-list check; it does not verify the current **View File types** toolbar menu or the HTML Preview interaction. Update the self-test before treating a full run as a pass for those features.
+**Current test limitation:** `docs\test\tools\selftest.js` still searches for the removed `#typeFilter` panel. As written, `Test-Viewer.cmd` can stop during its file-list check; it does not verify the current **View File types** toolbar menu or the HTML Preview interaction. Update the self-test before treating a full run as a pass for those features.
 
 ## Project layout
 
 | Path | Contents |
 |---|---|
-| `src\viewer.html`, `src\viewer.js` | The viewer page and its logic (packed into the Content DLL at build time) |
-| `src\marked.min.js`, `src\lib\` | Bundled libraries (marked, KaTeX, highlight.js, Mermaid) |
-| `app\MarkdownViewerWebView2.cs` | The Windows app (C# 5, Windows Forms + WebView2) |
-| `app\Content.cs` | Resource-only `MarkdownViewerWebView2.Content.dll` that carries the page and the libraries |
-| `app\build.ps1` | Checks, compiles and signs the app into `app\dist\` |
-| `app\install.ps1` | `Install.cmd`: checks and records the project folder, builds (`build.ps1`) and installs with the Setup it made |
-| `app\Setup.cs` | Built twice by `build.ps1`: Setup (`app\release\MarkdownViewer-Setup-<version>.exe`, the signed program inside one signed file: installs, registers, adds the firewall rules) and `Uninstall.exe` (installed next to the program: the opposite) |
-| `app\trust.ps1` | Optional certificate trust for the PC that builds (not installed) |
-| `app\check-source.ps1` | Records the project files' SHA-256 at install time (the record goes into Program Files) and compares the folder with it; `Check-Source.cmd` runs it only if it is exactly the recorded copy |
-| `app\check-updates.ps1` | Reports newer versions of the WebView2 SDK and the bundled libraries (only when you run it) |
-| `app\update-libs.ps1` | Downloads, checks and replaces the bundled libraries in `src\` (plan first; asks before downloading; holds back releases under 7 days old) |
-| `app\test-viewer.ps1` | Tests the viewer page with the documents in `test\` (display, breakdown, nothing that could run code) |
-| `app\*.cmd` | Double-click launchers: `Install`, `Uninstall`, `Check-Source`, `Check-Updates`, `Update-Libraries`, `Test-Viewer`, `Trust-` / `Untrust-Certificate` |
-| `test\` | Test documents (formatting, lists, UTF-16, `attack.md` with harmless payloads, `data.csv` and `wide.csv` tables, `sample.json`, `events.jsonl`, `broken.json`, `catalog.xml`, `book.xlsx`, `notebook.ipynb`, `script.ps1`, `sample.cmd`, `settings.yaml`, `notes.log`, and the hostile `page.html`, `hostile.xml`, `entities.xml`, `entity-bomb.xml`, `comment-trick.xml`), `selftest.js` (which the test adds to its temporary copy of the page), `make-million-csv.ps1` (a large table for trying the viewer) and `make-test-xlsx.ps1` (recreates `book.xlsx`) |
-| `webview2\` | Microsoft WebView2 SDK files needed to build the app, with their license |
-| `docs\` | Promo video and its poster picture |
+| `app\source\viewer.html`, `app\source\viewer.js` | The viewer page and its logic (packed into the Content DLL at build time) |
+| `app\source\marked.min.js`, `app\source\lib\` | Bundled libraries (marked, KaTeX, highlight.js, Mermaid) |
+| `app\source\MarkdownViewerWebView2.cs` | The Windows app (C# 5, Windows Forms + WebView2) |
+| `app\source\Content.cs` | Resource-only `MarkdownViewerWebView2.Content.dll` that carries the page and the libraries |
+| `app\Setup Scripts\build.ps1` | Checks, compiles and signs the app into `app\dist\` |
+| `app\Setup Scripts\install.ps1` | `Install.cmd`: checks and records the project folder, builds (`build.ps1`) and installs with the Setup it made |
+| `app\source\Setup.cs` | Built twice by `build.ps1`: Setup (`app\release\MarkdownViewer-Setup-<version>.exe`, the signed program inside one signed file: installs, registers, adds the firewall rules) and `Uninstall.exe` (installed next to the program: the opposite) |
+| `app\Setup Scripts\trust.ps1` | Optional certificate trust for the PC that builds (not installed) |
+| `app\Setup Scripts\check-source.ps1` | Records the project files' SHA-256 at install time (the record goes into Program Files) and compares the folder with it; `Check-Source.cmd` runs it only if it is exactly the recorded copy |
+| `app\Setup Scripts\check-updates.ps1` | Reports newer versions of the WebView2 SDK and the bundled libraries (only when you run it) |
+| `app\Setup Scripts\update-libs.ps1` | Downloads, checks and replaces the bundled libraries in `app\source\` (plan first; asks before downloading; holds back releases under 7 days old) |
+| `app\Setup Scripts\test-viewer.ps1` | Tests the viewer page with the documents in `docs\test\fixtures\` (display, breakdown, nothing that could run code) |
+| `app\Setup Scripts\cmd\*.cmd` | Double-click launchers: `Install`, `Uninstall`, `Check-Source`, `Check-Updates`, `Update-Libraries`, `Test-Viewer`, `Trust-` / `Untrust-Certificate` |
+| `docs\test\fixtures\` | Test documents grouped into `markdown\`, `tables\`, `json\`, `xml\`, `html\`, `code\`, `spreadsheets\` and `notebooks\`; `docs\test\tools\` holds the test harness and fixture generators |
+| `app\Setup Scripts\webview2\` | Microsoft WebView2 SDK files needed to build the app, with their license |
+| `docs\` | Promo video and its poster picture, the security hardening history, and `test\` with fixtures and test tools |
 
 ## Third-party components
 
@@ -304,6 +306,6 @@ a new empty Edge profile that cannot look up any host name.
 | KaTeX | 0.19.0 | MIT |
 | highlight.js | 11.12.0 | BSD-3-Clause |
 | Mermaid | 12.2.0 | MIT |
-| Microsoft WebView2 SDK | 1.0.4258.31 | see `webview2\WebView2-SDK-LICENSE.txt` |
+| Microsoft WebView2 SDK | 1.0.4258.31 | see `app\Setup Scripts\webview2\WebView2-SDK-LICENSE.txt` |
 
 The original viewer was made using GPT-5; this version was extended and tested with Claude Code (Anthropic).
