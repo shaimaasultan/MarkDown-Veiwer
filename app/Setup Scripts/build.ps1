@@ -19,7 +19,7 @@ $ErrorActionPreference = 'Stop'
 $elevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 $uac = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -ErrorAction SilentlyContinue).EnableLUA -ne 0
 if ($elevated -and $uac) { throw 'Run the build from a normal window, not as administrator.' }
-$here = $PSScriptRoot
+$here = Split-Path $PSScriptRoot -Parent
 $root = Split-Path $here -Parent
 $dist = Join-Path $here 'dist'
 $exeName = 'MarkdownViewerWebView2.exe'
@@ -28,8 +28,8 @@ $contentName = 'MarkdownViewerWebView2.Content.dll'
 $certSubject = 'CN=Markdown Viewer, O=Markdown Viewer'
 # Names earlier versions gave this app's certificate.
 $oldSubjects = @('CN=Markdown Viewer (WebView2) Code Signing')
-$srcDir = Join-Path $root 'src'           # the viewer page, marked and lib\ (packed into the Content DLL)
-$wv2 = Join-Path $root 'webview2'          # Microsoft.Web.WebView2 SDK files (Core, WinForms, WebView2Loader)
+$srcDir = Join-Path $here 'source'        # the viewer page, marked and lib\ (packed into the Content DLL)
+$wv2 = Join-Path $here 'Setup Scripts\webview2' # Microsoft.Web.WebView2 SDK files (Core, WinForms, WebView2Loader)
 $sdkFiles = 'Microsoft.Web.WebView2.Core.dll', 'Microsoft.Web.WebView2.WinForms.dll', 'WebView2Loader.dll'
 $pageFiles = 'viewer.html', 'viewer.js', 'marked.min.js', 'favicon_readme.png'
 New-Item -ItemType Directory -Force $dist | Out-Null
@@ -133,7 +133,7 @@ $cscArgs = @('/nologo', '/target:winexe', '/optimize+', '/platform:x64',
              '/r:System.Management.dll',
              "/r:$(Join-Path $wv2 'Microsoft.Web.WebView2.Core.dll')",
              "/r:$(Join-Path $wv2 'Microsoft.Web.WebView2.WinForms.dll')",
-             (Join-Path $here 'MarkdownViewerWebView2.cs'), $pinned)
+             (Join-Path $here 'source\MarkdownViewerWebView2.cs'), $pinned)
 & $csc @cscArgs
 $cscExit = $LASTEXITCODE
 Remove-Item $pinned -ErrorAction SilentlyContinue
@@ -147,7 +147,7 @@ $resources += Get-ChildItem (Join-Path $srcDir 'lib') -Recurse -File | ForEach-O
 }
 $rsp = Join-Path $dist 'content.rsp'
 $rspLines = @('/nologo', '/target:library', '/optimize+', '/platform:anycpu',
-              "/out:`"$(Join-Path $dist $contentName)`"") + $resources + "`"$(Join-Path $here 'Content.cs')`""
+              "/out:`"$(Join-Path $dist $contentName)`"") + $resources + "`"$(Join-Path $here 'source\Content.cs')`""
 [IO.File]::WriteAllLines($rsp, [string[]]$rspLines)
 & $csc "@$rsp"
 $code = $LASTEXITCODE
@@ -173,7 +173,7 @@ static class SetupBuild { public const string Version = "$version"; }
     $lines = @('/nologo', '/target:winexe', '/optimize+', '/platform:anycpu', "/out:`"$out`"", "/win32icon:`"$ico`"",
                '/r:System.Windows.Forms.dll', '/r:System.Drawing.dll',
                "/resource:`"$(Join-Path $srcDir 'favicon_readme.png')`",logo.png") + $resources +
-             @("`"$(Join-Path $here 'Setup.cs')`"", "`"$info`"")
+             @("`"$(Join-Path $here 'source\Setup.cs')`"", "`"$info`"")
     $rspFile = Join-Path $dir 'setup.rsp'
     [IO.File]::WriteAllLines($rspFile, [string[]]$lines)
     & $csc "@$rspFile"

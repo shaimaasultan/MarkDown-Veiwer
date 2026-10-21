@@ -8,7 +8,7 @@
 // and no network port at all.
 //
 // Build: build.ps1 (uses the C# compiler that ships with Windows / .NET Framework 4, plus the WebView2
-// SDK files in ..\webview2), which also builds and signs the Content DLL.
+// SDK files in ..\Setup Scripts\webview2), which also builds and signs the Content DLL.
 
 using System;
 using System.Collections.Generic;
@@ -520,7 +520,7 @@ static class Program
         return "The program's folder contains " + (extra.Count == 1 ? "something that is" : "things that are") + " not part of " + AppName + ":\n\n  " +
                string.Join("\n  ", extra.GetRange(0, Math.Min(extra.Count, 8))) + (extra.Count > 8 ? "\n  ..." : "") +
                "\n\nWindows or .NET could load code from there into the program, so " + AppName + " will not start.\n" +
-               "Reinstall it (its Setup, or app\\Install.cmd), which removes them, or delete them from\n" + appDir;
+               "Reinstall it (its Setup, or app\\Setup Scripts\\cmd\\Install.cmd), which removes them, or delete them from\n" + appDir;
     }
 
     // The checked files stay open until the program ends, shared for reading only: they cannot be changed,
@@ -551,9 +551,9 @@ static class Program
         string config = AppDomain.CurrentDomain.SetupInformation.ConfigurationFile;
         if (!string.IsNullOrEmpty(config) && File.Exists(config))
             return Path.GetFileName(Application.ExecutablePath) + ".config was found next to the program. It could make " + AppName +
-                   " load files other than the ones it checks.\n\n" + AppName + " will not start. Delete that file or reinstall it (its Setup, or app\\Install.cmd).";
+                   " load files other than the ones it checks.\n\n" + AppName + " will not start. Delete that file or reinstall it (its Setup, or app\\Setup Scripts\\cmd\\Install.cmd).";
         if (AppDomain.CurrentDomain.DomainManager != null)
-            return "Something has changed how .NET starts this program.\n\n" + AppName + " will not start. Reinstall it (its Setup, or app\\Install.cmd).";
+            return "Something has changed how .NET starts this program.\n\n" + AppName + " will not start. Reinstall it (its Setup, or app\\Setup Scripts\\cmd\\Install.cmd).";
         // Locked first, so the files checked below are the files that will be loaded.
         LockFolder();
         Lock(Application.ExecutablePath);
@@ -571,7 +571,7 @@ static class Program
             if (!ms.Trusted || ms.Subject.IndexOf("O=Microsoft Corporation,", StringComparison.Ordinal) < 0) return Tampered(f, ms);
             if (!PinnedFiles.Matches(f, Sha256(Path.Combine(appDir, f))))
                 return f + " cannot be trusted: it is signed by Microsoft but is not the version " + AppName +
-                       " was built with.\n\n" + AppName + " will not start. Reinstall it (its Setup, or app\\Install.cmd).";
+                       " was built with.\n\n" + AppName + " will not start. Reinstall it (its Setup, or app\\Setup Scripts\\cmd\\Install.cmd).";
         }
         signature = self;
         return null;
@@ -590,7 +590,7 @@ static class Program
                    : s.Subject == null ? "it is not signed"
                    : s.Status == unchecked((int)0x80096010) ? "it has been changed since it was signed"
                    : "its signature is not valid (0x" + s.Status.ToString("X8") + ")";
-        return file + " cannot be trusted: " + why + ".\n\n" + AppName + " will not start. Reinstall it (its Setup, or app\\Install.cmd).";
+        return file + " cannot be trusted: " + why + ".\n\n" + AppName + " will not start. Reinstall it (its Setup, or app\\Setup Scripts\\cmd\\Install.cmd).";
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]

@@ -1,16 +1,16 @@
-# Tests the viewer page in src\ with the documents in test\ (plus, optionally, every .md / .csv / .tsv / .json / .jsonl / .ndjson in -Folder):
-#   test-viewer.ps1                     test\*.md
+# Tests the viewer page in app\source\ with the fixture documents in docs\test\fixtures\ (plus, optionally, every .md / .csv / .tsv / .json / .jsonl / .ndjson in -Folder):
+#   test-viewer.ps1                     docs\test\fixtures\markdown\*.md
 #   test-viewer.ps1 -Folder ..\..\BAD   also the .md files in that folder
 #
 # For every document it checks that the page shows it, that the breakdown adds up (✓), and that nothing that
 # could run code got into the page: no script/iframe/object/embed/form/base/meta elements, no on... attributes,
 # no javascript: or data:text/html addresses, no input except disabled task-list checkboxes, and that none
-# of test\attack.md's payloads ran (each would set window.PWN).
+# of docs\test\fixtures\markdown\attack.md's payloads ran (each would set window.PWN).
 #
-# How: copies src\ to a new temporary folder (under %LOCALAPPDATA%\Temp, removed afterwards), adds the test
-# documents and test\selftest.js to that copy only, and opens it in Microsoft Edge without a window and with a
+# How: copies app\source\ to a new temporary folder (under %LOCALAPPDATA%\Temp, removed afterwards), adds the test
+# documents and docs\test\tools\selftest.js to that copy only, and opens it in Microsoft Edge without a window and with a
 # new, empty profile. The copy is served by this script on 127.0.0.1 only, on a free port, under a random
-# path; every other address is refused. Edge cannot look up any host name (only 127.0.0.1 is reachable). Nothing in src\ is changed,
+# path; every other address is refused. Edge cannot look up any host name (only 127.0.0.1 is reachable). Nothing in app\source\ is changed,
 # nothing is built, signed or installed. Exit code 0 = all passed, 1 = a check failed, 2 = could not run.
 [CmdletBinding()]
 param(
@@ -24,9 +24,9 @@ $elevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIde
 $uac = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -ErrorAction SilentlyContinue).EnableLUA -ne 0
 if ($elevated -and $uac) { Write-Host 'Run this from a normal window, not as administrator.'; exit 2 }
 
-$root = Split-Path $PSScriptRoot -Parent
-$src = Join-Path $root 'src'
-$tests = Join-Path $root 'test'
+$root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+$src = Join-Path $root 'app\source'
+$tests = Join-Path $root 'docs\test\fixtures'
 $maxDoc = 4MB
 
 # One command-line argument, quoted by Windows' rules (CommandLineToArgvW).
@@ -45,7 +45,7 @@ function ConvertTo-NativeArgument([string]$text) {
 }
 
 # The documents: plain .md files only (no links), each at most 4 MB.
-$docFiles = @(Get-ChildItem -LiteralPath $tests -File | Where-Object { $_.Name -ne 'selftest.js' })
+$docFiles = @(Get-ChildItem -LiteralPath $tests -File -Recurse)
 if ($Folder) {
     if (-not (Test-Path -LiteralPath $Folder -PathType Container)) { Write-Host "Folder not found: $Folder"; exit 2 }
     $docFiles += @(Get-ChildItem -LiteralPath $Folder -File | Where-Object { $_.Extension -in '.md', '.csv', '.tsv', '.json', '.jsonl', '.ndjson' })
@@ -62,7 +62,7 @@ if ($edgeSig.Status -ne 'Valid' -or $edgeSig.SignerCertificate.Subject -notmatch
     Write-Host "$edge does not carry a valid Microsoft signature; not started."; exit 2
 }
 
-# The temporary copy: src\ plus the test documents and the test script, in a new folder.
+# The temporary copy: app\source\ plus the test documents and the test script, in a new folder.
 $rng = New-Object Security.Cryptography.RNGCryptoServiceProvider
 $tokenBytes = New-Object byte[] 16; $rng.GetBytes($tokenBytes)
 $token = -join ($tokenBytes | ForEach-Object { $_.ToString('x2') })
@@ -74,7 +74,7 @@ $edgeProc = $null
 $listener = $null
 try {
     Copy-Item -LiteralPath $src -Destination $page -Recurse
-    Copy-Item -LiteralPath (Join-Path $tests 'selftest.js') -Destination (Join-Path $page 'selftest.js')
+    Copy-Item -LiteralPath (Join-Path $root 'docs\test\tools\selftest.js') -Destination (Join-Path $page 'selftest.js')
     $entries = foreach ($f in $docFiles) {
         $name = $f.Name.Replace('\', '').Replace('"', '')
         '  ["' + $name + '", "' + [Convert]::ToBase64String([IO.File]::ReadAllBytes($f.FullName)) + '"]'

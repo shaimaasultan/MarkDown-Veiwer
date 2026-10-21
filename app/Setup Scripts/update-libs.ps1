@@ -1,4 +1,4 @@
-# Updates the bundled libraries (marked, KaTeX, highlight.js, Mermaid) in src\ from the npm registry.
+# Updates the bundled libraries (marked, KaTeX, highlight.js, Mermaid) in app\source\ from the npm registry.
 #   update-libs.ps1                          plan only: what would change, with the exact download sizes
 #   update-libs.ps1 -Library highlight.js    plan for one library (or several: -Library KaTeX, Mermaid)
 #   update-libs.ps1 -Library KaTeX -Version 0.19.0     a specific version instead of the latest
@@ -12,14 +12,14 @@
 # What it does with -Apply, per library:
 # - downloads the package (.tgz) over HTTPS from registry.npmjs.org only - no redirects, a size limit;
 # - checks it against the SHA-512 the registry publishes for that version (dist.integrity);
-# - takes only the expected files out of it (never anything else, never outside src\) and checks that each
+# - takes only the expected files out of it (never anything else, never outside app\source\) and checks that each
 #   really is the new version (the same check build.ps1 makes);
-# - only if every expected file is there: replaces them in src\ and updates the version in viewer.js and in
+# - only if every expected file is there: replaces them in app\source\ and updates the version in viewer.js and in
 #   the README's table. A library whose new release lacks an expected file (e.g. no ready-made browser file)
 #   is left untouched, with an explanation.
-# After replacing files it runs test-viewer.ps1 (the documents in test\ must still show correctly and run
+# After replacing files it runs test-viewer.ps1 (the documents in docs\test\fixtures\ must still show correctly and run
 # nothing). It never builds, signs or installs: look at a few documents, then run Install.cmd (it lists the
-# changed files and asks for Y). Undo a library with git: git checkout -- src README.md
+# changed files and asks for Y). Undo a library with git: git checkout -- app/source README.md
 [CmdletBinding()]
 param(
     [ValidateSet('marked', 'KaTeX', 'highlight.js', 'Mermaid')][string[]]$Library = @('marked', 'KaTeX', 'highlight.js', 'Mermaid'),
@@ -36,14 +36,14 @@ $uac = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Polici
 if ($elevated -and $uac) { Write-Host 'Run this from a normal window, not as administrator.'; exit 2 }
 if ($Version -and $Library.Count -ne 1) { Write-Host '-Version needs exactly one -Library.'; exit 2 }
 
-$root = Split-Path $PSScriptRoot -Parent
-$src = Join-Path $root 'src'
+$root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+$src = Join-Path $root 'app\source'
 $registry = 'registry.npmjs.org'
 $maxPackage = 60MB
 $minAgeDays = 7
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-# Where each library's files come from (npm package, path inside it) and go (under src\). '*' = every
+# Where each library's files come from (npm package, path inside it) and go (under app\source\). '*' = every
 # matching file in that folder, which replaces the folder's previous files of that kind.
 $libs = [ordered]@{
     'marked'       = @{ Package = 'marked';                  Files = @(, @('package/lib/marked.umd.js', 'marked.min.js')) }   # since marked 16 the browser build is lib/marked.umd.js
@@ -147,7 +147,7 @@ foreach ($p in $plans) {
     }
     if ($p.Needed) {
         Write-Host ("              download: {0} (package {1:N1} MB unpacked; the download is smaller)" -f $p.Tarball, ($p.Size / 1MB))
-        Write-Host ("              replaces: {0}" -f (($p.Files | ForEach-Object { 'src\' + $_[1] }) -join ', '))
+        Write-Host ("              replaces: {0}" -f (($p.Files | ForEach-Object { 'app\source\' + $_[1] }) -join ', '))
     }
 }
 $todo = @($plans | Where-Object Needed)
@@ -183,7 +183,7 @@ foreach ($p in $todo) {
         Write-Host "  $($p.Files[0][0]) does not name version $($p.Target), so the build would refuse it - left untouched." -ForegroundColor Yellow
         continue
     }
-    # Replace the files under src\ (a '*' pattern replaces that folder's files of that kind).
+    # Replace the files under app\source\ (a '*' pattern replaces that folder's files of that kind).
     foreach ($f in $p.Files) {
         $dest = Join-Path $src $f[1]
         if ($f[0].Contains('*')) {
@@ -204,7 +204,7 @@ foreach ($p in $todo) {
     $text = [IO.File]::ReadAllText($readme)
     $text = [regex]::Replace($text, "(?m)^(\| $([regex]::Escape($p.Name)) \| )[^|]+( \|)", "`${1}$($p.Target)`${2}")
     [IO.File]::WriteAllText($readme, $text, (New-Object Text.UTF8Encoding $false))
-    Write-Host "  replaced $($p.Files.Count) item(s) in src\, version updated in viewer.js and README.md" -ForegroundColor Green
+    Write-Host "  replaced $($p.Files.Count) item(s) in app\source\, version updated in viewer.js and README.md" -ForegroundColor Green
     $done += "$($p.Name) $($p.Current) -> $($p.Target)"
 }
 
@@ -219,9 +219,9 @@ if ($done.Count) {
     if ($tested -eq 0) {
         Write-Host 'Next: look at a few of your own documents, then run Install.cmd (it lists the changed files and asks for Y).'
     } else {
-        Write-Host 'Do not install this. Undo with: git checkout -- src README.md' -ForegroundColor Red
+        Write-Host 'Do not install this. Undo with: git checkout -- app/source README.md' -ForegroundColor Red
         exit 1
     }
-    Write-Host 'Undo with: git checkout -- src README.md'
+    Write-Host 'Undo with: git checkout -- app/source README.md'
 } else { Write-Host 'Nothing was changed.' }
 exit 0

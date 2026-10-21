@@ -19,7 +19,7 @@ $elevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIde
 $uac = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -ErrorAction SilentlyContinue).EnableLUA -ne 0
 if ($elevated -and $uac) { Write-Host 'Run this from a normal window, not as administrator.'; exit 2 }
 
-$root = Split-Path $PSScriptRoot -Parent
+$root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 # One GET to a fixed HTTPS host; the parsed JSON, or $null.
@@ -60,14 +60,14 @@ function Add-Row($name, $current, $latest, $note) {
 
 # The WebView2 SDK this project builds with (all three files must agree).
 $sdkVersions = @('Microsoft.Web.WebView2.Core.dll', 'Microsoft.Web.WebView2.WinForms.dll', 'WebView2Loader.dll' |
-    ForEach-Object { (Get-Item -LiteralPath (Join-Path $root "webview2\$_")).VersionInfo.FileVersion } | Select-Object -Unique)
-if ($sdkVersions.Count -ne 1) { throw "The WebView2 SDK files in webview2\ have different versions: $($sdkVersions -join ', ')" }
+    ForEach-Object { (Get-Item -LiteralPath (Join-Path $root "app\Setup Scripts\webview2\$_")).VersionInfo.FileVersion } | Select-Object -Unique)
+if ($sdkVersions.Count -ne 1) { throw "The WebView2 SDK files in app\Setup Scripts\webview2\ have different versions: $($sdkVersions -join ', ')" }
 $index = Get-Json 'https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/index.json' 'api.nuget.org' 1MB
 $stable = @($index.versions | Where-Object { $_ -is [string] -and (Test-Version $_) } | Sort-Object { [version]$_ })
 Add-Row 'WebView2 SDK (Microsoft.Web.WebView2)' $sdkVersions[0] $(if ($stable.Count) { $stable[-1] } else { $null }) 'nuget.org, stable releases'
 
 # The bundled libraries, as listed in viewer.js (the build checks the files match these versions).
-$js = [IO.File]::ReadAllText((Join-Path $root 'src\viewer.js'))
+$js = [IO.File]::ReadAllText((Join-Path $root 'app\source\viewer.js'))
 foreach ($lib in @(@('marked', 'marked'), @('KaTeX', 'katex'), @('highlight.js', 'highlight.js'), @('Mermaid', 'mermaid'))) {
     $m = [regex]::Match($js, "name: '$([regex]::Escape($lib[0]))', version: '([^']+)'")
     $latest = (Get-Json "https://registry.npmjs.org/$($lib[1])/latest" 'registry.npmjs.org' 4MB).version

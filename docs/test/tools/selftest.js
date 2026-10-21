@@ -35,8 +35,8 @@
   }
 
   // A table file (.csv / .tsv): drawn exactly, every cell as text; sorting and filtering work.
-  // test\data.csv: Name, City, Amount, Note - six rows, one note on two lines, payloads as text.
-  // test\wide.csv: Id, Name, City, Q1..Q37 (40 columns), 30 rows - choosing which columns to show.
+  // test\fixtures\tables\data.csv: Name, City, Amount, Note - six rows, one note on two lines, payloads as text.
+  // test\fixtures\tables\wide.csv: Id, Name, City, Q1..Q37 (40 columns), 30 rows - choosing which columns to show.
   async function checkColumns() {
     const problems = [];
     const table = output.querySelector('.csv-table');
@@ -129,7 +129,7 @@
     return problems;
   }
 
-  // JSON files: test\sample.json (text, tree, table), test\events.jsonl (one value per line), test\broken.json.
+  // JSON files: test\fixtures\json\sample.json (text, tree, table), test\fixtures\json\events.jsonl (one value per line), test\fixtures\json\broken.json.
   async function checkJson(name) {
     for (let i = 0; i < 100 && !output.querySelector('.json-view'); i++) await sleep(50);
     const problems = [];
@@ -316,9 +316,9 @@
     return problems;
   }
 
-  // test\hostile.xml and test\entities.xml: every view (text, tree, table) shows the file as data. Scripts, event
+  // test\fixtures\xml\hostile.xml and test\fixtures\xml\entities.xml: every view (text, tree, table) shows the file as data. Scripts, event
   // attributes, stylesheets, XInclude and external entities stay text or are left out; win.ini is never read.
-  // Entities are never expanded: every &name; reference is shown as written (test\entity-bomb.xml shows &j;).
+  // Entities are never expanded: every &name; reference is shown as written (test\fixtures\xml\entity-bomb.xml shows &j;).
   async function checkHostileXml(name, bytes) {
     const problems = [];
     const click = el => el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -386,7 +386,7 @@
     return problems;
   }
 
-  // test\page.html: the page's source, as text; never a page (nothing in it runs or loads).
+  // test\fixtures\html\page.html: the page's source, as text; never a page (nothing in it runs or loads).
   async function checkHostileHtml(name, bytes) {
     const problems = [];
     for (let i = 0; i < 100 && !output.querySelector('.code-file'); i++) await sleep(50);

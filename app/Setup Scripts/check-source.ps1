@@ -59,8 +59,8 @@ function Get-Commit($root) {
 }
 
 if ($Write) {
-    $root = if ($Root) { (Resolve-Path -LiteralPath $Root).Path } else { Split-Path $PSScriptRoot -Parent }
-    $m = [regex]::Match([IO.File]::ReadAllText((Join-Path $root "app\$key.cs")), 'AppVersion = "([^"]+)"')
+    $root = if ($Root) { (Resolve-Path -LiteralPath $Root).Path } else { Split-Path (Split-Path $PSScriptRoot -Parent) -Parent }
+    $m = [regex]::Match([IO.File]::ReadAllText((Join-Path $root "app\source\$key.cs")), 'AppVersion = "([^"]+)"')
     $version = if ($m.Success) { $m.Groups[1].Value } else { '?' }
     $lines = @("# Markdown Viewer (WebView2) - project files at install time",
                "# installed $(Get-Date -Format s)  version $version  commit $(Get-Commit $root)",
@@ -84,7 +84,7 @@ foreach ($line in Get-Content -LiteralPath $Record -Encoding UTF8) {
     if ($parts.Count -eq 2) { $then[$parts[1]] = $parts[0] }
 }
 # The project folder: as given, else the one recorded at install, else the folder this script is in.
-$root = if ($Root) { $Root } elseif ($folder) { $folder } else { Split-Path $PSScriptRoot -Parent }
+$root = if ($Root) { $Root } elseif ($folder) { $folder } else { Split-Path (Split-Path $PSScriptRoot -Parent) -Parent }
 if (-not (Test-Path -LiteralPath $root)) { Say "Project folder not found: $root" Yellow; exit 2 }
 $root = (Resolve-Path -LiteralPath $root).Path
 $now = Get-Hashes $root
@@ -95,7 +95,7 @@ $added   = @($now.Keys | Where-Object { -not $then.Contains($_) })
 Say "Project folder: $root"
 Say "Record:         $Record"
 $header | Select-Object -Skip 1 | ForEach-Object { Say "                $_" }
-Say "Checker:        $(if ($PSCommandPath) { $PSCommandPath } else { 'app\check-source.ps1, exactly as recorded (SHA-256 checked)' })"
+Say "Checker:        $(if ($PSCommandPath) { $PSCommandPath } else { 'app\Setup Scripts\check-source.ps1, exactly as recorded (SHA-256 checked)' })"
 Say "Commit now:     $(Get-Commit $root)"
 Say ''
 if (-not ($changed.Count + $removed.Count + $added.Count)) {

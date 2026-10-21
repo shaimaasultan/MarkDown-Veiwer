@@ -1,5 +1,5 @@
 # Build output (recreate with app\build.ps1)
 app/dist/
 app/release/
-# Large table for trying the viewer (recreate with test\make-million-csv.ps1)
-test/million-rows.csv
+# Large table for trying the viewer (recreate with docs\test\tools\make-million-csv.ps1)
+docs/test/fixtures/tables/million-rows.csv

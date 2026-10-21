@@ -10,7 +10,8 @@
 # folder (Documents) could otherwise run in place of the ones used here.
 $env:PSModulePath = "$PSHOME\Modules"
 $ErrorActionPreference = 'Stop'
-$here = $PSScriptRoot
+$scriptDir = $PSScriptRoot
+$here = Split-Path $scriptDir -Parent
 $name = 'Markdown Viewer (WebView2)'
 $key = 'MarkdownViewerWebView2'
 $exeName = "$key.exe"
@@ -57,8 +58,8 @@ $checkRecorded = @(
     '$env:PSModulePath = $PSHOME + ''\Modules'''
     '$r = Join-Path ([Environment]::GetFolderPath(''ProgramFiles'')) ''MarkdownViewerWebView2\source-manifest.txt'''
     'if (-not (Test-Path -LiteralPath $r)) { exit 2 }'
-    '$want = Get-Content -LiteralPath $r -Encoding UTF8 | Where-Object { $_.EndsWith([string][char]9 + ''app\check-source.ps1'') } | Select-Object -First 1'
-    '$b = [IO.File]::ReadAllBytes((Join-Path $env:MDV_PROJECT ''app\check-source.ps1''))'
+    '$want = Get-Content -LiteralPath $r -Encoding UTF8 | Where-Object { $_.EndsWith([string][char]9 + ''app\Setup Scripts\check-source.ps1'') } | Select-Object -First 1'
+    '$b = [IO.File]::ReadAllBytes((Join-Path $env:MDV_PROJECT ''app\Setup Scripts\check-source.ps1''))'
     'if (-not $want -or ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($b)) -replace ''-'', '''') -ne $want.Substring(0, 64)) { exit 3 }'
     '& ([scriptblock]::Create([Text.Encoding]::UTF8.GetString($b).TrimStart([char]0xFEFF))) -Root $env:MDV_PROJECT -Record $r -Quiet:($env:MDV_QUIET -eq ''1'')'
 ) -join '; '
@@ -76,7 +77,7 @@ switch (Invoke-RecordedChecker -Quiet) {
     2 { Write-Host 'No record from an earlier install yet; this install makes one.' }
     3 {
         Write-Host 'check-source.ps1 is not the one recorded at the last install, so the folder could not be checked with it.' -ForegroundColor Yellow
-        Write-Host 'Look at its changes (git diff app\check-source.ps1) before going on.'
+        Write-Host 'Look at its changes (git diff "app\Setup Scripts\check-source.ps1") before going on.'
         if (-not (Read-YesNo 'Build and install anyway?')) { Write-Host 'Nothing was built or installed.'; exit 1 }
     }
     default { Write-Host 'The project folder could not be compared with the last install (see above); this install makes a new record.' -ForegroundColor Yellow }
@@ -86,13 +87,13 @@ switch (Invoke-RecordedChecker -Quiet) {
 # program, where only an administrator can change it.
 New-Item -ItemType Directory -Force $dist | Out-Null
 $recordFile = Join-Path $dist 'source-manifest.txt'
-& (Join-Path $here 'check-source.ps1') -Write $recordFile
+& (Join-Path $scriptDir 'check-source.ps1') -Write $recordFile
 if ($LASTEXITCODE -ne 0) { Write-Host 'The project files could not be recorded; nothing was installed.'; exit 1 }
 # Always rebuild so the installed copy matches the current sources.
-& (Join-Path $here 'build.ps1') -Record $recordFile
+& (Join-Path $scriptDir 'build.ps1') -Record $recordFile
 # The sources must still be exactly as recorded: a change while building would mean the program was built
 # from something other than what the record says.
-& (Join-Path $here 'check-source.ps1') -Record $recordFile -Quiet
+& (Join-Path $scriptDir 'check-source.ps1') -Record $recordFile -Quiet
 if ($LASTEXITCODE -ne 0) {
     Write-Host 'The project files changed while the app was being built; nothing was installed.' -ForegroundColor Yellow
     Write-Host 'Run Install.cmd again once nothing is editing the project folder.'
