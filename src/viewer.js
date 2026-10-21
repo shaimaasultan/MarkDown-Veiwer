@@ -364,7 +364,7 @@ const isReadme = p => /(^|\/)readme\.[^/]+$/i.test(p) ? 1 : 0;
 function buildList() {
   const q = filter.value.trim().toLowerCase();
   const hidden = hiddenTypes();
-  buildTypeToggles();
+  buildToolbarTypeToggles();
   fileList.innerHTML = '';
   for (const p of mdPaths) {
     const shown = listBase && key(p).startsWith(key(listBase)) ? p.slice(listBase.length) : p;
@@ -2438,37 +2438,45 @@ function setHiddenTypes(set) {
   savePref('types', v);
 }
 
-function buildTypeToggles() {
-  const group = document.getElementById('typeFilterGroup');
-  const wrap = document.getElementById('typeToggles');
+function buildToolbarTypeToggles() {
   const countsLabel = document.getElementById('folderTypeCounts');
   const counts = new Map();
   for (const p of mdPaths) { const t = typeOf(p); if (t) counts.set(t.id, (counts.get(t.id) || 0) + 1); }
   const present = FILE_TYPES.filter(t => counts.get(t.id));
   const hidden = hiddenTypes();
-  wrap.replaceChildren();
-  group.hidden = present.length === 0;
+  countsLabel.replaceChildren();
   countsLabel.hidden = present.length === 0;
-  countsLabel.textContent = present.length
-    ? `Folder list: ${fmt(mdPaths.length)} files · ${present.map(t => `${t.label} ${fmt(counts.get(t.id))}`).join(' · ')}`
-    : '';
-  countsLabel.title = present.map(t => `${t.label}: ${fmt(counts.get(t.id))}`).join('\n');
-  for (const t of present) {
+  if (present.length) {
+    const total = document.createElement('span');
+    total.className = 'folder-total';
+    total.textContent = `${fmt(mdPaths.length)} files`;
+    countsLabel.appendChild(total);
+  }
+  const makeToggle = (t, count, className) => {
     const isShown = !hidden.has(t.id);
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'btn secondary icon type-toggle';
-    btn.textContent = t.icon;
+    btn.className = className;
     btn.setAttribute('aria-pressed', String(isShown));
-    btn.setAttribute('aria-label', `${t.label} (${fmt(counts.get(t.id))} files)`);
-    btn.title = `${t.label} — ${fmt(counts.get(t.id))} file${counts.get(t.id) === 1 ? '' : 's'}; click to ${isShown ? 'hide' : 'show'}`;
+    btn.setAttribute('aria-label', `${t.label}: ${fmt(count)} file${count === 1 ? '' : 's'}; ${isShown ? 'shown' : 'hidden'}. Toggle file type`);
+    btn.title = `${t.label} — ${fmt(count)} file${count === 1 ? '' : 's'}; click to ${isShown ? 'hide' : 'show'}`;
+    const icon = document.createElement('span');
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = t.icon;
+    const number = document.createElement('span');
+    number.textContent = fmt(count);
+    btn.append(icon, number);
     btn.addEventListener('click', () => {
       const h = hiddenTypes();
       if (h.has(t.id)) h.delete(t.id); else h.add(t.id);
       setHiddenTypes(h);
       buildList();
     });
-    wrap.appendChild(btn);
+    return btn;
+  };
+  for (const t of present) {
+    const count = counts.get(t.id);
+    countsLabel.appendChild(makeToggle(t, count, 'btn secondary type-toggle'));
   }
 }
 
@@ -2598,7 +2606,7 @@ function updateStats() {
   insBtn.type = 'button';
   insBtn.className = 'breakdown-btn ' + (warn || holders ? 'warn' : 'neutral');
   const parts = [warn && fmt(warn), holders && `${fmt(holders)} placeholder${holders === 1 ? '' : 's'}`].filter(Boolean);
-  insBtn.textContent = parts.length ? `⚠ Characters (${parts.join(' · ')})` : '🔍 Characters';
+  insBtn.textContent = parts.length ? `⚠ Encoding (${parts.join(' · ')})` : '🔍 Encoding';
   insBtn.title = [warn && `${fmt(warn)} invisible or unusual character(s)`,
                   holders && `${fmt(holders)} leftover placeholder text(s) such as TODO or [Insert …]`].filter(Boolean).join(' and ') +
     (parts.length ? ' found — click for the full list' : 'Encoding, escapes, hidden characters and placeholder text — click for details');
@@ -4163,6 +4171,34 @@ async function saveClean(what) {
 
 const copyBtn = document.getElementById('copyBtn');
 const copyMenu = document.getElementById('copyMenu');
+function wireDropdown(button, menu, { onSelect } = {}) {
+  const setOpen = open => {
+    menu.hidden = !open;
+    button.setAttribute('aria-expanded', String(open));
+    if (!open) return;
+    menu.classList.remove('align-left');
+    if (menu.getBoundingClientRect().left < 8) menu.classList.add('align-left');
+    menu.querySelector('button:not(:disabled)')?.focus();
+  };
+  button.addEventListener('click', ev => { ev.stopPropagation(); setOpen(menu.hidden); });
+  menu.addEventListener('click', ev => {
+    const item = ev.target.closest('[role="menuitem"]');
+    if (item && !item.disabled) { setOpen(false); onSelect?.(item); }
+  });
+  document.addEventListener('click', ev => { if (!menu.hidden && !ev.target.closest('.menu-wrap')) setOpen(false); });
+  menu.addEventListener('keydown', ev => {
+    const items = [...menu.querySelectorAll('[role="menuitem"]:not(:disabled)')];
+    const i = items.indexOf(document.activeElement);
+    if (ev.key === 'Escape') { setOpen(false); button.focus(); }
+    else if (ev.key === 'ArrowDown') { ev.preventDefault(); items[(i + 1) % items.length]?.focus(); }
+    else if (ev.key === 'ArrowUp') { ev.preventDefault(); items[(i - 1 + items.length) % items.length]?.focus(); }
+  });
+}
+wireDropdown(document.getElementById('openMenuBtn'), document.getElementById('openMenu'), {
+  onSelect: item => (item.dataset.open === 'folder' ? picker : filePicker).click()
+});
+wireDropdown(document.getElementById('documentMenuBtn'), document.getElementById('documentMenu'));
+wireDropdown(document.getElementById('settingsMenuBtn'), document.getElementById('settingsMenu'));
 function setCopyMenu(open) {
   copyMenu.hidden = !open;
   copyBtn.setAttribute('aria-expanded', String(open));
@@ -4179,6 +4215,7 @@ copyMenu.addEventListener('click', ev => {
   const item = ev.target.closest('[data-action]');
   if (!item) return;
   setCopyMenu(false);
+  if (item.dataset.action === 'pdf') return;
   if (item.dataset.action === 'save') saveClean(item.dataset.what);
   else if (item.dataset.action === 'html') exportHtml();
   else copyClean(item.dataset.what);
@@ -4799,11 +4836,11 @@ updateHiddenButton();
 const picBtn = document.getElementById('picBtn');
 function updatePicButton() {
   const off = picturesBlocked();
-  picBtn.textContent = off ? '🚫 Pictures off' : '🖼️ Pictures on';
+  picBtn.textContent = off ? '🖼️ Show pictures' : '🙈 Hide pictures';
   picBtn.classList.toggle('pic-off', off);
   picBtn.setAttribute('aria-pressed', String(!off));
-  picBtn.title = off ? 'Pictures are off: documents open without loading pictures — click to show them (Ctrl+Shift+B)'
-                     : 'Pictures are on — click to open documents without loading pictures (Ctrl+Shift+B)';
+  picBtn.title = off ? 'Pictures are hidden — click to show them (Ctrl+Shift+B)'
+                     : 'Pictures are shown — click to hide them (Ctrl+Shift+B)';
 }
 function togglePictures() {
   const next = picturesBlocked() ? 'shown' : 'blocked';

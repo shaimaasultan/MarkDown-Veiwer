@@ -86,13 +86,11 @@
     .toolbar-nav { flex: 1 1 26rem; flex-wrap: nowrap; padding-inline-start: 0; }
     .toolbar-nav h1 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .toolbar-view { border-inline-end: 0; }
-    .folder-type-counts { flex: 1 1 18rem; min-width: 12rem; max-width: 30rem; color: var(--muted); font-size: .76rem; line-height: 1.4; }
+    .toolbar-document-menu { margin-inline-start: auto; border-inline-end: 0; }
+    .folder-type-counts { display: flex; flex: 1 1 18rem; min-width: 12rem; max-width: 30rem; align-items: center; gap: .3rem; flex-wrap: wrap; color: var(--muted); font-size: .76rem; line-height: 1.4; }
     .folder-type-counts[hidden] { display: none; }
-    .type-filter-group { margin: 0 .75rem .5rem; padding: .5rem; border: 1px solid var(--border); border-radius: 8px; }
-    #typeFilterGroup[hidden] { display: none; }
-    .type-filter-title { margin: 0 0 .4rem .1rem; color: var(--muted); font-size: .7rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
-    #typeToggles { display: flex; align-items: center; gap: .3rem; flex-wrap: wrap; }
-    .btn.icon.type-toggle { min-width: 2.35rem; width: 2.35rem; height: 2.35rem; padding: .25rem; font-size: .95rem; }
+    .folder-type-counts .folder-total { margin-inline-end: .15rem; white-space: nowrap; }
+    .folder-type-counts .type-toggle { display: inline-flex; width: auto; min-width: 2.35rem; height: 2.1rem; align-items: center; justify-content: center; gap: .2rem; padding: .2rem .4rem; font-size: .76rem; }
     .type-toggle[aria-pressed="false"] { opacity: .48; }
 
     main { flex: 1; display: flex; min-height: 0; }
@@ -789,20 +787,16 @@
       <h1>📁 Markdown Folder Viewer</h1>
     </div>
     <div class="toolbar-group toolbar-files" role="group" aria-label="Open and find files">
-      <label for="picker" class="btn">📁 Choose Folder</label>
+      <div class="menu-wrap">
+        <button id="openMenuBtn" class="btn" aria-haspopup="menu" aria-expanded="false">📂 Open ▾</button>
+        <div id="openMenu" class="menu" role="menu" hidden>
+          <div class="menu-label">Open files</div>
+          <button type="button" role="menuitem" data-open="folder">📁 Open Folder…<span>Choose a folder and list its files</span></button>
+          <button type="button" role="menuitem" data-open="files">📄 Open Files…<span>Choose individual files</span></button>
+        </div>
+      </div>
       <input type="file" id="picker" webkitdirectory directory multiple />
-      <label for="filePicker" class="btn secondary">📄 Open Files</label>
       <input type="file" id="filePicker" multiple />
-      <button id="pdfBtn" class="btn secondary" disabled title="Open a markdown file first">🖨️ Save as PDF</button>
-      <button id="findBtn" class="btn secondary" disabled title="Find in document (Ctrl+F)">🔎 Find</button>
-      <span id="folderTypeCounts" class="folder-type-counts" role="status" aria-live="polite" hidden></span>
-    </div>
-    <div class="toolbar-group toolbar-document" role="group" aria-label="Document tools">
-      <button id="tocBtn" class="btn secondary" disabled title="Show/hide the table of contents (Ctrl+Shift+O)">📑 Contents</button>
-      <button id="imgBtn" class="btn secondary" disabled title="Show/hide the list of pictures in this document (Ctrl+Shift+G)">🖼️ Images</button>
-      <button id="linkBtn" class="btn secondary" disabled title="Show/hide the list of links in this document (Ctrl+Shift+L)">🔗 Links</button>
-      <button id="srcBtn" class="btn secondary" disabled title="Show the Markdown source next to the document (Ctrl+Shift+U)">&lt;/&gt; Source</button>
-      <button id="cmpBtn" class="btn secondary" disabled title="Compare this document with another version">⇄ Compare</button>
       <div class="menu-wrap">
         <button id="copyBtn" class="btn secondary" disabled aria-haspopup="menu" aria-expanded="false"
                 title="Save or copy the document without hidden characters">💾 Export ▾</button>
@@ -816,17 +810,42 @@
           <hr>
           <div class="menu-label">As shown</div>
           <button role="menuitem" data-action="html"><b>🌐 Save as web page (.html)</b><span>One self-contained file with pictures, math and diagrams — no scripts</span></button>
+          <hr>
+          <button id="pdfBtn" type="button" role="menuitem" data-action="pdf" disabled title="Open a document first">🖨️ Save as PDF<span>Print this document or save it as a PDF</span></button>
         </div>
       </div>
+      <div id="folderTypeCounts" class="folder-type-counts" role="group" aria-label="Folder file type counts and filters" hidden></div>
+    </div>
+    <div class="toolbar-group toolbar-document" role="group" aria-label="Document tools">
+      <button id="cmpBtn" class="btn secondary" disabled title="Compare this document with another version">⇄ Compare</button>
     </div>
     <div class="toolbar-group toolbar-view" role="group" aria-label="View settings">
       <button id="hiddenBtn" class="btn secondary" title="Show invisible characters in the document (Ctrl+Shift+H)">¶ Hidden</button>
-      <button id="picBtn" class="btn secondary" aria-pressed="true">🖼️ Pictures on</button>
+      <button id="findBtn" class="btn secondary" disabled title="Find in document (Ctrl+F)">🔎 Find</button>
+      <button id="picBtn" class="btn secondary" aria-pressed="true">🙈 Hide pictures</button>
       <button id="sizeDown" class="btn secondary icon" aria-label="Smaller text">A−</button>
       <button id="sizeUp" class="btn secondary icon" aria-label="Larger text">A+</button>
       <button id="widthBtn" class="btn secondary icon">↔</button>
-      <button id="themeBtn" class="btn secondary" title="Theme: follow Windows, light or dark">🖥️ Auto</button>
-      <button id="aboutBtn" class="btn secondary" title="Versions and sources of the libraries used">ℹ️ About</button>
+      <div class="menu-wrap">
+        <button id="settingsMenuBtn" class="btn secondary" aria-haspopup="menu" aria-expanded="false">⚙️ More ▾</button>
+        <div id="settingsMenu" class="menu" role="menu" hidden>
+          <div class="menu-label">Appearance and information</div>
+          <button id="themeBtn" type="button" role="menuitem" title="Theme: follow Windows, light or dark">🖥️ Auto</button>
+          <button id="aboutBtn" type="button" role="menuitem" title="Versions and sources of the libraries used">ℹ️ About</button>
+        </div>
+      </div>
+    </div>
+    <div class="toolbar-group toolbar-document-menu" role="group" aria-label="Document panels">
+      <div class="menu-wrap">
+        <button id="documentMenuBtn" class="btn secondary" aria-haspopup="menu" aria-expanded="false">📚 Document ▾</button>
+        <div id="documentMenu" class="menu" role="menu" hidden>
+          <div class="menu-label">Document panels</div>
+          <button id="tocBtn" type="button" role="menuitem" disabled title="Show/hide the table of contents (Ctrl+Shift+O)">📑 Contents</button>
+          <button id="imgBtn" type="button" role="menuitem" disabled title="Show/hide the list of pictures in this document (Ctrl+Shift+G)">🖼️ Images</button>
+          <button id="linkBtn" type="button" role="menuitem" disabled title="Show/hide the list of links in this document (Ctrl+Shift+L)">🔗 Links</button>
+          <button id="srcBtn" type="button" role="menuitem" disabled title="Show the Markdown source next to the document (Ctrl+Shift+U)">&lt;/&gt; Source</button>
+        </div>
+      </div>
     </div>
   </header>
 
@@ -948,10 +967,6 @@
   <main>
     <aside id="sidebar" hidden>
       <input id="filter" type="search" placeholder="Filter files…" />
-      <div id="typeFilterGroup" class="type-filter-group" hidden>
-        <div class="type-filter-title">File types</div>
-        <div id="typeToggles" role="group" aria-label="Filter file list by type"></div>
-      </div>
       <ul id="fileList"></ul>
     </aside>
     <section id="content">
