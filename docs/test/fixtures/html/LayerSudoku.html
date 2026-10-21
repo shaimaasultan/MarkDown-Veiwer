@@ -1,0 +1,2397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Layer Sudoku</title>
+<style>
+:root{
+  --bg:#f5f4ef; --surface:#ffffff; --ink:#1c1e23; --muted:#6a6e77;
+  --line:#cfd2d8; --line-strong:#1c1e23;
+  --given:#1c1e23; --user:#2455c7; --wrong:#c42626; --wrong-bg:#fbe3e3;
+  --sel:#c9dbff; --peer:#edf0f5; --same:#d6e3fc;
+  --blocked:#b4b7be; --blocked-ink:#4a4d54;
+  --forced:#ffe14d; --forced-ink:#1c1e23;
+  --ldig:#ffb35c;
+  --accent:#2455c7; --accent-ink:#ffffff; --btn:#e9e7e0; --btn-ink:#1c1e23;
+  --shadow:0 1px 2px rgba(0,0,0,.08),0 4px 14px rgba(0,0,0,.06);
+  --dl:40%; --ds:78%; --cs:78%; --cl:84%; --cell-ink:#1c1e23; --user-on:#1d47b0;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#131519; --surface:#1c1f25; --ink:#e7e8eb; --muted:#9aa0aa;
+    --line:#383d46; --line-strong:#c9cdd4;
+    --given:#e7e8eb; --user:#86abff; --wrong:#ff6f6f; --wrong-bg:#4a2328;
+    --sel:#2e4172; --peer:#242830; --same:#2a3654;
+    --blocked:#4a4d55; --blocked-ink:#b9bcc3;
+    --forced:#e0c21e; --forced-ink:#111;
+    --ldig:#c9782a;
+    --accent:#6f98ff; --accent-ink:#0d1117; --btn:#2a2e36; --btn-ink:#e7e8eb;
+    --shadow:0 1px 2px rgba(0,0,0,.4);
+    --dl:70%; --ds:80%; --cs:42%; --cl:33%; --cell-ink:#f3f4f6; --user-on:#c3d5ff;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#131519; --surface:#1c1f25; --ink:#e7e8eb; --muted:#9aa0aa;
+  --line:#383d46; --line-strong:#c9cdd4;
+  --given:#e7e8eb; --user:#86abff; --wrong:#ff6f6f; --wrong-bg:#4a2328;
+  --sel:#2e4172; --peer:#242830; --same:#2a3654;
+  --blocked:#4a4d55; --blocked-ink:#b9bcc3;
+  --forced:#e0c21e; --forced-ink:#111;
+  --ldig:#c9782a;
+  --accent:#6f98ff; --accent-ink:#0d1117; --btn:#2a2e36; --btn-ink:#e7e8eb;
+  --shadow:0 1px 2px rgba(0,0,0,.4);
+  --dl:70%; --ds:80%; --cs:42%; --cl:33%; --cell-ink:#f3f4f6; --user-on:#c3d5ff;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--ink)}
+body{font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  padding:max(12px,env(safe-area-inset-top)) 16px max(20px,env(safe-area-inset-bottom));
+  touch-action:manipulation;-webkit-user-select:none;user-select:none}
+.wrap{max-width:560px;margin:0 auto}
+/* cube column: beside the game on wide screens, below it on phones */
+.cubecol{max-width:560px;margin:18px auto 0;background:var(--surface);border-radius:14px;box-shadow:var(--shadow);padding:12px}
+@media (min-width:1100px){
+  .app.withcube{display:flex;justify-content:center;align-items:flex-start;gap:28px}
+  .app.withcube .wrap{margin:0;flex:0 0 560px}
+  .app.withcube .cubecol{margin:0;flex:0 1 620px;max-width:620px;position:sticky;top:12px}
+}
+.cubecol > header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.cubecol h2{font-size:17px;margin:0}
+.cubecol .sub{font-size:12px;color:var(--muted);margin:0 0 8px}
+#cubeCanvas{width:100%;aspect-ratio:1/1;display:block;touch-action:none;border-radius:10px;background:var(--bg);cursor:grab}
+#cubeCanvas:active{cursor:grabbing}
+.cubectl{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.cubectl button{padding:7px 11px;font-size:14px}
+.cubectl label{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:5px}
+.cubectl select{flex:0 0 auto;padding:6px 8px;font-size:13px}
+.cubectl input[type=range]{width:90px}
+.cubestep{background:var(--bg);border-radius:10px;padding:8px 10px;margin-top:8px;font-size:13.5px;min-height:58px}
+.cubestep .no{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;margin-bottom:3px}
+.famtag{display:inline-block;font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;margin-right:6px;color:#fff;vertical-align:1px;text-transform:uppercase;letter-spacing:.03em}
+.cubestats{font-size:11.5px;color:var(--muted);margin-top:6px;font-variant-numeric:tabular-nums}
+.cubebody{display:grid;grid-template-columns:1fr;gap:8px}
+.miniboard{display:grid;width:100%;max-width:280px;aspect-ratio:1/1;margin:8px auto 0;border:2px solid var(--line-strong);border-radius:3px;overflow:hidden;background:var(--surface)}
+.miniboard div{display:flex;align-items:center;justify-content:center;font-size:var(--mfs);color:var(--user);border-right:1px solid var(--line);border-bottom:1px solid var(--line);min-width:0;min-height:0;line-height:1}
+.miniboard div.br{border-right:2px solid var(--line-strong)}
+.miniboard div.bb{border-bottom:2px solid var(--line-strong)}
+.miniboard div.lc{border-right:0}.miniboard div.lr{border-bottom:0}
+.miniboard div.g{color:var(--ink);font-weight:800}
+.miniboard div.sim{background:hsl(var(--h) var(--cs) var(--cl));color:var(--cell-ink)}
+.miniboard div.ln{box-shadow:inset 0 0 0 2px var(--accent)}
+.miniboard div.cur{box-shadow:inset 0 0 0 3px #e0443e}
+.cubelegend{display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--muted);margin-top:6px}
+.cubelegend i{display:inline-block;width:10px;height:10px;margin-right:4px;vertical-align:-1px;border-radius:2px}
+header{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:10px}
+header.top{align-items:center}
+h1{font-size:20px;margin:0;letter-spacing:-.01em;white-space:nowrap}
+.by{font-size:12px;color:var(--muted);display:block}
+.iconbtns{display:flex;gap:6px;flex-shrink:0}
+.iconbtns button{padding:7px 10px;font-size:13px;display:flex;align-items:center;gap:5px;white-space:nowrap}
+.iconbtns button i{font-style:normal;font-size:15px;line-height:1}
+.swatch{display:inline-flex;gap:1px;border-radius:3px;overflow:hidden}
+.swatch b{width:4px;height:12px}
+/* one colour per number */
+/* every cell holding the same number gets the same background colour */
+body.colorful .cell.filled:not(.ldig):not(.forced):not(.wrong){background:hsl(var(--h) var(--cs) var(--cl));color:var(--user-on)}
+body.colorful .cell.filled.given:not(.ldig):not(.forced):not(.wrong){color:var(--cell-ink);font-weight:800}
+body.colorful .cell.filled.sel{box-shadow:inset 0 0 0 3px var(--accent)}
+body.colorful .cell.filled.same{box-shadow:inset 0 0 0 2px var(--cell-ink)}
+body.colorful .pad button,
+body.colorful .chips button:not(.on){background:hsl(var(--h) var(--cs) var(--cl));color:var(--cell-ink)}
+body.colorful .pad button small{color:var(--cell-ink);opacity:.6}
+body.colorful .notes span{color:hsl(var(--h) var(--ds) var(--dl))}
+/* fixed palettes (high contrast, colour-blind friendly): colours set per digit from JS */
+body.colorful.pal-fixed .cell.filled:not(.ldig):not(.forced):not(.wrong){background:var(--cbg);color:var(--cfg);font-weight:400;font-style:italic}
+body.colorful.pal-fixed .cell.filled.given:not(.ldig):not(.forced):not(.wrong){color:var(--cfg);font-weight:800;font-style:normal}
+body.colorful.pal-fixed .cell.filled.same{box-shadow:inset 0 0 0 3px var(--surface)}
+body.colorful.pal-fixed .cell.filled.sel{box-shadow:inset 0 0 0 3px var(--surface),inset 0 0 0 5px var(--accent)}
+body.colorful.pal-fixed .pad button,
+body.colorful.pal-fixed .chips button:not(.on){background:var(--cbg);color:var(--cfg)}
+body.colorful.pal-fixed .pad button small{color:var(--cfg)}
+body.colorful.pal-fixed .notes span{color:var(--muted)}
+header.top{position:relative}
+.menu{position:absolute;right:0;top:calc(100% + 6px);z-index:5;background:var(--surface);border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.25);padding:6px;width:min(300px,calc(100vw - 32px))}
+.menu button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;padding:9px 8px;border-radius:8px;white-space:normal}
+.menu button > span:nth-child(2){flex:1;min-width:0}
+.menu button.cur{background:var(--btn)}
+.menu .sw{display:grid;grid-template-columns:repeat(9,12px);gap:2px;flex-shrink:0}
+.menu .sw i{width:12px;height:12px;border-radius:2px;display:block}
+.menu .sw.none i{background:var(--bg);box-shadow:inset 0 0 0 1px var(--line)}
+.menu b{display:block;font-size:14px}
+.menu small{display:block;font-size:11px;color:var(--muted)}
+.menu .chk{margin-left:auto;color:var(--accent);font-weight:700}
+.cal{margin-top:10px}
+.calhead{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.calhead button{padding:4px 14px;font-size:16px}
+.calgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;text-align:center}
+.calgrid .wd{font-size:11px;color:var(--muted);padding-bottom:2px}
+.calgrid .d{aspect-ratio:1;display:flex;align-items:center;justify-content:center;border-radius:50%;font-size:13px;font-variant-numeric:tabular-nums;margin:0 auto;width:100%;max-width:40px}
+.calgrid .d.solved{background:var(--forced);color:var(--forced-ink);font-weight:700}
+.calgrid .d.today{box-shadow:inset 0 0 0 2px var(--accent)}
+.calgrid .d.future{opacity:.3}
+.calgrid .d.missed{color:var(--muted)}
+.calgrid .d.play{cursor:pointer}
+.calgrid .d.chal{position:relative}
+.calgrid .d.chal::after{content:"🎯";position:absolute;font-size:10px;right:-3px;bottom:-4px}
+.chal{display:flex;align-items:center;gap:8px;background:var(--surface);border-radius:12px;padding:7px 8px 7px 10px;margin:0 0 8px;box-shadow:var(--shadow);font-size:13px}
+.chal .ico{font-size:18px}
+.chal .txt{flex:1;min-width:0;line-height:1.25}
+.chal .txt small{display:block;font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.chal button{padding:6px 12px;font-size:13px}
+.chal.done{background:var(--forced);color:var(--forced-ink)}
+.chal.done .txt small{color:var(--forced-ink);opacity:.7}
+.tools button.out{opacity:.45}
+.controls{display:flex;gap:8px;margin-bottom:10px}
+.controls button.daily{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:4px 10px;line-height:1.15;white-space:nowrap}
+.controls button.daily span{font-size:13px;font-weight:600}
+.controls button.daily small{font-size:11px;opacity:.85;font-variant-numeric:tabular-nums}
+.controls button.daily.done{background:var(--forced);color:var(--forced-ink)}
+.streakbox{display:flex;gap:8px;margin:4px 0 2px}
+.streakbox div{flex:1;background:var(--bg);border-radius:10px;padding:8px 6px;text-align:center}
+.streakbox b{display:block;font-size:20px;font-variant-numeric:tabular-nums}
+.streakbox span{font-size:11px;color:var(--muted)}
+.lbname{display:flex;gap:8px;align-items:center;margin:2px 0 8px}
+.lbname label{font-size:13px;color:var(--muted);white-space:nowrap}
+.codein{width:100%;font:14px/1.3 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.04em;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:9px 10px;-webkit-user-select:text;user-select:text}
+.wkcells{display:inline-flex;gap:2px;vertical-align:middle}
+.wkcells i{width:9px;height:14px;border-radius:2px;background:var(--line);display:block}
+.wkcells i.y{background:var(--forced)}
+.wkcells i.f{opacity:.35}
+.lbname input{flex:1;min-width:0;font:inherit;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:8px 10px;-webkit-user-select:text;user-select:text}
+.tabs{display:flex;gap:4px;background:var(--bg);border-radius:10px;padding:3px;margin-bottom:8px}
+.tabs button{flex:1;padding:7px 2px;font-size:12.5px;background:none;border-radius:8px}
+.tabs button.on{background:var(--surface);color:var(--ink);box-shadow:var(--shadow);font-weight:600}
+.lb td.rank{width:22px;color:var(--muted);font-weight:600}
+.lb tr.me td{background:var(--same)}
+.lb td .who{font-weight:600}
+.lb td small{display:block;font-size:10px;color:var(--muted)}
+.lb td .rm{padding:0 6px;font-size:14px;background:none;color:var(--muted);margin-left:2px}
+.lb .medal{font-size:15px}
+.addfriend textarea{width:100%;min-height:74px;font:12px/1.3 ui-monospace,Menlo,Consolas,monospace;border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--bg);color:var(--ink);resize:vertical;-webkit-user-select:text;user-select:text}
+.badgelink{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--bg);border-radius:10px;padding:8px 10px;margin-top:4px}
+.badgelink span{font-size:14px;font-weight:600}
+.bsum{background:var(--bg);border-radius:12px;padding:10px 12px;margin:2px 0 4px}
+.bsum b{font-size:22px}
+.bsum span{color:var(--muted);font-size:13px;margin-left:4px}
+.bsum .bar{height:6px;background:var(--line);border-radius:3px;margin-top:6px;overflow:hidden}
+.bsum .bar i{display:block;height:100%;background:var(--forced)}
+.hist header .hbtns{display:flex;gap:6px}
+.sharebox textarea{width:100%;min-height:170px;font:13px/1.4 ui-monospace,Menlo,Consolas,monospace;border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--bg);color:var(--ink);resize:none;-webkit-user-select:text;user-select:text}
+.toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:999px;font-size:13px;z-index:30;box-shadow:var(--shadow)}
+.badges{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:4px}
+.bdg{background:var(--bg);border-radius:10px;padding:8px 4px 7px;text-align:center;position:relative}
+.bdg .em{font-size:26px;line-height:1.1;display:block}
+.bdg b{display:block;font-size:11.5px;line-height:1.2;margin-top:3px}
+.bdg small{display:block;font-size:10px;color:var(--muted);line-height:1.2;margin-top:2px}
+.bdg.locked .em{filter:grayscale(1);opacity:.35}
+.bdg.locked b{color:var(--muted)}
+.bdg .bar{height:4px;background:var(--line);border-radius:2px;margin:5px 6px 0;overflow:hidden}
+.bdg .bar i{display:block;height:100%;background:var(--accent)}
+.bdg.earned{box-shadow:inset 0 0 0 1.5px var(--forced)}
+.bdg.fresh::after{content:"NEW";position:absolute;top:4px;right:4px;font-size:8px;font-weight:700;background:var(--wrong);color:#fff;border-radius:3px;padding:1px 3px}
+#win .modal{max-height:92vh;overflow:auto}
+.newbadges{display:flex;flex-direction:column;gap:6px;margin:0 0 12px}
+.newbadges div{display:flex;align-items:center;gap:10px;background:var(--bg);border-radius:10px;padding:8px 10px;text-align:left;animation:pop .5s ease-out both}
+.newbadges .em{font-size:28px}
+.newbadges b{display:block;font-size:14px}
+.newbadges small{color:var(--muted);font-size:12px}
+@keyframes pop{0%{transform:scale(.7);opacity:0}70%{transform:scale(1.05)}100%{transform:scale(1);opacity:1}}
+.tag{display:inline-block;font-size:10px;font-weight:600;background:var(--forced);color:var(--forced-ink);border-radius:4px;padding:0 4px;margin-left:4px;vertical-align:1px}
+select,button{font:inherit;color:var(--btn-ink)}
+select{flex:1;min-width:0;background:var(--btn);border:0;border-radius:10px;padding:9px 10px;appearance:none;-webkit-appearance:none}
+button{background:var(--btn);border:0;border-radius:10px;padding:9px 12px;cursor:pointer}
+button:active{transform:scale(.97)}
+button.primary{background:var(--accent);color:var(--accent-ink);font-weight:600}
+button.on{background:var(--accent);color:var(--accent-ink)}
+button:disabled{opacity:.4}
+.status{display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--muted);margin:0 2px 6px;font-variant-numeric:tabular-nums}
+.pausebtn{padding:4px 10px;font-size:13px;border-radius:999px;font-variant-numeric:tabular-nums;margin:-4px 0}
+.pausebtn #pauseIcon{font-size:11px}
+.boardwrap{position:relative}
+.pausecover{position:absolute;inset:0;background:var(--surface);border:2px solid var(--line-strong);border-radius:4px;
+  display:flex;align-items:center;justify-content:center;text-align:center;cursor:pointer;z-index:2}
+.pausecover > div{display:flex;flex-direction:column;gap:6px;align-items:center}
+.pausecover .big{width:72px;height:72px;border-radius:50%;background:var(--accent);color:var(--accent-ink);display:flex;align-items:center;justify-content:center;font-size:30px}
+.pausecover b{font-size:20px}
+.pausecover span{color:var(--muted);font-size:14px}
+body.paused .tools,body.paused .pad{opacity:.35;pointer-events:none}
+body.paused #hintPanel,body.paused #layerPanel{display:none}
+.board{display:grid;width:100%;aspect-ratio:1/1;background:var(--surface);border:2px solid var(--line-strong);border-radius:4px;box-shadow:var(--shadow);overflow:hidden}
+.cell{position:relative;display:flex;align-items:center;justify-content:center;border-right:1px solid var(--line);border-bottom:1px solid var(--line);
+  font-size:var(--fs);font-weight:500;color:var(--user);cursor:pointer;min-width:0;min-height:0;line-height:1}
+.cell.br{border-right:2px solid var(--line-strong)}
+.cell.bb{border-bottom:2px solid var(--line-strong)}
+.cell.lc{border-right:0}.cell.lr{border-bottom:0}
+.cell.given{color:var(--given);font-weight:700}
+.cell.peer{background:var(--peer)}
+.cell.same{background:var(--same)}
+.cell.sel{background:var(--sel)}
+.cell.wrong{color:var(--wrong);background:var(--wrong-bg)}
+.cell.blk{background:var(--blocked);color:var(--blocked-ink)}
+.cell.ldig{background:var(--ldig);color:var(--forced-ink)}
+.cell.forced{background:var(--forced);color:var(--forced-ink)}
+.cell.focus{box-shadow:inset 0 0 0 3px var(--accent);animation:pulse 1.1s ease-in-out infinite}
+@keyframes pulse{50%{box-shadow:inset 0 0 0 1px var(--accent)}}
+.cell.unitmark{box-shadow:inset 0 0 0 2px var(--accent)}
+.notes{position:absolute;inset:1px;display:grid;font-size:var(--nfs);font-weight:500;color:var(--muted);line-height:1}
+.notes span{display:flex;align-items:center;justify-content:center}
+.tools{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin:12px 0 8px}
+.tools button{padding:8px 2px;font-size:13px;display:flex;flex-direction:column;align-items:center;gap:2px}
+.tools b{font-size:18px;line-height:1;font-weight:500}
+.pad{display:grid;gap:6px}
+.pad button{padding:0;height:46px;font-size:22px;font-weight:500;position:relative;background:var(--surface);box-shadow:var(--shadow);color:var(--user)}
+.pad button small{position:absolute;right:5px;bottom:3px;font-size:10px;color:var(--muted);font-weight:400}
+.pad button.done{opacity:.25}
+.pad.dense button{height:40px;font-size:18px}
+.panel{background:var(--surface);border-radius:12px;padding:10px 12px;margin-top:10px;box-shadow:var(--shadow)}
+.panel h2{font-size:14px;margin:0 0 6px}
+.panel p{margin:4px 0;font-size:13px;color:var(--muted)}
+.panel p.msg{color:var(--ink);font-size:14px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+.chips button{padding:5px 9px;font-size:14px;border-radius:999px}
+.chips button small{color:inherit;opacity:.65;margin-left:3px;font-size:11px}
+.legend{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:4px}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-2px;margin-right:4px}
+.row{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+.hidden{display:none!important}
+.foot{margin-top:12px;font-size:12px;color:var(--muted);display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.foot label{display:flex;align-items:center;gap:6px}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:16px;z-index:10}
+.modal{background:var(--surface);border-radius:14px;padding:20px;max-width:340px;width:100%;text-align:center;box-shadow:var(--shadow)}
+.modal h2{margin:0 0 6px}
+.modal p{color:var(--muted);margin:0 0 14px}
+.modal .row{justify-content:center}
+.score{font-size:34px;font-weight:700;color:var(--ink);margin:2px 0 4px;font-variant-numeric:tabular-nums}
+.badge{display:inline-block;background:var(--forced);color:var(--forced-ink);border-radius:999px;padding:2px 10px;font-size:12px;font-weight:600;margin-bottom:10px}
+.foot button{padding:6px 12px;font-size:13px}
+.hist{max-width:480px;max-height:86vh;display:flex;flex-direction:column;text-align:left;padding:16px}
+.hist header{margin-bottom:6px}
+.hist h3{font-size:13px;margin:12px 0 4px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.hist .scroll{overflow:auto;-webkit-overflow-scrolling:touch;margin:0 -4px;padding:0 4px}
+.hist table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+.hist th{text-align:left;font-weight:600;color:var(--muted);font-size:11px;padding:4px 4px;border-bottom:1px solid var(--line)}
+.hist td{padding:6px 4px;border-bottom:1px solid var(--line)}
+.hist td.num,.hist th.num{text-align:right}
+.hist .empty{color:var(--muted);font-size:13px;padding:8px 0}
+.hist .note{font-size:11px;color:var(--muted);margin:10px 0 0}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Layer Sudoku</h1>
+      <span class="by">Layer–propagation method · S. S. Soltan</span>
+    </div>
+    <div class="iconbtns">
+      <button id="colorBtn" aria-label="Number colours"><span class="swatch"><b style="background:#e0443e"></b><b style="background:#e8b21f"></b><b style="background:#3aa757"></b><b style="background:#3b7de0"></b><b style="background:#9b51e0"></b></span><span id="colorLbl">Colors</span></button>
+      <div id="colorMenu" class="menu hidden" role="menu"></div>
+      <button id="themeBtn" aria-label="Theme"><i id="themeIcon">◐</i><span id="themeLbl">Auto</span></button>
+    </div>
+  </header>
+
+  <div class="controls">
+    <select id="size" aria-label="Grid size">
+      <option value="6">6×6</option>
+      <option value="9" selected>9×9</option>
+      <option value="12">12×12</option>
+      <option value="16">16×16</option>
+    </select>
+    <select id="level" aria-label="Difficulty">
+      <option value="easy">Easy</option>
+      <option value="medium">Medium</option>
+      <option value="hard">Hard</option>
+      <option value="expert">Expert</option>
+    </select>
+    <button id="newBtn" class="primary">New</button>
+    <button id="dailyBtn" class="daily" aria-label="Daily puzzle"><span>📅 Daily</span><small id="dailyStreak">🔥 0</small></button>
+  </div>
+
+  <div id="chal" class="chal">
+    <span class="ico">🎯</span>
+    <span class="txt"><small id="chalHead">Today's challenge</small><span id="chalText"></span></span>
+    <button id="chalPlay" class="primary">Play</button>
+  </div>
+
+  <div class="status">
+    <span id="stLevel">—</span>
+    <span id="stInfo"></span>
+    <button id="pauseBtn" class="pausebtn" aria-label="Pause"><span id="pauseIcon">⏸</span> <span id="stTime">0:00</span></button>
+  </div>
+
+  <div class="boardwrap">
+    <div id="board" class="board"></div>
+    <div id="pauseCover" class="pausecover hidden">
+      <div><div class="big">⏸</div><b>Paused</b><span>Tap to resume</span></div>
+    </div>
+  </div>
+
+  <div class="tools">
+    <button id="undoBtn"><b>↶</b>Undo</button>
+    <button id="eraseBtn"><b>⌫</b>Erase</button>
+    <button id="notesBtn"><b>✎</b>Notes</button>
+    <button id="hintBtn"><b>?</b>Hint</button>
+    <button id="layerBtn"><b>▦</b>Layer</button>
+    <button id="cubeBtn"><b>🧊</b>Cube</button>
+  </div>
+
+  <div id="pad" class="pad"></div>
+
+  <div id="hintPanel" class="panel hidden">
+    <h2 id="hintTitle">Hint</h2>
+    <p id="hintMsg" class="msg"></p>
+    <div class="row">
+      <button id="hintPlace" class="primary">Place it</button>
+      <button id="hintClose">Close</button>
+    </div>
+  </div>
+
+  <div id="layerPanel" class="panel hidden">
+    <h2>Layers — most repeated number first</h2>
+    <p>Pick a digit to see its layer. Small number = how many times it is already on the board.</p>
+    <div id="chips" class="chips"></div>
+    <div class="legend">
+      <span><i style="background:var(--ldig)"></i>has the digit</span>
+      <span><i style="background:var(--blocked)"></i>cannot be it</span>
+      <span><i style="background:var(--forced)"></i>only open cell in its box</span>
+    </div>
+    <p id="layerMsg" class="msg"></p>
+    <div class="row">
+      <button id="fillYellow" class="primary">Fill yellow cells</button>
+      <button id="layerClose">Close</button>
+    </div>
+  </div>
+
+  <div class="foot">
+    <label><input type="checkbox" id="optMistakes" checked> Highlight mistakes</label>
+    <label><input type="checkbox" id="optSound" checked> Sound</label>
+    <label>Puzzles <select id="optFamily" style="padding:4px 8px;font-size:12px"><option value="varied">Varied</option><option value="classic">Classic (Rubik)</option></select></label>
+    <span id="saveNote"></span>
+    <span class="row" style="margin:0"><button id="lbBtn">👥 Friends</button><button id="badgesBtn">🏅 Badges</button><button id="histBtn">🏆 History</button></span>
+  </div>
+</div>
+
+<section id="cubeCol" class="cubecol hidden" aria-label="Cube view">
+  <header><h2>🧊 Cube method</h2><span class="row" style="margin:0"><button id="rubikBtn">🧩 Rubik view</button><button id="cubeClose">Close</button></span></header>
+  <p class="sub">Your layers stacked into a cube: rows × columns × numbers. Every line through the cube must hold exactly one block. Drag to rotate. The simulation solves this puzzle from its givens — spoiler!</p>
+  <div class="cubectl" style="margin:0 0 8px"><select id="cubeMode" aria-label="Cube method"><option value="lines" selected>Method: cube lines (singles + pairs)</option><option value="slices">Method: slices (option layers)</option></select></div>
+  <p class="sub hidden" id="sliceNote">Slice mode: each number is one horizontal slice. The thinnest slices are opened first (most repeated number; ties: fewest free cells in a box): every option layer of that slice is listed, then the pillars link the slices — a full pillar cuts the options of every other slice. A slice with one option left is 🔒 locked and never revisited.</p>
+  <canvas id="cubeCanvas" aria-label="3D cube of the puzzle"></canvas>
+  <div class="cubectl">
+    <button id="cubeReset" aria-label="Back to start">⏮</button>
+    <button id="cubePrev" aria-label="Previous step">◀</button>
+    <button id="cubePlay" class="primary">▶ Play</button>
+    <button id="cubeNext" aria-label="Next step">▶|</button>
+    <select id="cubeSpeed" aria-label="Speed"><option value="1100">Slow</option><option value="500" selected>Normal</option><option value="150">Fast</option></select>
+  </div>
+  <div class="cubectl">
+    <label>Spread layers <input type="range" id="cubeSpread" min="0" max="2.5" step="0.1" value="0.8"></label>
+    <label><input type="checkbox" id="cubeAuto" checked> Auto-rotate</label>
+    <label><input type="checkbox" id="cubeDots" checked> Show possible</label>
+  </div>
+  <div class="cubestep"><div class="no" id="cubeNo"></div><span id="cubeTag" class="famtag"></span><span id="cubeText"></span></div>
+  <div class="cubestats" id="cubeStats"></div>
+  <div class="cubelegend">
+    <span><i style="background:hsl(200 70% 55%)"></i>placed block (colour = number)</span>
+    <span><i style="background:hsl(200 70% 55%);opacity:.45;border-radius:50%"></i>still possible</span>
+    <span><i style="box-shadow:inset 0 0 0 2px var(--accent)"></i>line being checked</span>
+    <span><i style="background:#e0443e"></i>new block</span>
+    <span id="legSlice" class="hidden"><i style="background:hsl(200 70% 55%);border-radius:50%;opacity:.9"></i>bigger dot = more of the slice's options use it · <b style="color:#8a8f99">|</b> full pillar · label = options left (✓ locked)</span>
+  </div>
+  <div id="miniBoard" class="miniboard"></div>
+</section>
+</div>
+
+<div id="busy" class="overlay hidden"><div class="modal"><h2>Generating…</h2><p>Building a puzzle your layer method can solve.</p></div></div>
+<div id="win" class="overlay hidden"><div class="modal">
+  <h2>Solved!</h2>
+  <div id="winScore" class="score"></div>
+  <div id="winBadge" class="badge hidden"></div>
+  <p id="winStreak" class="hidden" style="color:var(--ink);font-weight:600;margin:0 0 8px"></p>
+  <p id="winChal" class="badge hidden" style="margin:0 0 10px"></p>
+  <p id="winWeek" class="hidden" style="margin:-4px 0 10px"></p>
+  <div id="winBadges" class="newbadges hidden"></div>
+  <p id="winMsg"></p>
+  <div class="row"><button id="winNew" class="primary">New puzzle</button><button id="winShare">📤 Share</button></div>
+  <div class="row"><button id="winLb">👥 Friends</button><button id="winBadgesBtn">🏅 Badges</button><button id="winHist">🏆 History</button></div>
+</div></div>
+<div id="lb" class="overlay hidden"><div class="modal hist">
+  <header><h2>Friends</h2><button id="lbClose">Close</button></header>
+  <div class="scroll">
+    <div class="lbname"><label for="lbNum">Your player number</label><input id="lbNum" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off"></div>
+    <div class="tabs" role="tablist">
+      <button data-tab="week" class="on">This week</button><button data-tab="today">Today</button><button data-tab="streak">Streak</button><button data-tab="all">All-time</button>
+    </div>
+    <p id="lbWeekInfo" class="note" style="margin:0 0 6px"></p>
+    <div id="lbTable"></div>
+    <p id="lbNote" class="note"></p>
+    <h3>Send yourself to a friend</h3>
+    <div class="row" style="margin-top:0"><button id="lbShareCode" class="primary">🔢 Send my number</button><button id="lbShareFile">📁 Send my player file</button></div>
+    <h3>Add a friend</h3>
+    <input id="lbCode" class="codein" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" placeholder="Friend's player number (up to 6 digits)">
+    <div class="row"><button id="lbAdd" class="primary">➕ Add by number</button><button id="lbAddFile">📂 Add from player file</button></div>
+    <input type="file" id="lbFile" accept=".json,application/json" class="hidden">
+    <p class="note">No server is involved. Add a friend by their player number (up to 6 digits); their scores appear when you load their player file. A player file is a snapshot, so ask friends to send a new one after they play. Everyone gets the same daily puzzles, so the weekly challenge (Monday–Sunday, total of the 7 daily scores) is a fair race. Friends need this same game file.</p>
+  </div>
+</div></div>
+<div id="badgesPage" class="overlay hidden"><div class="modal hist">
+  <header><h2>Badges</h2><span class="hbtns"><button id="badgesShare">📤 Share</button><button id="badgesClose">Close</button></span></header>
+  <div class="scroll">
+    <div class="bsum"><b id="bsumCount">0</b><span id="bsumText">of 20 earned</span><div class="bar"><i id="bsumBar" style="width:0"></i></div></div>
+    <div id="badgeGroups"></div>
+  </div>
+</div></div>
+<div id="shareBox" class="overlay hidden"><div class="modal sharebox">
+  <h2>Share</h2>
+  <p>Sharing isn't available in this viewer — copy the text below and paste it anywhere.</p>
+  <textarea id="shareText" readonly></textarea>
+  <div class="row"><button id="shareCopy" class="primary">Copy</button><button id="shareClose">Close</button></div>
+</div></div>
+<div id="hist" class="overlay hidden"><div class="modal hist">
+  <header><h2>Score history</h2><span class="hbtns"><button id="histShare">📤 Share</button><button id="histClose">Close</button></span></header>
+  <p id="histWarn" class="note hidden" style="color:var(--wrong);margin:0 0 4px">This viewer blocks saving, so history lasts only until you close the page. Open the file in Chrome or Safari to keep it.</p>
+  <div class="scroll">
+    <h3>Daily streak</h3>
+    <div class="streakbox">
+      <div><b id="stCur">0</b><span>current</span></div>
+      <div><b id="stBest">0</b><span>best</span></div>
+      <div><b id="stTotal">0</b><span>dailies solved</span></div>
+    </div>
+    <div class="cal">
+      <div class="calhead"><button id="calPrev" aria-label="Previous month">‹</button><b id="calTitle"></b><button id="calNext" aria-label="Next month">›</button></div>
+      <div id="calGrid" class="calgrid"></div>
+      <p id="calNote" class="note"></p>
+    </div>
+    <h3>Badges</h3>
+    <div class="badgelink"><span id="badgeSummary">🏅 0 of 20 badges</span><button id="histBadges">View badges</button></div>
+    <h3>Best by size &amp; level</h3>
+    <div id="histBest"></div>
+    <h3>Recent games</h3>
+    <div id="histRecent"></div>
+    <p class="note">Score = size × level × speed ÷ hints. Harder and bigger puzzles score more; finishing faster than par (8 s per empty cell) adds up to +50%; each hint costs 10%.</p>
+  </div>
+  <h3>Backup</h3>
+  <p id="histBackupInfo" class="note" style="margin-top:0"></p>
+  <div class="row" style="justify-content:flex-start">
+    <button id="histRestore">Restore</button>
+    <button id="histExport">Save backup file</button>
+    <button id="histImport">Load backup file</button>
+    <button id="histPlayerFile">📁 Share my player file</button>
+    <button id="histClear">Clear history</button>
+  </div>
+  <input type="file" id="histFile" accept=".json,application/json" class="hidden">
+</div></div>
+
+<script>
+"use strict";
+/* =========================================================
+   Core of the layer–propagation method (port of suduku15.py)
+   ========================================================= */
+const SYMBOLS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+const sym = v => v <= 0 ? "" : (v < SYMBOLS.length ? SYMBOLS[v] : String(v));
+
+// Box shape (a, b) with a*b = N and a closest to sqrt(N)
+function chooseBoxShape(N) {
+  let best = null; const root = Math.sqrt(N);
+  for (let r = 1; r <= N; r++) if (N % r === 0) {
+    const c = N / r;
+    if (r <= c) { const d = Math.abs(r - root); if (!best || d < best[0]) best = [d, r, c]; }
+  }
+  return [best[1], best[2]];
+}
+
+function makeGeo(N) {
+  const [BR, BC] = chooseBoxShape(N);
+  const G = { N, BR, BC, R: new Int16Array(N*N), C: new Int16Array(N*N), B: new Int16Array(N*N),
+              rows: [], cols: [], boxes: [], peers: [] };
+  for (let k = 0; k < N; k++) { G.rows.push([]); G.cols.push([]); G.boxes.push([]); }
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    const i = r*N + c, b = Math.floor(r/BR)*(N/BC) + Math.floor(c/BC);
+    G.R[i] = r; G.C[i] = c; G.B[i] = b;
+    G.rows[r].push(i); G.cols[c].push(i); G.boxes[b].push(i);
+  }
+  for (let i = 0; i < N*N; i++) {
+    const s = new Set([...G.rows[G.R[i]], ...G.cols[G.C[i]], ...G.boxes[G.B[i]]]); s.delete(i);
+    G.peers.push([...s]);
+  }
+  return G;
+}
+
+function countDigits(G, g) { const c = new Int16Array(G.N+1); for (const v of g) if (v) c[v]++; return c; }
+
+// Digits ordered by how often they already appear (the "most repeated number" first)
+function digitsByFrequency(G, g) {
+  const c = countDigits(G, g), ds = [];
+  for (let d = 1; d <= G.N; d++) ds.push(d);
+  ds.sort((a, b) => c[b] - c[a] || a - b);
+  return { order: ds, counts: c };
+}
+
+// Layer for digit d: 1 = empty cell that CAN still be d; blocked if its box, row or column has d
+function buildLayer(G, g, d) {
+  const N = G.N, rowHas = new Uint8Array(N), colHas = new Uint8Array(N), boxHas = new Uint8Array(N);
+  for (let i = 0; i < N*N; i++) if (g[i] === d) { rowHas[G.R[i]] = 1; colHas[G.C[i]] = 1; boxHas[G.B[i]] = 1; }
+  const L = new Uint8Array(N*N);
+  for (let i = 0; i < N*N; i++) L[i] = (g[i] === 0 && !rowHas[G.R[i]] && !colHas[G.C[i]] && !boxHas[G.B[i]]) ? 1 : 0;
+  return L;
+}
+
+// Boxes whose layer has exactly one open cell → forced ("yellow") cells
+function forcedInLayer(G, L) {
+  const out = [];
+  for (let b = 0; b < G.N; b++) {
+    let n = 0, last = -1;
+    for (const i of G.boxes[b]) if (L[i]) { n++; last = i; if (n > 1) break; }
+    if (n === 1) out.push({ box: b, cell: last });
+  }
+  return out;
+}
+
+// Rows / columns with exactly one empty cell
+function singleMissing(G, g) {
+  const N = G.N;
+  const scan = (units, kind) => {
+    for (let u = 0; u < N; u++) {
+      let empty = -1, n = 0, seen = 0;
+      for (const i of units[u]) { if (g[i] === 0) { n++; empty = i; } else seen |= 1 << g[i]; }
+      if (n === 1) {
+        let v = 0; for (let d = 1; d <= N; d++) if (!(seen & (1 << d))) { v = d; break; }
+        return { kind, unit: u, cell: empty, value: v };
+      }
+    }
+    return null;
+  };
+  return scan(G.rows, "row") || scan(G.cols, "column");
+}
+
+function candMasks(G, g) {
+  const N = G.N, rm = new Int32Array(N), cm = new Int32Array(N), bm = new Int32Array(N), full = ((1 << (N+1)) - 2);
+  for (let i = 0; i < N*N; i++) if (g[i]) { const b = 1 << g[i]; rm[G.R[i]] |= b; cm[G.C[i]] |= b; bm[G.B[i]] |= b; }
+  const out = new Int32Array(N*N);
+  for (let i = 0; i < N*N; i++) out[i] = g[i] ? 0 : full & ~(rm[G.R[i]] | cm[G.C[i]] | bm[G.B[i]]);
+  return out;
+}
+const popcnt = x => { let n = 0; while (x) { x &= x - 1; n++; } return n; };
+const bitsOf = (m, N) => { const a = []; for (let d = 1; d <= N; d++) if (m & (1 << d)) a.push(d); return a; };
+
+// Conflict detection: duplicate in a unit, or empty cell with no candidates
+function hasConflict(G, g) {
+  const N = G.N;
+  for (const units of [G.rows, G.cols, G.boxes]) for (const u of units) {
+    let seen = 0; for (const i of u) if (g[i]) { const b = 1 << g[i]; if (seen & b) return true; seen |= b; }
+  }
+  const cm = candMasks(G, g);
+  for (let i = 0; i < N*N; i++) if (!g[i] && !cm[i]) return true;
+  return false;
+}
+
+// Deterministic propagation: layers (most repeated first) + single-missing rows/columns, until no change
+function propagate(G, g) {
+  for (;;) {
+    let changed = false;
+    const { order } = digitsByFrequency(G, g);
+    for (const d of order) {
+      const L = buildLayer(G, g, d);
+      for (const f of forcedInLayer(G, L)) if (g[f.cell] === 0) { g[f.cell] = d; changed = true; }
+    }
+    for (let sm = singleMissing(G, g); sm; sm = singleMissing(G, g)) {
+      if (!sm.value) return false;
+      g[sm.cell] = sm.value; changed = true;
+    }
+    if (hasConflict(G, g)) return false;
+    if (!changed) return true;
+  }
+}
+
+// Layer propagation + MRV branching; counts solutions up to `limit`
+function countSolutions(G, g0, limit, budget) {
+  let count = 0, nodes = 0, aborted = false;
+  (function rec(g) {
+    if (count >= limit || aborted) return;
+    if (++nodes > budget) { aborted = true; return; }
+    if (!propagate(G, g)) return;
+    const cm = candMasks(G, g); let best = -1, bc = 99;
+    for (let i = 0; i < g.length; i++) if (!g[i]) { const k = popcnt(cm[i]); if (k < bc) { bc = k; best = i; } }
+    if (best < 0) { count++; return; }
+    for (const d of bitsOf(cm[best], G.N)) {
+      const h = g.slice(); h[best] = d; rec(h);
+      if (count >= limit || aborted) return;
+    }
+  })(g0.slice());
+  return { count, aborted };
+}
+
+/* ---------------- Puzzle generation ---------------- */
+// Random source: Math.random normally; a seeded generator for the daily puzzle so it is the same for a given date
+let rand = Math.random;
+function seededRandom(str) {
+  let h = 1779033703 ^ str.length;
+  for (let i = 0; i < str.length; i++) { h = Math.imul(h ^ str.charCodeAt(i), 3432918353); h = (h << 13) | (h >>> 19); }
+  let a = h >>> 0;
+  return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+function shuffleArr(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rand()*(i+1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+
+// grid[r][c] = (r*b + floor(r/a) + c) mod N + 1, then permute digits, rows in bands, columns in stacks
+// Varied: a random full grid from any family (random fill, fewest-options cell first)
+function generateVaried(G) {
+  const N = G.N, NN = N * N, full = (1 << (N + 1)) - 2;
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const g = new Uint8Array(NN), rm = new Int32Array(N), cm = new Int32Array(N), bm = new Int32Array(N);
+    let nodes = 0; const LIMIT = N <= 9 ? 20000 : 80000;
+    const rec = () => {
+      if (++nodes > LIMIT) return false;
+      let best = -1, bc = 99, bmask = 0;
+      for (let i = 0; i < NN; i++) if (!g[i]) {
+        const m = full & ~(rm[G.R[i]] | cm[G.C[i]] | bm[G.B[i]]), k = popcnt(m);
+        if (k < bc) { bc = k; best = i; bmask = m; if (k <= 1) break; }
+      }
+      if (best < 0) return true;
+      if (bc === 0) return false;
+      for (const d of shuffleArr(bitsOf(bmask, N))) {
+        const b = 1 << d; g[best] = d; rm[G.R[best]] |= b; cm[G.C[best]] |= b; bm[G.B[best]] |= b;
+        if (rec()) return true;
+        g[best] = 0; rm[G.R[best]] &= ~b; cm[G.C[best]] &= ~b; bm[G.B[best]] &= ~b;
+      }
+      return false;
+    };
+    if (rec()) return g;
+  }
+  return generateClassic(G);
+}
+function generateFull(G, family) { return family === "classic" ? generateClassic(G) : generateVaried(G); }
+// Classic (Rubik family): the home grid scrambled with moves
+function generateClassic(G) {
+  const { N, BR, BC } = G;
+  let rows = [];
+  for (let r = 0; r < N; r++) { const row = []; for (let c = 0; c < N; c++) row.push((r*BC + Math.floor(r/BR) + c) % N + 1); rows.push(row); }
+  const perm = shuffleArr([...Array(N)].map((_, i) => i + 1));
+  rows = rows.map(row => row.map(v => perm[v-1]));
+  // rows within each band, and the order of the bands
+  const bands = shuffleArr([...Array(N/BR).keys()]);
+  const rowOrder = [];
+  for (const b of bands) rowOrder.push(...shuffleArr([...Array(BR).keys()].map(k => b*BR + k)));
+  rows = rowOrder.map(r => rows[r]);
+  // columns within each stack, and the order of the stacks
+  const stacks = shuffleArr([...Array(N/BC).keys()]);
+  const colOrder = [];
+  for (const s of stacks) colOrder.push(...shuffleArr([...Array(BC).keys()].map(k => s*BC + k)));
+  rows = rows.map(row => colOrder.map(c => row[c]));
+  return Uint8Array.from(rows.flat());
+}
+
+const LEVELS = {
+  easy:   { label: "Easy",   ratio: 0.52, method: "layer" },
+  medium: { label: "Medium", ratio: 0.42, method: "layer" },
+  hard:   { label: "Hard",   ratio: 0.30, method: "layer" },
+  expert: { label: "Expert", ratio: 0.22, method: "mrv" },
+};
+
+// Symmetric (180°) clue removal; keep a removal only if the puzzle stays solvable
+// by the layer method (Easy–Hard) or stays uniquely solvable with MRV branching (Expert).
+function generatePuzzle(N, level, seed, family) {
+  if (seed) { rand = seededRandom(seed); try { return generatePuzzle(N, level, null, family); } finally { rand = Math.random; } }
+  const G = makeGeo(N), cfg = LEVELS[level];
+  const solution = generateFull(G, family), puzzle = solution.slice(), total = N*N;
+  const target = Math.round(total * cfg.ratio);
+  const budget = N <= 9 ? 4000 : 600;
+  const accept = p => {
+    if (cfg.method === "layer") { const t = p.slice(); return propagate(G, t) && t.every(v => v); }
+    const r = countSolutions(G, p, 2, budget); return !r.aborted && r.count === 1;
+  };
+  const pairs = [];
+  for (let i = 0; i <= (total - 1) / 2; i++) pairs.push([i, total - 1 - i]);
+  shuffleArr(pairs);
+  let clues = total;
+  for (const [a, b] of pairs) {
+    if (clues <= target) break;
+    const va = puzzle[a], vb = puzzle[b];
+    puzzle[a] = 0; puzzle[b] = 0;
+    if (accept(puzzle)) clues -= (a === b ? 1 : 2); else { puzzle[a] = va; puzzle[b] = vb; }
+  }
+  // Expert: after the symmetric pass, also try removing single clues
+  if (cfg.method === "mrv" && N <= 12) {
+    for (const i of shuffleArr([...Array(total).keys()])) {
+      if (clues <= target) break;
+      if (!puzzle[i]) continue;
+      const v = puzzle[i]; puzzle[i] = 0;
+      if (accept(puzzle)) clues--; else puzzle[i] = v;
+    }
+  }
+  return { puzzle, solution, clues };
+}
+
+/* =========================================================
+   Game state & UI
+   ========================================================= */
+const $ = id => document.getElementById(id);
+const STORE = "layerSudoku.v1";
+let G, S; // geometry, state
+let selected = -1, notesMode = false, overlay = null, hint = null, layerOpen = false, layerDigit = 0, cells = [];
+let timerId = null;
+
+function freshState(N, level, gen, daily, family) {
+  return { N, level, daily: daily || null, family: family || "varied", puzzle: Array.from(gen.puzzle), solution: Array.from(gen.solution),
+           grid: Array.from(gen.puzzle), notes: new Array(N*N).fill(0), time: 0, hints: 0,
+           solved: false, undo: [] };
+}
+
+function save() {
+  try { localStorage.setItem(STORE, JSON.stringify(S)); } catch (e) { /* storage unavailable: play continues */ }
+}
+function load() {
+  try { const s = JSON.parse(localStorage.getItem(STORE)); if (s && s.grid && s.solution) return s; } catch (e) {}
+  return null;
+}
+
+function newGame(N, level, daily) {
+  $("busy").classList.remove("hidden");
+  setTimeout(() => {
+    const family = daily ? "varied" : puzzleFamily(); // the daily puzzle is always varied, the same for everyone
+    const gen = generatePuzzle(N, level, daily ? "layer-sudoku-daily-" + daily : null, family);
+    S = freshState(N, level, gen, daily, family);
+    $("busy").classList.add("hidden");
+    startGame();
+    save();
+  }, 30);
+}
+
+function startGame() {
+  G = makeGeo(S.N);
+  selected = -1; overlay = null; hint = null; layerDigit = 0;
+  $("size").value = String(S.N); $("level").value = S.level;
+  $("hintPanel").classList.add("hidden");
+  buildBoard(); buildPad();
+  if (layerOpen) { layerDigit = digitsByFrequency(G, Uint8Array.from(S.grid)).order[0]; overlay = layerOverlay(layerDigit); }
+  render(); setPaused(!!S.paused && !S.solved);
+  if (cube.on) cubeInit();
+}
+
+function buildBoard() {
+  const b = $("board"), N = G.N;
+  b.innerHTML = ""; b.style.gridTemplateColumns = `repeat(${N},1fr)`; b.style.gridTemplateRows = `repeat(${N},1fr)`;
+  cells = [];
+  for (let i = 0; i < N*N; i++) {
+    const d = document.createElement("div"), r = G.R[i], c = G.C[i];
+    d.className = "cell";
+    if (c === N-1) d.classList.add("lc"); else if ((c+1) % G.BC === 0) d.classList.add("br");
+    if (r === N-1) d.classList.add("lr"); else if ((r+1) % G.BR === 0) d.classList.add("bb");
+    d.addEventListener("click", () => { selected = i; render(); });
+    b.appendChild(d); cells.push(d);
+  }
+  sizeBoard();
+}
+function sizeBoard() {
+  if (!G) return;
+  const w = $("board").clientWidth / G.N;
+  document.documentElement.style.setProperty("--fs", Math.max(10, w * (G.N > 9 ? 0.52 : 0.6)) + "px");
+  document.documentElement.style.setProperty("--nfs", Math.max(6, w / G.BC * 0.8) + "px");
+}
+
+function buildPad() {
+  const pad = $("pad"), N = G.N, perRow = N <= 9 ? N : Math.ceil(N / 2);
+  pad.innerHTML = ""; pad.style.gridTemplateColumns = `repeat(${perRow},1fr)`;
+  pad.classList.toggle("dense", N > 9);
+  for (let d = 1; d <= N; d++) {
+    const btn = document.createElement("button");
+    btn.dataset.d = d; paintDigit(btn, d); btn.innerHTML = `${sym(d)}<small></small>`;
+    btn.addEventListener("click", () => enter(d));
+    pad.appendChild(btn);
+  }
+}
+
+function isWrong(i) { return S.grid[i] && !S.puzzle[i] && S.grid[i] !== S.solution[i]; }
+
+function render() {
+  const N = G.N, g = S.grid, showWrong = $("optMistakes").checked;
+  const selVal = selected >= 0 ? g[selected] : 0;
+  const peerSet = selected >= 0 ? new Set(G.peers[selected]) : null;
+  for (let i = 0; i < N*N; i++) {
+    const el = cells[i], cl = el.classList;
+    cl.remove("given","sel","peer","same","wrong","blk","forced","ldig","focus","unitmark");
+    if (S.puzzle[i]) cl.add("given");
+    cl.toggle("filled", !!g[i]);
+    if (overlay) {
+      if (g[i] === overlay.d) cl.add("ldig");
+      else if (overlay.forced.has(i)) cl.add("forced");
+      else if (!g[i] && !overlay.L[i]) cl.add("blk");
+      if (overlay.unit && overlay.unit.has(i)) cl.add("unitmark");
+      if (overlay.focus === i) cl.add("focus");
+    } else if (selected >= 0) {
+      if (i === selected) cl.add("sel");
+      else if (selVal && g[i] === selVal) cl.add("same");
+      else if (peerSet.has(i)) cl.add("peer");
+    }
+    if (overlay && i === selected) cl.add("sel");
+    if (showWrong && isWrong(i)) cl.add("wrong");
+    if (g[i]) { el.textContent = sym(g[i]); paintDigit(el, g[i]); }
+    else if (S.notes[i]) {
+      let h = `<div class="notes" style="grid-template-columns:repeat(${G.BC},1fr);grid-template-rows:repeat(${G.BR},1fr)">`;
+      for (let d = 1; d <= N; d++) h += `<span style="--h:${hueOf(d)}">${S.notes[i] & (1 << d) ? sym(d) : ""}</span>`;
+      el.innerHTML = h + "</div>";
+    } else el.textContent = "";
+  }
+  // pad remaining counts
+  const cnt = countDigits(G, g);
+  for (const btn of $("pad").children) {
+    const d = +btn.dataset.d, left = N - cnt[d];
+    btn.querySelector("small").textContent = left > 0 ? left : "";
+    btn.classList.toggle("done", left <= 0);
+  }
+  $("notesBtn").classList.toggle("on", notesMode);
+  $("layerBtn").classList.toggle("on", layerOpen);
+  $("undoBtn").disabled = !S.undo.length;
+  $("pauseBtn").disabled = S.solved;
+  $("stLevel").textContent = S.daily ? `📅 Daily · ${LEVELS[S.level].label}` : `${N}×${N} · ${LEVELS[S.level].label}${S.family === "classic" ? " · 🧩" : ""}`;
+  const left = Math.max(0, hintsLeft());
+  $("stInfo").textContent = `Hints ${S.hints}/${hintLimit()}`;
+  $("hintBtn").innerHTML = `<b>?</b>Hint · ${left}`;
+  $("hintBtn").classList.toggle("out", left <= 0);
+  renderTime();
+  if (layerOpen) renderLayerPanel();
+}
+
+/* ---------- moves ---------- */
+function pushUndo() {
+  S.undo.push({ grid: S.grid.slice(), notes: S.notes.slice() });
+  if (S.undo.length > 300) S.undo.shift();
+}
+function setValue(i, d) {
+  S.grid[i] = d; S.notes[i] = 0;
+  if (d) for (const p of G.peers[i]) S.notes[p] &= ~(1 << d);
+}
+function afterMove() {
+  hint = null; $("hintPanel").classList.add("hidden");
+  overlay = layerOpen && layerDigit ? layerOverlay(layerDigit) : null;
+  render(); checkWin(); save();
+}
+function enter(d) {
+  if (S.solved || S.paused || selected < 0 || S.puzzle[selected]) return;
+  pushUndo();
+  if (notesMode && !S.grid[selected]) S.notes[selected] ^= (1 << d);
+  else {
+    const v = S.grid[selected] === d ? 0 : d;
+    setValue(selected, v);
+    if (v && v !== S.solution[selected]) S.mistakes = (S.mistakes || 0) + 1;
+  }
+  afterMove();
+}
+function erase() {
+  if (S.solved || S.paused || selected < 0 || S.puzzle[selected]) return;
+  if (!S.grid[selected] && !S.notes[selected]) return;
+  pushUndo(); S.grid[selected] = 0; S.notes[selected] = 0; afterMove();
+}
+function undo() {
+  if (S.paused) return;
+  const u = S.undo.pop(); if (!u) return;
+  S.grid = u.grid; S.notes = u.notes; S.solved = false; afterMove();
+}
+function checkWin() {
+  if (S.solved) return;
+  if (S.grid.every((v, i) => v === S.solution[i])) {
+    S.solved = true; stopTimer();
+    let rec = null, best = null;
+    if (!S.recorded) { S.recorded = true; ({ rec, best } = recordGame()); }
+    if (S.daily) markDailySolved(S.daily);
+    const chalNew = rec ? checkChallenge() : false;
+    playWinSound();
+    save();
+    $("winMsg").textContent = `${S.daily ? "Daily puzzle · " : ""}${S.N}×${S.N} ${LEVELS[S.level].label} in ${fmt(S.time)} with ${S.hints} hint${S.hints === 1 ? "" : "s"}.`;
+    if (rec) S.score = rec.score;
+    $("winScore").textContent = S.score ? `${S.score.toLocaleString()} pts` : "";
+    $("winBadge").textContent = best || "";
+    $("winBadge").classList.toggle("hidden", !best);
+    const st = streakInfo();
+    $("winStreak").textContent = S.daily ? `🔥 ${st.current}-day streak${st.current >= st.best && st.current > 1 ? " — your best!" : ""}` : "";
+    $("winStreak").classList.toggle("hidden", !S.daily);
+    if (S.daily) { const w = weekStanding(); $("winWeek").textContent = `Weekly challenge: ${w.total.toLocaleString()} pts this week${w.n > 1 ? ` · #${w.rank} of ${w.n} with friends` : ""}`; }
+    $("winWeek").classList.toggle("hidden", !S.daily);
+    renderDaily();
+    $("winChal").textContent = chalNew ? `🎯 Daily challenge complete! (${chalInfo().current}-day challenge streak)` : "";
+    $("winChal").classList.toggle("hidden", !chalNew);
+    renderChallenge();
+    const fresh = checkAchievements();
+    $("winBadges").innerHTML = fresh.map((a, k) => `<div style="animation-delay:${0.25 + k * 0.15}s"><span class="em">${a.em}</span><span><b>Badge unlocked: ${a.name}</b><small>${a.desc}</small></span></div>`).join("");
+    $("winBadges").classList.toggle("hidden", !fresh.length);
+    $("win").classList.remove("hidden");
+  }
+}
+
+/* ---------- score history ---------- */
+const HIST = STORE + ".history";
+const LEVEL_MULT = { easy: 1, medium: 1.5, hard: 2, expert: 3 };
+function computeScore(s) {
+  const empty = s.puzzle.filter(v => !v).length;
+  const par = empty * 8;
+  const speed = Math.min(1.5, Math.max(0.3, par / Math.max(1, s.time)));
+  return Math.round(empty * 10 * LEVEL_MULT[s.level] * speed * Math.pow(0.9, s.hints));
+}
+const BACKUPS = STORE + ".backups";
+const memStore = {}; // used when this viewer blocks storage
+let storageBlocked = false;
+function readList(key) {
+  if (key in memStore) return memStore[key].slice();
+  try { const v = JSON.parse(localStorage.getItem(key)); if (Array.isArray(v)) return v; } catch (e) {}
+  return [];
+}
+function writeList(key, list) {
+  try { localStorage.setItem(key, JSON.stringify(list)); if (localStorage.getItem(key) !== null) { delete memStore[key]; storageBlocked = false; return; } } catch (e) {}
+  memStore[key] = list.slice(); storageBlocked = true;
+}
+const loadHistory = () => readList(HIST);
+const saveHistory = h => writeList(HIST, h);
+const loadBackups = () => readList(BACKUPS);
+
+// Clearing never loses games: they are moved into a backup first
+function clearHistoryWithBackup() {
+  const hist = loadHistory();
+  if (!hist.length) return;
+  const backups = loadBackups();
+  backups.push({ clearedAt: Date.now(), games: hist });
+  if (backups.length > 50) backups.splice(0, backups.length - 50);
+  writeList(BACKUPS, backups);
+  saveHistory([]);
+}
+const gameKey = g => `${g.date}|${g.N}|${g.level}|${g.time}|${g.score}`;
+function mergeGames(into, games) {
+  const seen = new Set(into.map(gameKey));
+  for (const g of games) if (g && g.date && g.N && g.level && !seen.has(gameKey(g))) { into.push(g); seen.add(gameKey(g)); }
+  return into.sort((a, b) => a.date - b.date);
+}
+function restoreBackups() {
+  const all = loadBackups().flatMap(b => b.games || []);
+  saveHistory(mergeGames(loadHistory(), all));
+}
+function exportBackup() {
+  const data = { app: "Layer Sudoku", exportedAt: new Date().toISOString(), history: loadHistory(), backups: loadBackups() };
+  const blob = new Blob([JSON.stringify(data, null, 1)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `layer-sudoku-history-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+function importBackup(file) {
+  const rd = new FileReader();
+  rd.onload = () => {
+    try {
+      const d = JSON.parse(rd.result);
+      if (d && d.type === "player") { alert("This is a friend's player file — add it in 👥 Friends → Add from player file."); return; }
+      const games = [...(d.history || []), ...(d.backups || []).flatMap(b => b.games || [])];
+      const before = loadHistory().length, merged = mergeGames(loadHistory(), games);
+      saveHistory(merged); showHistory();
+      alert(`Imported ${merged.length - before} game${merged.length - before === 1 ? "" : "s"}.`);
+    } catch (e) { alert("That file is not a Layer Sudoku backup."); }
+  };
+  rd.readAsText(file);
+}
+
+/* ---------- win sound (synthesised, no audio file needed) ---------- */
+let audioCtx = null;
+function soundOn() { return $("optSound").checked; }
+function playWinSound() {
+  if (!soundOn()) return;
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    const t0 = audioCtx.currentTime + 0.05;
+    const notes = [[523.25, 0], [659.25, 0.12], [783.99, 0.24], [1046.5, 0.36], [783.99, 0.52], [1046.5, 0.64]];
+    notes.forEach(([f, dt], k) => {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      const len = k === notes.length - 1 ? 0.9 : 0.22;
+      o.type = "triangle"; o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t0 + dt);
+      g.gain.exponentialRampToValueAtTime(0.25, t0 + dt + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dt + len);
+      o.connect(g).connect(audioCtx.destination);
+      o.start(t0 + dt); o.stop(t0 + dt + len + 0.05);
+    });
+  } catch (e) { /* audio not supported */ }
+}
+function recordGame() {
+  const hist = loadHistory();
+  const rec = { date: Date.now(), daily: S.daily || undefined, N: S.N, level: S.level, time: S.time, hints: S.hints, mistakes: S.mistakes || 0, score: computeScore(S) };
+  const same = hist.filter(g => g.N === rec.N && g.level === rec.level);
+  let best = null;
+  if (same.length) {
+    if (rec.score > Math.max(...same.map(g => g.score))) best = "New best score!";
+    else if (rec.time < Math.min(...same.map(g => g.time))) best = "New fastest time!";
+  }
+  hist.push(rec);
+  if (hist.length > 500) hist.splice(0, hist.length - 500);
+  saveHistory(hist);
+  return { rec, best };
+}
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]); }
+function showHistory() {
+  const hist = loadHistory();
+  const groups = new Map();
+  for (const g of hist) {
+    const k = g.N + "|" + g.level;
+    const e = groups.get(k) || { N: g.N, level: g.level, n: 0, best: 0, fast: Infinity, noHint: 0 };
+    e.n++; e.best = Math.max(e.best, g.score); e.fast = Math.min(e.fast, g.time); if (!g.hints) e.noHint++;
+    groups.set(k, e);
+  }
+  const lvOrder = Object.keys(LEVELS);
+  const rows = [...groups.values()].sort((a, b) => a.N - b.N || lvOrder.indexOf(a.level) - lvOrder.indexOf(b.level));
+  $("histBest").innerHTML = rows.length
+    ? `<table><tr><th>Puzzle</th><th class="num">Solved</th><th class="num">No-hint</th><th class="num">Fastest</th><th class="num">Best</th></tr>` +
+      rows.map(e => `<tr><td>${e.N}×${e.N} ${LEVELS[e.level].label}</td><td class="num">${e.n}</td><td class="num">${e.noHint}</td><td class="num">${fmt(e.fast)}</td><td class="num">${e.best.toLocaleString()}</td></tr>`).join("") + `</table>`
+    : `<div class="empty">No solved puzzles yet — finish one to start your history.</div>`;
+  const recent = hist.slice(-50).reverse();
+  $("histRecent").innerHTML = recent.length
+    ? `<table><tr><th>Date</th><th>Puzzle</th><th class="num">Time</th><th class="num">Hints</th><th class="num">Score</th></tr>` +
+      recent.map(g => { const d = new Date(g.date);
+        return `<tr><td>${esc(d.toLocaleDateString(undefined, { month: "short", day: "numeric" }))}</td><td>${g.N}×${g.N} ${LEVELS[g.level] ? LEVELS[g.level].label : esc(g.level)}${g.daily ? '<span class="tag">Daily</span>' : ""}</td><td class="num">${fmt(g.time)}</td><td class="num">${g.hints}</td><td class="num">${g.score.toLocaleString()}</td></tr>`; }).join("") + `</table>`
+    : `<div class="empty">—</div>`;
+  $("histClear").disabled = !hist.length;
+  const st = streakInfo();
+  $("stCur").textContent = st.current; $("stBest").textContent = st.best; $("stTotal").textContent = st.total;
+  const now = new Date(); calY = now.getFullYear(); calM = now.getMonth();
+  renderCalendar();
+  checkAchievements();
+  $("badgeSummary").textContent = `🏅 ${unlockedMap().size} of ${ACHIEVEMENTS.length} badges`;
+  const backups = loadBackups(), backedUp = new Set(backups.flatMap(b => (b.games || []).map(gameKey))).size;
+  const inHist = new Set(hist.map(gameKey));
+  const missing = backups.flatMap(b => b.games || []).filter(g => !inHist.has(gameKey(g))).length;
+  $("histBackupInfo").textContent = backups.length
+    ? `${backedUp} game${backedUp === 1 ? "" : "s"} saved in backup (last cleared ${new Date(backups[backups.length - 1].clearedAt).toLocaleDateString()}).`
+    : "When you clear history, your games are backed up here first.";
+  $("histRestore").disabled = !missing;
+  $("histRestore").textContent = missing ? `Restore ${missing} game${missing === 1 ? "" : "s"}` : "Restore";
+  $("histWarn").classList.toggle("hidden", !storageBlocked);
+  $("hist").classList.remove("hidden");
+}
+
+/* ---------- layer view (the method, visualised) ---------- */
+function layerOverlay(d, focus) {
+  const g = Uint8Array.from(S.grid), L = buildLayer(G, g, d);
+  return { d, L, forced: new Set(forcedInLayer(G, L).map(f => f.cell)), focus };
+}
+function renderLayerPanel() {
+  const { order, counts } = digitsByFrequency(G, Uint8Array.from(S.grid));
+  const chips = $("chips"); chips.innerHTML = "";
+  for (const d of order) {
+    if (counts[d] >= G.N) continue;
+    const b = document.createElement("button");
+    paintDigit(b, d); b.innerHTML = `${sym(d)}<small>×${counts[d]}</small>`;
+    if (d === layerDigit) b.classList.add("on");
+    b.addEventListener("click", () => { layerDigit = d; overlay = layerOverlay(d); hint = null; $("hintPanel").classList.add("hidden"); render(); });
+    chips.appendChild(b);
+  }
+  const msg = $("layerMsg");
+  if (!layerDigit) { msg.textContent = `Start with ${sym(order[0])} — it appears most often (${counts[order[0]]} times).`; $("fillYellow").disabled = true; return; }
+  const n = overlay ? overlay.forced.size : 0;
+  msg.textContent = n
+    ? `Layer ${sym(layerDigit)}: ${n} box${n > 1 ? "es have" : " has"} only one open cell — those cells must be ${sym(layerDigit)}.`
+    : `Layer ${sym(layerDigit)}: no box has a single open cell yet. Try the next most repeated digit.`;
+  $("fillYellow").disabled = !n;
+}
+function fillYellow() {
+  if (overlay && overlay.forced.size && hintsLeft() <= 0) { toast("No hints left for this puzzle"); return; }
+  if (!overlay || !overlay.forced.size) return;
+  if (anyWrong()) { showHint({ type: "wrong" }); return; }
+  pushUndo();
+  for (const i of overlay.forced) setValue(i, overlay.d);
+  S.hints++; afterMove();
+}
+function anyWrong() { return S.grid.some((v, i) => isWrong(i)); }
+
+/* ---------- option layers hint ---------- */
+// Build the option layers (one cell per box, no repeats in rows/columns) of the most repeated numbers,
+// AND and cut them against each other, add the next number when stuck, and return the first empty cell proved.
+function optionLayerHint(G, g0) {
+  const N = G.N, NN = N * N, W = Math.ceil(NN / 32), has = (t, i) => (t[i >> 5] >>> (i & 31)) & 1;
+  const { counts } = digitsByFrequency(G, g0);
+  // most repeated first; ties: the number with the fewest free cells in its tightest box (then fewest in total)
+  const boxFree = d => { const rh = new Uint8Array(N), ch = new Uint8Array(N), bh = new Uint8Array(N); for (let i = 0; i < NN; i++) if (g0[i] === d) rh[G.R[i]] = ch[G.C[i]] = bh[G.B[i]] = 1; let min = 99, free = 0; G.boxes.forEach((bx, b) => { if (bh[b]) return; let n = 0; for (const i of bx) if (!g0[i] && !rh[G.R[i]] && !ch[G.C[i]]) n++; free += n; if (n < min) min = n; }); return [min, free]; };
+  const tie = [null]; for (let d = 1; d <= N; d++) tie.push(boxFree(d));
+  const order = [...Array(N).keys()].map(k => k + 1).filter(d => counts[d] < N).sort((a, b) => counts[b] - counts[a] || tie[a][0] - tie[b][0] || tie[a][1] - tie[b][1] || a - b);
+  const S = { g: Uint8Array.from(g0), T: new Array(N + 1).fill(null), locked: new Array(N + 1).fill(0) };
+  for (let d = 1; d <= N; d++) if (counts[d] >= N) S.locked[d] = 1;
+  const built = [];
+  const disjoint = (a, b) => { for (let w = 0; w < W; w++) if (a[w] & b[w]) return false; return true; };
+  // group check, only for the unlocked numbers (once every one is built and the pair check is stuck):
+  // keep an option only if, for every group of 2 (then 3) other numbers, one option of each still fits with it -- no cell shared
+  const gcount = { 3: 0, 4: 0 };
+  const fitsWith = (lists, acc, work) => { if (!lists.length) return true; for (const u of lists[0]) { if (++work.n > 3e6) return true; if (!disjoint(u, acc)) continue; const a2 = acc.slice(); for (let w = 0; w < W; w++) a2[w] |= u[w]; if (fitsWith(lists.slice(1), a2, work)) return true; } return false; };
+  const pickK = (n, k, from = 0) => k === 0 ? [[]] : [...Array(Math.max(0, n - from)).keys()].map(x => x + from).flatMap(i => pickK(n, k - 1, i + 1).map(c => [i, ...c]));
+  function groupCut(T, act) {
+    for (const k of [3, 4]) {
+      if (act.length < k) break;
+      const work = { n: 0 };   // safety cap: past it, options are kept (never cut on a guess)
+      for (const d of act) {
+        if (T[d].length === 1) continue;
+        const before = T[d].length;
+        const keep = T[d].filter(t => {
+          const others = act.filter(e => e !== d).map(e => T[e].filter(u => disjoint(t, u)));
+          if (others.some(o => !o.length)) return false;
+          for (const c of pickK(others.length, k - 1)) if (!fitsWith(c.map(i => others[i]).sort((a, b) => a.length - b.length), t, work)) return false;
+          return true;
+        });
+        if (keep.length !== before) { T[d] = keep; gcount[k]++; return { d, k, before, after: keep.length }; }
+      }
+    }
+    return null;
+  }
+  function build(d) {
+    const g = S.g, rowHas = new Uint8Array(N), colHas = new Uint8Array(N), boxAt = new Int16Array(N).fill(-1);
+    for (let i = 0; i < NN; i++) if (g[i] === d) { rowHas[G.R[i]] = 1; colHas[G.C[i]] = 1; boxAt[G.B[i]] = i; }
+    const opts = [...Array(N).keys()].map(b => boxAt[b] >= 0 ? [boxAt[b]] : G.boxes[b].filter(i => !g[i] && !rowHas[G.R[i]] && !colHas[G.C[i]]));
+    const ord = [...Array(N).keys()].sort((a, b) => opts[a].length - opts[b].length);
+    const list = [], uR = new Uint8Array(N), uC = new Uint8Array(N), bits = new Uint32Array(W);
+    (function rec(k) { if (list.length > 150000) return; if (k === N) { list.push(bits.slice()); return; } for (const i of opts[ord[k]]) { if (uR[G.R[i]] || uC[G.C[i]]) continue; uR[G.R[i]] = uC[G.C[i]] = 1; bits[i >> 5] |= 1 << (i & 31); rec(k + 1); bits[i >> 5] &= ~(1 << (i & 31)); uR[G.R[i]] = uC[G.C[i]] = 0; } })(0);
+    if (list.length > 150000) return false;       // too many to list on this board — leave it to the next hint
+    S.T[d] = list; built.push({ d, n: list.length }); return true;
+  }
+  const useOf = d => { const u = new Uint32Array(NN); for (const t of S.T[d]) for (let i = 0; i < NN; i++) if (has(t, i)) u[i]++; return u; };
+  for (const d of order.slice(0, 2)) if (!build(d)) return null;
+  for (let guard = 0; guard < 400; guard++) {
+    const act = order.filter(d => S.T[d]);
+    for (const d of act) if (!S.T[d].length) return null;
+    let changed = false;
+    for (const d of act) { const keep = S.T[d].filter(t => { for (let i = 0; i < NN; i++) if (S.g[i] && S.g[i] !== d && has(t, i)) return false; return true; }); if (keep.length !== S.T[d].length) { S.T[d] = keep; changed = true; if (!keep.length) return null; } }
+    const core = {}, union = {};
+    for (const d of act) { const a = S.T[d][0].slice(), o = new Uint32Array(W); for (const t of S.T[d]) for (let w = 0; w < W; w++) { a[w] &= t[w]; o[w] |= t[w]; } core[d] = a; union[d] = o; }
+    // an empty cell in ALL options of a number: that's the hint
+    for (const d of act) for (let i = 0; i < NN; i++) if (has(core[d], i) && !g0[i]) return { d, cell: i, reason: "all", total: S.T[d].length, use: useOf(d), built: built.slice() };
+    // a free cell only one number can still reach
+    const need = {}; for (const d of act) need[d] = new Uint32Array(W);
+    for (let i = 0; i < NN; i++) if (!S.g[i]) {
+      let n = 0, who = 0;
+      for (let d = 1; d <= N; d++) {
+        if (S.locked[d]) continue;
+        let reach;
+        if (S.T[d]) reach = has(union[d], i);
+        else { reach = true; for (const j of G.peers[i]) if (S.g[j] === d) { reach = false; break; } }
+        if (reach) { n++; who = d; }
+      }
+      if (!n) return null;
+      if (n === 1 && !g0[i]) return { d: who, cell: i, reason: "only", total: S.T[who] ? S.T[who].length : 0, use: S.T[who] ? useOf(who) : null, built: built.slice() };
+      if (n === 1 && S.T[who] && !has(core[who], i)) need[who][i >> 5] |= 1 << (i & 31);
+    }
+    for (const d of act) { const keep = S.T[d].filter(t => { for (let w = 0; w < W; w++) if (((t[w] & need[d][w]) >>> 0) !== need[d][w]) return false; for (const e of act) if (e !== d) for (let w = 0; w < W; w++) if (t[w] & core[e][w]) return false; return true; }); if (keep.length !== S.T[d].length) { S.T[d] = keep; changed = true; if (!keep.length) return null; } }
+    if (!changed) for (const d of act) { if (S.T[d].length === 1) continue; const keep = S.T[d].filter(t => act.every(e => e === d || S.T[e].some(u => disjoint(t, u)))); if (keep.length !== S.T[d].length) { S.T[d] = keep; changed = true; if (!keep.length) return null; } }
+    if (!changed && !order.find(e => !S.locked[e] && !S.T[e])) { const gc = groupCut(S.T, order.filter(e => S.T[e])); if (gc) { changed = true; if (!gc.after) return null; } }
+    if (!changed) { const next = order.find(d => !S.locked[d] && !S.T[d]); if (!next || !build(next)) return null; }
+  }
+  return null;
+}
+
+/* ---------- hints: follow the method step by step ---------- */
+function findHint() {
+  const g = Uint8Array.from(S.grid);
+  const wrong = []; for (let i = 0; i < g.length; i++) if (isWrong(i)) wrong.push(i);
+  if (wrong.length) return { type: "wrong", cells: wrong };
+  // 1) layers, most repeated number first
+  const { order, counts } = digitsByFrequency(G, g);
+  for (const d of order) {
+    if (counts[d] >= G.N) continue;
+    const L = buildLayer(G, g, d), f = forcedInLayer(G, L);
+    if (f.length) return { type: "layer", d, count: counts[d], rank: order.indexOf(d), L, forced: f, cell: f[0].cell, box: f[0].box, value: d };
+  }
+  // 2) row / column with exactly one empty cell
+  const sm = singleMissing(G, g);
+  if (sm) return { type: "single", ...sm };
+  // 3) option layers: build the most repeated numbers' placements, AND and cut them
+  const ol = optionLayerHint(G, g);
+  if (ol) return { type: "olayer", ...ol, value: ol.d };
+  // 4) MRV: cell with fewest candidates
+  const cm = candMasks(G, g); let best = -1, bc = 99;
+  for (let i = 0; i < g.length; i++) if (!g[i]) { const k = popcnt(cm[i]); if (k < bc) { bc = k; best = i; } }
+  if (best < 0) return null;
+  return { type: "mrv", cell: best, cands: bitsOf(cm[best], G.N), value: S.solution[best] };
+}
+const cellName = i => `row ${G.R[i] + 1}, column ${G.C[i] + 1}`;
+function showHint(h) {
+  hint = h; const title = $("hintTitle"), msg = $("hintMsg"), place = $("hintPlace");
+  place.classList.remove("hidden");
+  overlay = null;
+  if (!h) { title.textContent = "Hint"; msg.textContent = "Nothing left to deduce."; place.classList.add("hidden"); }
+  else if (h.type === "wrong") {
+    title.textContent = "Check your entries";
+    msg.textContent = "Some numbers (in red) don't fit the solution. The layer method needs a correct board — fix them first.";
+    place.textContent = "Remove wrong numbers";
+    if (!$("optMistakes").checked) { $("optMistakes").checked = true; }
+  } else if (h.type === "layer") {
+    title.textContent = `Layer of ${sym(h.d)}`;
+    const why = h.rank === 0 ? `${sym(h.d)} is the most repeated number (${h.count} times).` : `${sym(h.d)} appears ${h.count} times (the more repeated layers give nothing new).`;
+    msg.textContent = `${why} Gray out every cell in a box, row or column that already has ${sym(h.d)}. In box ${h.box + 1} only one cell is left (yellow) — ${cellName(h.cell)} must be ${sym(h.d)}.`;
+    overlay = { d: h.d, L: h.L, forced: new Set([h.cell]), focus: h.cell };
+    place.textContent = `Place ${sym(h.d)}`;
+  } else if (h.type === "single") {
+    title.textContent = `Single missing in a ${h.kind}`;
+    msg.textContent = `No layer gives a new cell. But ${h.kind} ${h.unit + 1} has only one empty cell, and the only number missing there is ${sym(h.value)}.`;
+    overlay = { d: -1, L: new Uint8Array(G.N*G.N).fill(1), forced: new Set(), focus: h.cell,
+                unit: new Set(h.kind === "row" ? G.rows[h.unit] : G.cols[h.unit]) };
+    place.textContent = `Place ${sym(h.value)}`;
+  } else if (h.type === "olayer") {
+    title.textContent = `Option layers of ${sym(h.d)}`;
+    const list = h.built.map(b => `${sym(b.d)} (${b.n.toLocaleString()})`).join(", ");
+    msg.textContent = h.reason === "all"
+      ? `No box or line gives a cell, so build every option layer of the most repeated numbers: ${list}. After cutting the options that clash with each other, all ${h.total.toLocaleString()} remaining option${h.total === 1 ? "" : "s"} of ${sym(h.d)} put ${sym(h.d)} at ${cellName(h.cell)} (yellow) — it must be ${sym(h.d)}.`
+      : `No box or line gives a cell, so build every option layer of the most repeated numbers: ${list}. After cutting the options that clash with each other, no number except ${sym(h.d)} can still go at ${cellName(h.cell)} (yellow) — it must be ${sym(h.d)}.`;
+    const L = new Uint8Array(G.N * G.N);
+    if (h.use) for (let i = 0; i < L.length; i++) L[i] = h.use[i] > 0 ? 1 : 0;
+    else { const l = buildLayer(G, Uint8Array.from(S.grid), h.d); for (let i = 0; i < L.length; i++) L[i] = l[i]; }
+    overlay = { d: h.d, L, forced: new Set([h.cell]), focus: h.cell };
+    place.textContent = `Place ${sym(h.d)}`;
+  } else {
+    title.textContent = "Branching (MRV)";
+    msg.textContent = `The layers are stuck. The cell with the fewest candidates is ${cellName(h.cell)}: {${h.cands.map(sym).join(", ")}}. Trying them one by one, only ${sym(h.value)} leads to a solution.`;
+    overlay = { d: -1, L: new Uint8Array(G.N*G.N).fill(1), forced: new Set(), focus: h.cell };
+    place.textContent = `Place ${sym(h.value)}`;
+  }
+  if (h && h.cell !== undefined) selected = h.cell;
+  $("hintPanel").classList.remove("hidden");
+  render();
+}
+function placeHint() {
+  if (!hint) return;
+  pushUndo();
+  if (hint.type === "wrong") { for (let i = 0; i < S.grid.length; i++) if (isWrong(i)) S.grid[i] = 0; }
+  else setValue(hint.cell, hint.value);
+  afterMove();
+}
+
+/* ---------- timer ---------- */
+const fmt = s => { const h = Math.floor(s/3600), m = Math.floor(s/60) % 60, x = s % 60; return (h ? h + ":" + String(m).padStart(2,"0") : m) + ":" + String(x).padStart(2,"0"); };
+function renderTime() { $("stTime").textContent = fmt(S.time); }
+function setPaused(p) {
+  if (p && S.solved) return;
+  S.paused = p;
+  document.body.classList.toggle("paused", p);
+  $("pauseCover").classList.toggle("hidden", !p);
+  $("pauseIcon").textContent = p ? "▶" : "⏸";
+  $("pauseBtn").setAttribute("aria-label", p ? "Resume" : "Pause");
+  $("pauseBtn").classList.toggle("on", p);
+  $("pauseBtn").disabled = S.solved;
+  if (p) stopTimer(); else startTimer();
+  save();
+}
+function startTimer() {
+  stopTimer(); if (S.solved || S.paused) return;
+  timerId = setInterval(() => { if (!document.hidden) { S.time++; renderTime(); if (S.time % 10 === 0) save(); } }, 1000);
+}
+function stopTimer() { if (timerId) clearInterval(timerId); timerId = null; }
+
+/* ---------- wiring ---------- */
+$("newBtn").addEventListener("click", () => {
+  const started = S && !S.solved && S.grid.some((v, i) => v && !S.puzzle[i]);
+  if (started && !confirm("Start a new puzzle? Current progress will be lost.")) return;
+  newGame(+$("size").value, $("level").value);
+});
+$("winNew").addEventListener("click", () => { $("win").classList.add("hidden"); newGame(+$("size").value, $("level").value); });
+$("winHist").addEventListener("click", () => { $("win").classList.add("hidden"); showHistory(); });
+$("histBtn").addEventListener("click", showHistory);
+$("histClose").addEventListener("click", () => $("hist").classList.add("hidden"));
+$("hist").addEventListener("click", e => { if (e.target.id === "hist") $("hist").classList.add("hidden"); });
+$("histClear").addEventListener("click", () => {
+  if (!confirm("Clear score history? Your games will be kept in the backup and can be restored.")) return;
+  clearHistoryWithBackup(); showHistory();
+});
+$("histRestore").addEventListener("click", () => { restoreBackups(); showHistory(); });
+$("histExport").addEventListener("click", exportBackup);
+$("histImport").addEventListener("click", () => $("histFile").click());
+$("histFile").addEventListener("change", e => { const f = e.target.files[0]; if (f) importBackup(f); e.target.value = ""; });
+$("optSound").addEventListener("change", () => {
+  try { localStorage.setItem(STORE + ".sound", soundOn() ? "1" : "0"); } catch (e) {}
+  if (soundOn()) playWinSound(); // preview, and unlocks audio on phones
+});
+$("pauseBtn").addEventListener("click", () => setPaused(!S.paused));
+$("pauseCover").addEventListener("click", () => setPaused(false));
+// leaving the app (switching apps, locking the phone) pauses the game
+document.addEventListener("visibilitychange", () => { if (!document.hidden) renderDaily(); });
+document.addEventListener("visibilitychange", () => { if (document.hidden && S && !S.solved && !S.paused) setPaused(true); });
+$("undoBtn").addEventListener("click", undo);
+$("eraseBtn").addEventListener("click", erase);
+$("notesBtn").addEventListener("click", () => { notesMode = !notesMode; render(); });
+$("hintBtn").addEventListener("click", () => {
+  if (S.solved || S.paused) return;
+  const h = findHint();
+  if (h && h.type !== "wrong") {
+    if (hintsLeft() <= 0) { showNoHints(); return; }
+    S.hints++;
+  }
+  showHint(h); save();
+});
+// Hint limit per puzzle: more for easier levels and bigger grids
+const HINT_BASE = { easy: 5, medium: 4, hard: 3, expert: 2 };
+function hintLimit() { return Math.max(1, Math.round(HINT_BASE[S.level] * S.N / 9)); }
+function hintsLeft() { return hintLimit() - S.hints; }
+function showNoHints() {
+  hint = null; overlay = null;
+  $("hintTitle").textContent = "No hints left";
+  $("hintMsg").textContent = `You've used all ${hintLimit()} hints for this puzzle. Try the Layer view: start with the most repeated number and look for a box with only one open cell.`;
+  $("hintPlace").classList.add("hidden");
+  $("hintPanel").classList.remove("hidden");
+  render();
+}
+$("hintPlace").addEventListener("click", placeHint);
+$("hintClose").addEventListener("click", () => { hint = null; overlay = layerOpen && layerDigit ? layerOverlay(layerDigit) : null; $("hintPanel").classList.add("hidden"); render(); });
+$("layerBtn").addEventListener("click", () => toggleLayer(!layerOpen));
+$("layerClose").addEventListener("click", () => toggleLayer(false));
+$("fillYellow").addEventListener("click", fillYellow);
+$("optMistakes").addEventListener("change", () => { render(); try { localStorage.setItem(STORE + ".mistakes", $("optMistakes").checked ? "1" : "0"); } catch (e) {} });
+function toggleLayer(on) {
+  layerOpen = on; $("layerPanel").classList.toggle("hidden", !on);
+  hint = null; $("hintPanel").classList.add("hidden");
+  if (on) { layerDigit = digitsByFrequency(G, Uint8Array.from(S.grid)).order[0]; overlay = layerOverlay(layerDigit); }
+  else { layerDigit = 0; overlay = null; }
+  render();
+  if (on) $("layerPanel").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+document.addEventListener("keydown", e => {
+  if (!G || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === "p" || e.key === " ") { if (!S.solved) setPaused(!S.paused); e.preventDefault(); return; }
+  if (S.paused) return;
+  const N = G.N, k = e.key;
+  if (k.startsWith("Arrow")) {
+    if (selected < 0) selected = 0;
+    else {
+      let r = G.R[selected], c = G.C[selected];
+      if (k === "ArrowUp") r = (r + N - 1) % N; if (k === "ArrowDown") r = (r + 1) % N;
+      if (k === "ArrowLeft") c = (c + N - 1) % N; if (k === "ArrowRight") c = (c + 1) % N;
+      selected = r*N + c;
+    }
+    render(); e.preventDefault(); return;
+  }
+  if (k === "Backspace" || k === "Delete" || k === "0") { erase(); return; }
+  if (k === "n") { notesMode = !notesMode; render(); return; }
+  if (k === "z") { undo(); return; }
+  const v = SYMBOLS.indexOf(k.length === 1 ? k.toUpperCase() : "");
+  if (v >= 1 && v <= N) enter(v);
+});
+window.addEventListener("resize", sizeBoard);
+
+/* ---------- daily puzzle + streak ---------- */
+const DAILY = STORE + ".daily";
+const pad2 = n => String(n).padStart(2, "0");
+const dateKey = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const keyToDate = k => { const [y, m, d] = k.split("-").map(Number); return new Date(y, m - 1, d); };
+const addDays = (k, n) => { const d = keyToDate(k); d.setDate(d.getDate() + n); return dateKey(d); };
+// 9×9; difficulty follows the week: Mon–Tue Easy, Wed–Thu Medium, Fri–Sat Hard, Sun Expert
+const DAILY_LEVEL = ["expert", "easy", "easy", "medium", "medium", "hard", "hard"];
+function dailySolved() { return new Set(readList(DAILY)); }
+function markDailySolved(k) { const s = dailySolved(); if (!s.has(k)) { s.add(k); writeList(DAILY, [...s].sort()); } }
+function streakInfo() {
+  const days = dailySolved(), today = dateKey(new Date());
+  // the streak stays alive until the end of today even if today's puzzle isn't done yet
+  let k = days.has(today) ? today : addDays(today, -1), current = 0;
+  while (days.has(k)) { current++; k = addDays(k, -1); }
+  let best = 0, run = 0, prev = null;
+  for (const d of [...days].sort()) { run = prev && addDays(prev, 1) === d ? run + 1 : 1; best = Math.max(best, run); prev = d; }
+  return { current, best, total: days.size, doneToday: days.has(today) };
+}
+function renderDaily() {
+  const st = streakInfo();
+  $("dailyStreak").textContent = `${st.doneToday ? "✓ " : ""}🔥 ${st.current}`;
+  $("dailyBtn").classList.toggle("done", st.doneToday);
+}
+function startDaily() {
+  const today = dateKey(new Date());
+  if (S && S.daily === today && !S.solved) { setPaused(false); return; } // already playing it
+  const started = S && !S.solved && S.grid.some((v, i) => v && !S.puzzle[i]);
+  if (started && !confirm("Start today's daily puzzle? Your current game will be lost.")) return;
+  newGame(9, DAILY_LEVEL[new Date().getDay()], today);
+}
+$("dailyBtn").addEventListener("click", startDaily);
+
+/* ---------- achievements ---------- */
+const ACH = STORE + ".achievements";
+const ACHIEVEMENTS = [
+  // daily streaks (best streak ever, so a badge is never lost)
+  { id: "streak3",   em: "🔥", name: "On Fire",          desc: "3-day daily streak",        goal: 3,   val: c => c.bestStreak },
+  { id: "streak7",   em: "📅", name: "Week Warrior",     desc: "7-day daily streak",        goal: 7,   val: c => c.bestStreak },
+  { id: "streak14",  em: "⚡", name: "Fortnight Focus",  desc: "14-day daily streak",       goal: 14,  val: c => c.bestStreak },
+  { id: "streak30",  em: "🌙", name: "Monthly Master",   desc: "30-day daily streak",       goal: 30,  val: c => c.bestStreak },
+  { id: "streak100", em: "💯", name: "Centurion",        desc: "100-day daily streak",      goal: 100, val: c => c.bestStreak },
+  { id: "daily1",    em: "☀️", name: "Daily Starter",    desc: "Solve a daily puzzle",      goal: 1,   val: c => c.dailies },
+  { id: "week7",     em: "🌈", name: "Perfect Week",     desc: "All 7 dailies Mon–Sun",     goal: 1,   val: c => c.perfectWeek },
+  { id: "daily25",   em: "🗓️", name: "Regular",          desc: "Solve 25 daily puzzles",    goal: 25,  val: c => c.dailies },
+  // totals
+  { id: "solve1",    em: "🧩", name: "First Solve",      desc: "Solve any puzzle",          goal: 1,   val: c => c.solved },
+  { id: "solve10",   em: "🎯", name: "Getting Serious",  desc: "Solve 10 puzzles",          goal: 10,  val: c => c.solved },
+  { id: "solve50",   em: "🏅", name: "Half Century",     desc: "Solve 50 puzzles",          goal: 50,  val: c => c.solved },
+  { id: "solve100",  em: "🏆", name: "Sudoku Pro",       desc: "Solve 100 puzzles",         goal: 100, val: c => c.solved },
+  // the layer method, without help
+  { id: "pure1",     em: "🧠", name: "Pure Logic",       desc: "Solve without hints",       goal: 1,   val: c => c.noHint },
+  { id: "pure10",    em: "▦",  name: "Layer Master",     desc: "10 solves without hints",   goal: 10,  val: c => c.noHint },
+  { id: "hardpure",  em: "💎", name: "Diamond Mind",     desc: "Hard or Expert, no hints",  goal: 1,   val: c => c.hardNoHint },
+  // difficulty & size
+  { id: "expert",    em: "🎓", name: "Expert",           desc: "Solve an Expert puzzle",    goal: 1,   val: c => c.expert },
+  { id: "giant",     em: "🐘", name: "Giant Grid",       desc: "Solve a 16×16",             goal: 1,   val: c => c.giant },
+  { id: "sizes",     em: "🧭", name: "Explorer",         desc: "Solve all 4 sizes",         goal: 4,   val: c => c.sizes },
+  // speed & score
+  { id: "fast5",     em: "⏱️", name: "Quick Thinker",    desc: "9×9 in under 5 minutes",    goal: 1,   val: c => c.fast5 },
+  { id: "fast3",     em: "🚀", name: "Lightning",        desc: "9×9 in under 3 minutes",    goal: 1,   val: c => c.fast3 },
+  { id: "chal1",     em: "🎯", name: "Challenger",       desc: "Complete a daily challenge", goal: 1,  val: c => c.chal },
+  { id: "chal7",     em: "🏹", name: "Sharpshooter",     desc: "7-day challenge streak",    goal: 7,   val: c => c.chalBest },
+  { id: "chal25",    em: "🎖️", name: "Goal Getter",      desc: "Complete 25 daily challenges", goal: 25, val: c => c.chal },
+  { id: "score1000", em: "⭐", name: "Big Score",        desc: "1,000+ points in one game", goal: 1,   val: c => c.big },
+];
+function achContext() {
+  // every game ever recorded, including ones moved to the backup by "Clear history"
+  const games = mergeGames(loadHistory(), loadBackups().flatMap(b => b.games || []));
+  const st = streakInfo();
+  const weeks = new Map();
+  for (const k of dailySolved()) { const m = mondayOf(k); weeks.set(m, (weeks.get(m) || 0) + 1); }
+  const ci = chalInfo();
+  const c = { chal: ci.total, chalBest: ci.best, perfectWeek: [...weeks.values()].some(n => n >= 7) ? 1 : 0, bestStreak: st.best, dailies: st.total, solved: games.length, noHint: 0, hardNoHint: 0, expert: 0, giant: 0,
+              sizes: new Set(games.map(g => g.N)).size, fast5: 0, fast3: 0, big: 0 };
+  for (const g of games) {
+    if (!g.hints) { c.noHint++; if (g.level === "hard" || g.level === "expert") c.hardNoHint = 1; }
+    if (g.level === "expert") c.expert = 1;
+    if (g.N === 16) c.giant = 1;
+    if (g.N === 9 && g.time < 300) c.fast5 = 1;
+    if (g.N === 9 && g.time < 180) c.fast3 = 1;
+    if (g.score >= 1000) c.big = 1;
+  }
+  return c;
+}
+function unlockedMap() { const m = new Map(); for (const u of readList(ACH)) m.set(u.id, u); return m; }
+// Unlock anything newly reached; returns the newly unlocked badges
+function checkAchievements() {
+  const c = achContext(), have = unlockedMap(), fresh = [];
+  for (const a of ACHIEVEMENTS) if (!have.has(a.id) && a.val(c) >= a.goal) { have.set(a.id, { id: a.id, date: Date.now(), seen: false }); fresh.push(a); }
+  if (fresh.length) writeList(ACH, [...have.values()]);
+  return fresh;
+}
+const BADGE_GROUPS = [
+  ["Daily streak", ["streak3", "streak7", "streak14", "streak30", "streak100", "daily1", "week7", "daily25"]],
+  ["Puzzles solved", ["solve1", "solve10", "solve50", "solve100"]],
+  ["Layer method, no hints", ["pure1", "pure10", "hardpure"]],
+  ["Difficulty & size", ["expert", "giant", "sizes"]],
+  ["Speed & score", ["fast5", "fast3", "score1000"]],
+  ["Daily challenges", ["chal1", "chal7", "chal25"]],
+];
+function showBadges() {
+  checkAchievements();
+  const c = achContext(), have = unlockedMap(), byId = new Map(ACHIEVEMENTS.map(a => [a.id, a]));
+  let h = "";
+  for (const [title, ids] of BADGE_GROUPS) {
+    const n = ids.filter(id => have.has(id)).length;
+    h += `<h3>${title} · ${n}/${ids.length}</h3><div class="badges">`;
+    for (const id of ids) {
+      const a = byId.get(id), u = have.get(id), cur = Math.min(a.val(c), a.goal);
+      const date = u ? new Date(u.date).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
+      h += `<div class="bdg ${u ? "earned" : "locked"}${u && !u.seen ? " fresh" : ""}" title="${a.desc}">
+        <span class="em">${a.em}</span><b>${a.name}</b><small>${u ? `${a.desc} · ${date}` : a.desc}</small>
+        ${!u && a.goal > 1 ? `<div class="bar"><i style="width:${Math.round(100 * cur / a.goal)}%"></i></div><small>${cur}/${a.goal}</small>` : ""}
+      </div>`;
+    }
+    h += "</div>";
+  }
+  $("badgeGroups").innerHTML = h;
+  $("bsumCount").textContent = have.size;
+  $("bsumText").textContent = `of ${ACHIEVEMENTS.length} badges earned`;
+  $("bsumBar").style.width = Math.round(100 * have.size / ACHIEVEMENTS.length) + "%";
+  $("badgesPage").classList.remove("hidden");
+  $("badgesPage").querySelector(".scroll").scrollTop = 0;
+  // they've been seen now
+  if ([...have.values()].some(u => !u.seen)) writeList(ACH, [...have.values()].map(u => ({ ...u, seen: true })));
+}
+
+/* ---------- sharing ---------- */
+function last7() { // 🟨 = daily solved, ⬜ = not, oldest first, ending today
+  const days = dailySolved(), today = dateKey(new Date());
+  let out = ""; for (let k = 6; k >= 0; k--) out += days.has(addDays(today, -k)) ? "🟨" : "⬜";
+  return out;
+}
+function earnedEmojis() { const have = unlockedMap(); return ACHIEVEMENTS.filter(a => have.has(a.id)).map(a => a.em).join(""); }
+function gameShareText() {
+  const st = streakInfo(), lv = LEVELS[S.level].label;
+  const title = S.daily ? `🧩 Layer Sudoku · Daily ${keyToDate(S.daily).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : "🧩 Layer Sudoku";
+  return [title,
+    `${S.N}×${S.N} ${lv} · ⏱️ ${fmt(S.time)} · ${S.hints ? `${S.hints} hint${S.hints === 1 ? "" : "s"}` : "no hints 🧠"}`,
+    S.score ? `⭐ ${S.score.toLocaleString()} pts` : null,
+    `🔥 ${st.current}-day streak (best ${st.best})`,
+    last7(),
+    `🏅 ${unlockedMap().size}/${ACHIEVEMENTS.length} badges`].filter(Boolean).join("\n");
+}
+function statsShareText() {
+  checkAchievements();
+  const st = streakInfo(), games = loadHistory(), best = games.reduce((m, g) => Math.max(m, g.score), 0), em = earnedEmojis();
+  return ["🧩 My Layer Sudoku stats",
+    `🔥 Daily streak: ${st.current} day${st.current === 1 ? "" : "s"} (best ${st.best})`,
+    last7(),
+    `📅 Dailies solved: ${st.total} · 🎯 challenges: ${chalInfo().total}`,
+    games.length ? `🧩 Puzzles solved: ${games.length} · ⭐ best ${best.toLocaleString()} pts` : null,
+    `🏅 Badges: ${unlockedMap().size}/${ACHIEVEMENTS.length}${em ? " " + em : ""}`].filter(Boolean).join("\n");
+}
+function badgesShareText() {
+  checkAchievements();
+  const have = unlockedMap(), earned = ACHIEVEMENTS.filter(a => have.has(a.id));
+  return [`🏅 ${earned.length}/${ACHIEVEMENTS.length} Layer Sudoku badges`,
+    ...earned.map(a => `${a.em} ${a.name} — ${a.desc}`),
+    `🔥 Current streak: ${streakInfo().current}`].join("\n");
+}
+function toast(msg) {
+  document.querySelectorAll(".toast").forEach(x => x.remove());
+  const t = document.createElement("div"); t.className = "toast"; t.textContent = msg;
+  document.body.appendChild(t); setTimeout(() => t.remove(), 1800);
+}
+async function shareText(text) {
+  // 1) the phone's share sheet (Messages, WhatsApp, …)
+  if (navigator.share) {
+    try { await navigator.share({ text }); return; }
+    catch (e) { if (e && e.name === "AbortError") return; }
+  }
+  // 2) copy to clipboard
+  try { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); toast("Copied — paste it anywhere"); return; } } catch (e) {}
+  const ta = document.createElement("textarea"); ta.value = text; ta.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+  document.body.appendChild(ta); ta.select(); let ok = false;
+  try { ok = document.execCommand("copy"); } catch (e) {}
+  ta.remove();
+  if (ok) { toast("Copied — paste it anywhere"); return; }
+  // 3) show the text so it can be copied by hand
+  $("shareText").value = text; $("shareBox").classList.remove("hidden");
+}
+$("shareCopy").addEventListener("click", () => {
+  const ta = $("shareText"); ta.focus(); ta.select(); ta.setSelectionRange(0, ta.value.length);
+  let ok = false; try { ok = document.execCommand("copy"); } catch (e) {}
+  toast(ok ? "Copied — paste it anywhere" : "Select the text and copy it");
+});
+$("shareClose").addEventListener("click", () => $("shareBox").classList.add("hidden"));
+$("winShare").addEventListener("click", () => shareText(gameShareText()));
+$("histShare").addEventListener("click", () => shareText(statsShareText()));
+$("badgesShare").addEventListener("click", () => shareText(badgesShareText()));
+$("badgesBtn").addEventListener("click", showBadges);
+$("winBadgesBtn").addEventListener("click", () => { $("win").classList.add("hidden"); showBadges(); });
+$("histBadges").addEventListener("click", () => { $("hist").classList.add("hidden"); showBadges(); });
+$("badgesClose").addEventListener("click", () => $("badgesPage").classList.add("hidden"));
+$("badgesPage").addEventListener("click", e => { if (e.target.id === "badgesPage") $("badgesPage").classList.add("hidden"); });
+
+/* ---------- friends: numbers only, weekly challenge ---------- */
+// Players are identified by a number; friends are added from a digits-only code or a player file.
+const PLAYER = STORE + ".player", FRIENDS = STORE + ".friends";
+let lbTab = "week";
+const isNum = v => /^\d{3,6}$/.test(String(v)); // player numbers: 3–6 digits
+const hasData = e => !!e.u; // false for a friend added by number whose player file hasn't been loaded yet
+function me() {
+  let p = readList(PLAYER)[0];
+  if (!p || !isNum(p.num)) { p = { num: String(100000 + Math.floor(Math.random() * 900000)) }; writeList(PLAYER, [p]); }
+  return p;
+}
+function loadFriends() { return readList(FRIENDS).filter(f => f && isNum(f.num)); } // drops old name-based entries
+const EPOCH = Date.UTC(2026, 0, 1);
+const dayIdx = k => { const [y, m, d] = k.split("-").map(Number); return Math.max(0, Math.round((Date.UTC(y, m - 1, d) - EPOCH) / 864e5)); };
+const keyFromIdx = i => { const d = new Date(EPOCH + i * 864e5); return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`; };
+function mondayOf(k) { const d = keyToDate(k); return addDays(k, -((d.getDay() + 6) % 7)); }
+function dailyScores() { // date → score of that day's daily (first solve)
+  const m = new Map();
+  for (const g of mergeGames(loadHistory(), loadBackups().flatMap(b => b.games || []))) if (g.daily && !m.has(g.daily)) m.set(g.daily, g.score);
+  return m;
+}
+function myEntry() {
+  checkAchievements();
+  const today = dateKey(new Date()), st = streakInfo(), games = mergeGames(loadHistory(), loadBackups().flatMap(b => b.games || []));
+  const scores = dailyScores(), wk = mondayOf(today), days = [...dailySolved()].sort();
+  return { num: me().num, u: today, c: st.current, b: st.best, ld: days[days.length - 1] || "", dt: st.total,
+           bs: games.reduce((m, g) => Math.max(m, g.score), 0), ps: games.length, bg: unlockedMap().size,
+           wk, ws: [0, 1, 2, 3, 4, 5, 6].map(k => scores.get(addDays(wk, k)) || 0) };
+}
+// ---- digits-only code: fixed-width fields + 4-digit checksum ----
+const FIELDS = [["u", 4], ["c", 3], ["b", 3], ["ld", 4], ["dt", 4], ["bs", 5], ["ps", 4], ["bg", 2], ["wk", 4]];
+function chk4(str) { let h = 2166136261; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); } return String((h >>> 0) % 10000).padStart(4, "0"); }
+function encodeEntry(e) {
+  const val = { ...e, u: dayIdx(e.u), ld: e.ld ? dayIdx(e.ld) + 1 : 0, wk: dayIdx(e.wk) };
+  let body = "01" + e.num.length + e.num;
+  for (const [k, w] of FIELDS) body += String(Math.min(Math.max(0, Math.round(val[k] || 0)), 10 ** w - 1)).padStart(w, "0");
+  for (const v of e.ws) body += String(Math.min(v, 99999)).padStart(5, "0");
+  return body + chk4(body);
+}
+function decodeEntry(digits) {
+  digits = String(digits).replace(/\D/g, "");
+  if (digits.slice(0, 2) !== "01") return { err: "That isn't a Layer Sudoku friend code." };
+  const nl = +digits[2];
+  if (!(nl >= 1 && nl <= 9) || digits.length !== 3 + nl + 33 + 35 + 4) return { err: "That code is the wrong length — check it was copied completely." };
+  const body = digits.slice(0, -4);
+  if (chk4(body) !== digits.slice(-4)) return { err: "That code has a typo or is incomplete — ask your friend to send it again." };
+  let pos = 3; const e = { num: digits.slice(pos, pos + nl) }; pos += nl;
+  for (const [k, w] of FIELDS) { e[k] = +digits.slice(pos, pos + w); pos += w; }
+  e.ws = []; for (let k = 0; k < 7; k++) { e.ws.push(+digits.slice(pos, pos + 5)); pos += 5; }
+  e.u = keyFromIdx(e.u); e.ld = e.ld ? keyFromIdx(e.ld - 1) : ""; e.wk = keyFromIdx(e.wk);
+  return { e };
+}
+const groupCode = c => c.match(/.{1,5}/g).join(" ");
+function addFriend(e) {
+  if (e.num === me().num) { toast("That's your own player file"); return false; }
+  if (!isNum(e.num)) { toast("That player file has an invalid player number."); return false; }
+  const friends = loadFriends(), k = friends.findIndex(f => f.num === e.num);
+  if (k >= 0 && hasData(friends[k]) && friends[k].u > e.u) { toast(`You already have a newer file from player ${e.num}`); return false; }
+  if (k >= 0) friends[k] = e; else friends.push(e);
+  writeList(FRIENDS, friends);
+  toast(k >= 0 ? `Updated player ${e.num}` : `Added player ${e.num}`);
+  return true;
+}
+// ---- weekly challenge ----
+const weekOf = e => e.wk === mondayOf(dateKey(new Date())) ? e.ws : [0, 0, 0, 0, 0, 0, 0];
+const weekTotal = e => weekOf(e).reduce((a, b) => a + b, 0);
+function weekStanding() {
+  const mine = myEntry(), all = [mine, ...loadFriends().filter(hasData)].sort((a, b) => weekTotal(b) - weekTotal(a));
+  return { total: weekTotal(mine), rank: all.findIndex(e => e.num === mine.num) + 1, n: all.length };
+}
+const liveStreak = e => { const t = dateKey(new Date()); return e.ld === t || e.ld === addDays(t, -1) ? e.c : 0; };
+function lbRender() {
+  const mine = { ...myEntry(), me: true }, friends = loadFriends(), all = [mine, ...friends];
+  const today = dateKey(new Date()), mon = mondayOf(today), todayK = dayIdx(today) - dayIdx(mon);
+  const medal = k => k < 3 ? `<span class="medal">${["🥇", "🥈", "🥉"][k]}</span>` : k + 1;
+  const short = k => keyToDate(k).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const who = e => `<span class="who">Player ${esc(e.num)}${e.me ? " (you)" : ""}</span>${e.me ? "" : `<small>${hasData(e) ? `file from ${short(e.u)}` : "waiting for player file"} <button class="rm" data-num="${esc(e.num)}" aria-label="Remove">×</button></small>`}`;
+  let head, rows, note = "", info = "";
+  if (lbTab === "week") {
+    const res = all.slice().sort((a, b) => hasData(b) - hasData(a) || weekTotal(b) - weekTotal(a) || weekOf(b).filter(Boolean).length - weekOf(a).filter(Boolean).length);
+    const left = 6 - todayK;
+    info = `Week of ${short(mon)} – ${short(addDays(mon, 6))} · ${left ? `${left} day${left === 1 ? "" : "s"} left` : "last day!"} · total of this week's 7 daily puzzles.`;
+    head = `<th></th><th>Player</th><th>M T W T F S S</th><th class="num">Total</th>`;
+    rows = res.map((e, k) => `<tr class="${e.me ? "me" : ""}"><td class="rank">${medal(k)}</td><td>${who(e)}</td><td><span class="wkcells">${weekOf(e).map((v, d) => `<i class="${v ? "y" : ""}${d > todayK ? " f" : ""}" title="${v ? v + " pts" : ""}"></i>`).join("")}</span></td><td class="num">${hasData(e) ? weekTotal(e).toLocaleString() : "—"}</td></tr>`);
+  } else if (lbTab === "today") {
+    const res = all.map(e => ({ e, v: weekOf(e)[todayK] })).filter(x => x.v).sort((a, b) => b.v - a.v);
+    info = `Today's daily: 9×9 ${LEVELS[DAILY_LEVEL[new Date().getDay()]].label}.`;
+    head = `<th></th><th>Player</th><th class="num">Score</th>`;
+    rows = res.map((x, k) => `<tr class="${x.e.me ? "me" : ""}"><td class="rank">${medal(k)}</td><td>${who(x.e)}</td><td class="num">${x.v.toLocaleString()}</td></tr>`);
+    if (!res.some(x => x.e.me)) note = "You haven't solved today's daily yet.";
+  } else if (lbTab === "streak") {
+    const res = all.slice().sort((a, b) => hasData(b) - hasData(a) || liveStreak(b) - liveStreak(a) || (b.b || 0) - (a.b || 0));
+    head = `<th></th><th>Player</th><th class="num">🔥 Now</th><th class="num">Best</th><th class="num">Dailies</th>`;
+    rows = res.map((e, k) => `<tr class="${e.me ? "me" : ""}"><td class="rank">${medal(k)}</td><td>${who(e)}</td>${hasData(e) ? `<td class="num">${liveStreak(e)}</td><td class="num">${e.b}</td><td class="num">${e.dt}</td>` : `<td class="num">—</td><td class="num">—</td><td class="num">—</td>`}</tr>`);
+  } else {
+    const res = all.slice().sort((a, b) => hasData(b) - hasData(a) || (b.bs || 0) - (a.bs || 0) || (b.ps || 0) - (a.ps || 0));
+    head = `<th></th><th>Player</th><th class="num">Best</th><th class="num">Solved</th><th class="num">🏅</th>`;
+    rows = res.map((e, k) => `<tr class="${e.me ? "me" : ""}"><td class="rank">${medal(k)}</td><td>${who(e)}</td>${hasData(e) ? `<td class="num">${e.bs.toLocaleString()}</td><td class="num">${e.ps}</td><td class="num">${e.bg}</td>` : `<td class="num">—</td><td class="num">—</td><td class="num">—</td>`}</tr>`);
+  }
+  $("lbWeekInfo").textContent = info;
+  $("lbTable").innerHTML = rows.length ? `<table class="lb"><tr>${head}</tr>${rows.join("")}</table>` : `<div class="empty">Nobody has solved today's daily yet.</div>`;
+  if (!friends.length) note += (note ? " " : "") + "Add friends below to compare.";
+  else if (friends.some(f => !hasData(f))) note += (note ? " " : "") + "Load a friend's player file to see their scores.";
+  $("lbNote").textContent = note;
+  document.querySelectorAll("#lb .tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === lbTab));
+}
+function showLeaderboard() {
+  $("lbNum").value = me().num;
+  lbRender();
+  $("lb").classList.remove("hidden");
+  $("lb").querySelector(".scroll").scrollTop = 0;
+}
+// ---- digits-only inputs ----
+function digitsOnly(el, max) {
+  el.addEventListener("input", () => { const v = el.value.replace(/\D/g, "").slice(0, max); if (v !== el.value) el.value = v; });
+  el.addEventListener("beforeinput", e => { if (e.data && /\D/.test(e.data) && e.inputType !== "insertFromPaste") e.preventDefault(); });
+}
+digitsOnly($("lbNum"), 6);
+digitsOnly($("lbCode"), 6);
+$("lbNum").addEventListener("change", () => {
+  const v = $("lbNum").value.replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+  if (!isNum(v)) { toast("Use 3 to 6 digits"); $("lbNum").value = me().num; return; }
+  writeList(PLAYER, [{ num: v }]); $("lbNum").value = v; lbRender();
+});
+// ---- send myself ----
+$("lbShareCode").addEventListener("click", () => {
+  shareText(`🧩 Layer Sudoku\nMy player number: ${me().num}\nAdd me in 👥 Friends → Add by number. I'll send my player file so you can see my scores.`);
+});
+async function sharePlayerFile() {
+  const e = myEntry(), num = me().num, name = `LayerSudoku-player-${num}.json`;
+  const data = { app: "Layer Sudoku", type: "player", version: 1, exportedAt: new Date().toISOString(), player: num,
+                 code: encodeEntry(e), entry: e, history: mergeGames(loadHistory(), loadBackups().flatMap(b => b.games || [])),
+                 daily: [...dailySolved()].sort(), badges: readList(ACH) };
+  const blob = new Blob([JSON.stringify(data, null, 1)], { type: "application/json" });
+  try {
+    const file = new File([blob], name, { type: "application/json" });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: `Layer Sudoku player ${num}` }); return; }
+  } catch (err) { if (err && err.name === "AbortError") return; }
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  toast(`Saved ${name} — send it to your friends`);
+}
+$("lbShareFile").addEventListener("click", sharePlayerFile);
+$("histPlayerFile").addEventListener("click", sharePlayerFile);
+// ---- add friends ----
+$("lbAdd").addEventListener("click", () => {
+  const num = $("lbCode").value.replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+  if (!isNum(num)) { toast("A player number has 3 to 6 digits"); return; }
+  if (num === me().num) { toast("That's your own number"); return; }
+  const friends = loadFriends();
+  if (friends.some(f => f.num === num)) { toast(`Player ${num} is already your friend`); return; }
+  friends.push({ num }); writeList(FRIENDS, friends);
+  $("lbCode").value = "";
+  toast(`Added player ${num} — load their player file to see scores`);
+  lbRender();
+});
+$("lbAddFile").addEventListener("click", () => $("lbFile").click());
+$("lbFile").addEventListener("change", ev => {
+  const f = ev.target.files[0]; ev.target.value = ""; if (!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    let d = null; try { d = JSON.parse(rd.result); } catch (x) {}
+    if (!d || d.type !== "player" || !d.code) { toast("That isn't a Layer Sudoku player file."); return; }
+    const r = decodeEntry(d.code);
+    if (r.err) { toast("That player file is damaged."); return; }
+    if (addFriend(r.e)) lbRender();
+  };
+  rd.readAsText(f);
+});
+$("lbTable").addEventListener("click", e => {
+  const b = e.target.closest(".rm"); if (!b) return;
+  if (!confirm(`Remove player ${b.dataset.num} from your friends?`)) return;
+  writeList(FRIENDS, loadFriends().filter(x => x.num !== b.dataset.num)); lbRender();
+});
+document.querySelectorAll("#lb .tabs button").forEach(b => b.addEventListener("click", () => { lbTab = b.dataset.tab; lbRender(); }));
+$("lbBtn").addEventListener("click", showLeaderboard);
+$("winLb").addEventListener("click", () => { $("win").classList.add("hidden"); showLeaderboard(); });
+$("lbClose").addEventListener("click", () => $("lb").classList.add("hidden"));
+$("lb").addEventListener("click", e => { if (e.target.id === "lb") $("lb").classList.add("hidden"); });
+
+/* ---------- daily challenge: one goal per day, the same for everyone ---------- */
+const CHAL = STORE + ".challenges";
+const CHALLENGES = [
+  { id: "nohint",   text: "Solve any puzzle without using a hint",            test: g => !g.hints },
+  { id: "nomiss",   text: "Solve a puzzle with no mistakes",                  test: g => g.mistakes === 0 },
+  { id: "s12",      text: "Solve a 12×12 puzzle",                             preset: { N: 12, level: "easy" },   test: g => g.N === 12 },
+  { id: "s16",      text: "Solve a 16×16 puzzle",                             preset: { N: 16, level: "easy" },   test: g => g.N === 16 },
+  { id: "hard",     text: "Solve a Hard puzzle",                              preset: { N: 9, level: "hard" },    test: g => g.level === "hard" || g.level === "expert" },
+  { id: "expert",   text: "Solve an Expert puzzle",                           preset: { N: 9, level: "expert" },  test: g => g.level === "expert" },
+  { id: "three",    text: "Solve 3 puzzles today",                            count: 3 },
+  { id: "fast9",    text: "Solve a 9×9 Medium or harder in under 8 minutes",  preset: { N: 9, level: "medium" },  test: g => g.N === 9 && g.level !== "easy" && g.time < 480 },
+  { id: "fast6",    text: "Solve a 6×6 in under 90 seconds",                  preset: { N: 6, level: "medium" },  test: g => g.N === 6 && g.time < 90 },
+  { id: "score",    text: "Score 800+ points in one game",                    test: g => g.score >= 800 },
+  { id: "daily1",   text: "Solve today's daily puzzle using at most 1 hint",  preset: "daily",                   test: (g, t) => g.daily === t && g.hints <= 1 },
+  { id: "medpure",  text: "Solve a Medium puzzle without hints",              preset: { N: 9, level: "medium" },  test: g => g.level === "medium" && !g.hints },
+];
+function todaysChallenge() {
+  const t = dateKey(new Date());
+  return CHALLENGES[Math.floor(seededRandom("layer-sudoku-challenge-" + t)() * CHALLENGES.length)];
+}
+function gamesToday() {
+  const t = dateKey(new Date());
+  return mergeGames(loadHistory(), loadBackups().flatMap(b => b.games || [])).filter(g => dateKey(new Date(g.date)) === t);
+}
+function runInfo(days) { // current & best run of consecutive days, total count
+  const today = dateKey(new Date());
+  let k = days.has(today) ? today : addDays(today, -1), current = 0;
+  while (days.has(k)) { current++; k = addDays(k, -1); }
+  let best = 0, run = 0, prev = null;
+  for (const d of [...days].sort()) { run = prev && addDays(prev, 1) === d ? run + 1 : 1; best = Math.max(best, run); prev = d; }
+  return { current, best, total: days.size, doneToday: days.has(today) };
+}
+const chalInfo = () => runInfo(new Set(readList(CHAL)));
+// Called after a win: marks today's challenge done if met; returns true when newly completed
+function checkChallenge() {
+  const t = dateKey(new Date()), done = new Set(readList(CHAL));
+  if (done.has(t)) return false;
+  const ch = todaysChallenge(), games = gamesToday();
+  const ok = ch.count ? games.length >= ch.count : games.some(g => ch.test(g, t));
+  if (!ok) return false;
+  done.add(t); writeList(CHAL, [...done].sort());
+  return true;
+}
+function renderChallenge() {
+  const ch = todaysChallenge(), info = chalInfo();
+  const progress = ch.count && !info.doneToday ? ` (${Math.min(gamesToday().length, ch.count)}/${ch.count})` : "";
+  $("chalText").textContent = ch.text + progress;
+  $("chalHead").textContent = info.doneToday ? `Challenge done ✓ · 🎯 ${info.current}-day streak` : `Today's challenge${info.current ? ` · 🎯 ${info.current}-day streak` : ""}`;
+  $("chal").classList.toggle("done", info.doneToday);
+  $("chalPlay").classList.toggle("hidden", info.doneToday || !ch.preset);
+}
+$("chalPlay").addEventListener("click", () => {
+  const ch = todaysChallenge();
+  if (ch.preset === "daily") { startDaily(); return; }
+  if (!ch.preset) return;
+  const started = S && !S.solved && S.grid.some((v, i) => v && !S.puzzle[i]);
+  if (started && !confirm("Start a new puzzle for today's challenge? Current progress will be lost.")) return;
+  $("size").value = String(ch.preset.N); $("level").value = ch.preset.level;
+  newGame(ch.preset.N, ch.preset.level);
+});
+document.addEventListener("visibilitychange", () => { if (!document.hidden) renderChallenge(); });
+
+/* ---------- appearance: theme + one colour per number ---------- */
+const THEMES = { auto: { icon: "◐", label: "Auto" }, light: { icon: "☀", label: "Light" }, dark: { icon: "☾", label: "Dark" } };
+function applyTheme(t) {
+  if (!THEMES[t]) t = "auto";
+  if (t === "auto") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
+  $("themeIcon").textContent = THEMES[t].icon; $("themeLbl").textContent = THEMES[t].label;
+  $("themeBtn").dataset.t = t;
+  try { localStorage.setItem(STORE + ".theme", t); } catch (e) {}
+}
+$("themeBtn").addEventListener("click", () => {
+  const order = ["auto", "light", "dark"], cur = $("themeBtn").dataset.t || "auto";
+  applyTheme(order[(order.indexOf(cur) + 1) % order.length]);
+});
+// hue sweep across the digits, as in the Python colors.py (brightness set per theme in CSS)
+function hueOf(d) { return Math.round((d - 1) * 360 / (G ? G.N : 9)); }
+const PALETTES = {
+  pastel:   { label: "Pastel", desc: "Soft colours, adapts to light/dark" },
+  contrast: { label: "High contrast", desc: "Strong, clearly different colours",
+              list: ["#BE0032","#F38400","#F3C300","#008856","#0067A5","#875692","#E68FAC","#882D17","#A1CAF1",
+                     "#8DB600","#604E97","#F99379","#2B3D26","#C2B280","#848482","#DCD300"] },
+  cb:       { label: "Colour-blind friendly", desc: "Okabe–Ito colours (best on 9×9)",
+              list: ["#E69F00","#56B4E9","#009E73","#F0E442","#0072B2","#D55E00","#CC79A7","#000000","#999999"] },
+  plain:    { label: "Plain", desc: "No colours" },
+};
+let palette = "pastel";
+const mixWhite = (hex, t) => "#" + [1, 3, 5].map(k => Math.round(parseInt(hex.substr(k, 2), 16) * (1 - t) + 255 * t).toString(16).padStart(2, "0")).join("");
+const inkFor = hex => { // black or white text, whichever reads better on this colour
+  const [r, g, b] = [1, 3, 5].map(k => { const c = parseInt(hex.substr(k, 2), 16) / 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.2 ? "#111111" : "#ffffff";
+};
+function fixedColor(d) {
+  const list = PALETTES[palette].list; if (!list) return null;
+  const k = d - 1, base = list[k % list.length];
+  return k < list.length ? base : mixWhite(base, 0.55); // beyond the list: lighter tint of the same colour
+}
+function paintDigit(el, d) {
+  el.style.setProperty("--h", hueOf(d));
+  const c = fixedColor(d);
+  if (c) { el.style.setProperty("--cbg", c); el.style.setProperty("--cfg", inkFor(c)); }
+}
+function applyPalette(p) {
+  if (!PALETTES[p]) p = "pastel";
+  palette = p;
+  document.body.classList.toggle("colorful", p !== "plain");
+  document.body.classList.toggle("pal-fixed", !!PALETTES[p].list);
+  $("colorBtn").classList.toggle("on", p !== "plain");
+  $("colorLbl").textContent = p === "plain" ? "Plain" : "Colors";
+  try { localStorage.setItem(STORE + ".palette", p); } catch (e) {}
+  if (G) { buildPad(); render(); }
+}
+function buildColorMenu() {
+  const m = $("colorMenu"); m.innerHTML = "";
+  for (const [key, P] of Object.entries(PALETTES)) {
+    const b = document.createElement("button"); b.setAttribute("role", "menuitemradio");
+    if (key === palette) b.classList.add("cur");
+    let sw = "";
+    for (let d = 1; d <= 9; d++) {
+      const bg = P.list ? P.list[(d - 1) % P.list.length] : key === "pastel" ? `hsl(${Math.round((d - 1) * 40)} 78% 78%)` : "";
+      sw += `<i${bg ? ` style="background:${bg}"` : ""}></i>`;
+    }
+    b.innerHTML = `<span class="sw${key === "plain" ? " none" : ""}">${sw}</span><span><b>${P.label}</b><small>${P.desc}</small></span>${key === palette ? '<span class="chk">✓</span>' : ""}`;
+    b.addEventListener("click", e => { e.stopPropagation(); applyPalette(key); $("colorMenu").classList.add("hidden"); });
+    m.appendChild(b);
+  }
+}
+$("colorBtn").addEventListener("click", e => {
+  e.stopPropagation();
+  const m = $("colorMenu"), open = m.classList.contains("hidden");
+  if (open) buildColorMenu();
+  m.classList.toggle("hidden", !open);
+});
+document.addEventListener("click", e => { if (!$("colorMenu").contains(e.target)) $("colorMenu").classList.add("hidden"); });
+
+/* ---------- daily calendar ---------- */
+let calY = new Date().getFullYear(), calM = new Date().getMonth();
+function renderCalendar() {
+  const days = dailySolved(), today = dateKey(new Date()), now = new Date(), chalDays = new Set(readList(CHAL));
+  const first = new Date(calY, calM, 1), nDays = new Date(calY, calM + 1, 0).getDate();
+  $("calTitle").textContent = first.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  let h = "";
+  for (let w = 0; w < 7; w++) h += `<div class="wd">${new Date(2024, 0, 7 + w).toLocaleDateString(undefined, { weekday: "narrow" })}</div>`;
+  for (let k = 0; k < first.getDay(); k++) h += "<div></div>";
+  let solvedHere = 0, pastDays = 0;
+  for (let d = 1; d <= nDays; d++) {
+    const key = dateKey(new Date(calY, calM, d)), cls = ["d"];
+    const isFuture = key > today, solved = days.has(key);
+    if (solved) { cls.push("solved"); solvedHere++; }
+    if (key === today) cls.push("today");
+    if (chalDays.has(key)) cls.push("chal");
+    if (isFuture) cls.push("future"); else { pastDays++; if (!solved && key !== today) cls.push("missed"); }
+    if (key === today && !solved) cls.push("play");
+    h += `<div class="${cls.join(" ")}" title="${solved ? "Solved" : key === today ? "Today — tap to play" : ""}">${d}</div>`;
+  }
+  $("calGrid").innerHTML = h;
+  const thisMonth = calY === now.getFullYear() && calM === now.getMonth();
+  $("calNote").textContent = `Yellow = daily puzzle solved · 🎯 = daily challenge done. Solved ${solvedHere} of ${pastDays} day${pastDays === 1 ? "" : "s"} this month.` +
+    (thisMonth && !days.has(today) ? " Tap today to play." : "");
+  const earliest = [...days].sort()[0];
+  const nowYM = dateKey(now).slice(0, 7), minYM = earliest && earliest.slice(0, 7) < nowYM ? earliest.slice(0, 7) : nowYM;
+  const ym = `${calY}-${pad2(calM + 1)}`;
+  $("calPrev").disabled = ym <= minYM;
+  $("calNext").disabled = ym >= nowYM;
+}
+$("calPrev").addEventListener("click", () => { calM--; if (calM < 0) { calM = 11; calY--; } renderCalendar(); });
+$("calNext").addEventListener("click", () => { calM++; if (calM > 11) { calM = 0; calY++; } renderCalendar(); });
+$("calGrid").addEventListener("click", e => {
+  if (!e.target.closest(".d.play")) return;
+  $("hist").classList.add("hidden"); startDaily();
+});
+
+/* ---------- cube view + cube-method simulation ---------- */
+const cube = { mode: "lines", on: false, steps: [], k: 0, timer: null, yaw: -0.65, pitch: 0.5, spread: 0.8, auto: true, dots: true, drag: null, dirty: true, raf: 0 };
+const FAMS = {
+  start: ["Start", "#6a6e77"], box: ["Box line · your layer rule", "#c9951a"], row: ["Row line", "#2455c7"], col: ["Column line", "#8a4fd6"],
+  cell: ["Pillar", "#16a085"], point: ["Pointing", "#e67e22"], pair: ["Pair pattern", "#e67e22"], guess: ["Guess", "#c0392b"],
+  back: ["Contradiction", "#c0392b"], done: ["Solved", "#2e9e57"], stop: ["Stopped", "#6a6e77"],
+  sbuild: ["Build slice", "#2455c7"], staken: ["Full pillars cut", "#16a085"], score: ["Certain in slice", "#c9951a"],
+  sonly: ["Pillar single", "#16a085"], spair: ["Slice clash", "#e67e22"], sgroup: ["3–4 slices clash", "#d35400"], slock: ["🔒 Lock slice", "#2e9e57"],
+};
+const rcName = i => `r${G.R[i] + 1}c${G.C[i] + 1}`;
+// All lines of the cube, in sweep order: box lines (your layer rule) first, then row, column, pillar
+function cubeLines() {
+  const N = G.N, out = [];
+  for (const [fam, units] of [["box", G.boxes], ["row", G.rows], ["col", G.cols]])
+    for (let u = 0; u < N; u++) for (let d = 1; d <= N; d++) out.push({ fam, unit: u, d, idx: units[u].map(i => i * N + d - 1) });
+  for (let i = 0; i < N * N; i++) out.push({ fam: "cell", cell: i, idx: [...Array(N).keys()].map(k => i * N + k) });
+  return out;
+}
+function lineName(ln) {
+  if (ln.fam === "cell") return `Pillar ${rcName(ln.cell)}`;
+  return `Layer ${sym(ln.d)}, ${{ box: "box", row: "row", col: "column" }[ln.fam]} ${ln.unit + 1}`;
+}
+// Solve the puzzle with the cube method, recording a snapshot after every step
+function cubeSolve(puzzle) {
+  const N = G.N, NN = N * N, lines = cubeLines(), steps = [], MAX = N <= 9 ? 2500 : 1200;
+  let grid = Uint8Array.from(puzzle), open = new Uint8Array(NN * N);
+  for (let i = 0; i < NN; i++) if (!grid[i]) for (let k = 0; k < N; k++) open[i * N + k] = 1;
+  for (let i = 0; i < NN; i++) if (grid[i]) for (const j of G.peers[i]) open[j * N + grid[i] - 1] = 0;
+  const place = (i, d) => { grid[i] = d; for (let k = 0; k < N; k++) open[i * N + k] = 0; for (const j of G.peers[i]) open[j * N + d - 1] = 0; };
+  const snap = ev => steps.push({ ev, grid: grid.slice(), open: open.slice() });
+  const sat = ln => ln.fam === "cell" ? grid[ln.cell] > 0 : ln.idx.some(x => grid[(x / N) | 0] === ln.d);
+  const opensOf = ln => ln.idx.filter(x => open[x]);
+  const stack = [];
+  const guess = fr => {
+    const x = fr.opts[fr.k], i = (x / N) | 0, d = x % N + 1; place(i, d);
+    snap({ fam: "guess", place: i, d, line: fr.ln.idx, text: `Stuck. ${lineName(fr.ln)} has ${fr.opts.length} open blocks — try ${sym(d)} at ${rcName(i)} (option ${fr.k + 1} of ${fr.opts.length}).` });
+  };
+  const backtrack = dead => {
+    snap({ fam: "back", line: dead.idx, text: `${lineName(dead)} has no open block left, so the last guess was wrong. Undo it and take the next option.` });
+    while (stack.length) {
+      const fr = stack[stack.length - 1]; fr.k++;
+      if (fr.k < fr.opts.length) { grid = fr.grid.slice(); open = fr.open.slice(); guess(fr); return true; }
+      stack.pop();
+    }
+    return false;
+  };
+  snap({ fam: "start", text: `${grid.filter(Boolean).length} givens placed as solid blocks. Dots are blocks that are still possible. Press Play.` });
+  while (steps.length < MAX) {
+    if (grid.every(v => v)) { snap({ fam: "done", text: "Solved — every line of the cube now holds exactly one block." }); break; }
+    // 1) a line with one open block → place it; a line with none → contradiction
+    let single = null, dead = null;
+    for (const ln of lines) {
+      if (sat(ln)) continue;
+      const o = opensOf(ln);
+      if (!o.length) { dead = ln; break; }
+      if (o.length === 1 && !single) single = { ln, x: o[0] };
+    }
+    if (dead) { if (!backtrack(dead)) { snap({ fam: "stop", text: "No solution." }); break; } continue; }
+    if (single) {
+      const { ln, x } = single, i = (x / N) | 0, d = x % N + 1; place(i, d);
+      const text = {
+        box: `Layer ${sym(d)}, box ${ln.unit + 1}: only one open block → ${sym(d)} at ${rcName(i)}.`,
+        row: `Layer ${sym(d)}, row ${ln.unit + 1}: ${sym(d)} fits in only one place → ${rcName(i)}.`,
+        col: `Layer ${sym(d)}, column ${ln.unit + 1}: ${sym(d)} fits in only one place → ${rcName(i)}.`,
+        cell: `Pillar at ${rcName(i)}: only layer ${sym(d)} is still open → this cell is ${sym(d)}.`,
+      }[ln.fam];
+      snap({ fam: ln.fam, place: i, d, line: ln.idx, text });
+      continue;
+    }
+    // 2) patterns: pointing, then "2 lines share the same 2 places" in every slice
+    const pat = cubePattern(open);
+    if (pat) { for (const x of pat.remove) open[x] = 0; snap({ fam: pat.fam, line: pat.line, removed: pat.remove, text: pat.text }); continue; }
+    // 3) guess on the line with the fewest open blocks (any direction)
+    let best = null, bn = 1e9;
+    for (const ln of lines) { if (sat(ln)) continue; const n = opensOf(ln).length; if (n < bn) { bn = n; best = ln; } }
+    const fr = { grid: grid.slice(), open: open.slice(), opts: opensOf(best), k: 0, ln: best };
+    stack.push(fr); guess(fr);
+  }
+  if (steps.length >= MAX) snap({ fam: "stop", text: "Stopped: too many steps to show." });
+  return steps;
+}
+// Slice mode: the option-layers method in the cube. Each number is a horizontal slice; list every option layer
+// of the thinnest slices, cut them through the pillars, lock a slice when one option is left.
+function sliceSolve(puzzle) {
+  const N = G.N, NN = N * N, W = Math.ceil(NN / 32), MAX = N <= 9 ? 1500 : 800, CAP = 60000;
+  const has = (t, i) => (t[i >> 5] >>> (i & 31)) & 1;
+  const disjoint = (a, b) => { for (let w = 0; w < W; w++) if (a[w] & b[w]) return false; return true; };
+  // group check, only for the unlocked numbers (once every one is built and the pair check is stuck):
+  // keep an option only if, for every group of 2 (then 3) other numbers, one option of each still fits with it -- no cell shared
+  const gcount = { 3: 0, 4: 0 };
+  const fitsWith = (lists, acc, work) => { if (!lists.length) return true; for (const u of lists[0]) { if (++work.n > 3e6) return true; if (!disjoint(u, acc)) continue; const a2 = acc.slice(); for (let w = 0; w < W; w++) a2[w] |= u[w]; if (fitsWith(lists.slice(1), a2, work)) return true; } return false; };
+  const pickK = (n, k, from = 0) => k === 0 ? [[]] : [...Array(Math.max(0, n - from)).keys()].map(x => x + from).flatMap(i => pickK(n, k - 1, i + 1).map(c => [i, ...c]));
+  function groupCut(T, act) {
+    for (const k of [3, 4]) {
+      if (act.length < k) break;
+      const work = { n: 0 };   // safety cap: past it, options are kept (never cut on a guess)
+      for (const d of act) {
+        if (T[d].length === 1) continue;
+        const before = T[d].length;
+        const keep = T[d].filter(t => {
+          const others = act.filter(e => e !== d).map(e => T[e].filter(u => disjoint(t, u)));
+          if (others.some(o => !o.length)) return false;
+          for (const c of pickK(others.length, k - 1)) if (!fitsWith(c.map(i => others[i]).sort((a, b) => a.length - b.length), t, work)) return false;
+          return true;
+        });
+        if (keep.length !== before) { T[d] = keep; gcount[k]++; return { d, k, before, after: keep.length }; }
+      }
+    }
+    return null;
+  }
+  const cellsOf = t => { const o = []; for (let i = 0; i < NN; i++) if (has(t, i)) o.push(i); return o; };
+  let g = Uint8Array.from(puzzle), T = new Array(N + 1).fill(null), locked = new Array(N + 1).fill(0), use = new Array(N + 1).fill(null);
+  const cnt0 = new Array(N + 1).fill(0); g.forEach(v => { if (v) cnt0[v]++; });
+  // thinnest slices first: most repeated; ties: fewest free cells in the tightest box, then fewest free cells in total
+  const boxFree = d => { const rh = new Uint8Array(N), ch = new Uint8Array(N), bh = new Uint8Array(N); for (let i = 0; i < NN; i++) if (g[i] === d) rh[G.R[i]] = ch[G.C[i]] = bh[G.B[i]] = 1; let min = 99, free = 0; G.boxes.forEach((bx, b) => { if (bh[b]) return; let n = 0; for (const i of bx) if (!g[i] && !rh[G.R[i]] && !ch[G.C[i]]) n++; free += n; if (n < min) min = n; }); return [min, free]; };
+  const tie = [null]; for (let d = 1; d <= N; d++) tie.push(boxFree(d));
+  const order = [...Array(N).keys()].map(k => k + 1).sort((a, b) => cnt0[b] - cnt0[a] || tie[a][0] - tie[b][0] || tie[a][1] - tie[b][1] || a - b);
+  for (let d = 1; d <= N; d++) if (cnt0[d] >= N) locked[d] = 1;
+  const st = { built: 0, lock: 0, core: 0, only: 0, pair: 0, group: 0, taken: 0, guess: 0, back: 0 };
+  const steps = [], stack = [];
+  const useOf = d => { if (!use[d]) { const u = new Uint32Array(NN); for (const t of T[d]) for (let i = 0; i < NN; i++) if (has(t, i)) u[i]++; use[d] = u; } return use[d]; };
+  const setT = (d, list) => { T[d] = list; use[d] = null; };
+  const snap = ev => {
+    const open = new Uint8Array(NN * N), heat = new Float32Array(NN * N).fill(-1), oc = new Array(N + 1).fill(-1);
+    for (let d = 1; d <= N; d++) {
+      if (locked[d]) { oc[d] = -2; continue; }
+      if (T[d]) { oc[d] = T[d].length; const u = useOf(d), n = T[d].length || 1; for (let i = 0; i < NN; i++) if (!g[i] && u[i]) { open[i * N + d - 1] = 1; heat[i * N + d - 1] = u[i] / n; } }
+      else for (let i = 0; i < NN; i++) if (!g[i] && !G.peers[i].some(j => g[j] === d)) open[i * N + d - 1] = 1;
+    }
+    steps.push({ ev, grid: g.slice(), open, heat, oc, st: { ...st } });
+  };
+  const place = (i, d) => {
+    g[i] = d;
+    if (!locked[d] && g.filter(v => v === d).length >= N) { locked[d] = 1; setT(d, null); }
+  };
+  function build(d) {
+    const rowHas = new Uint8Array(N), colHas = new Uint8Array(N), boxAt = new Int16Array(N).fill(-1);
+    for (let i = 0; i < NN; i++) if (g[i] === d) { rowHas[G.R[i]] = 1; colHas[G.C[i]] = 1; boxAt[G.B[i]] = i; }
+    const opts = [...Array(N).keys()].map(b => boxAt[b] >= 0 ? [boxAt[b]] : G.boxes[b].filter(i => !g[i] && !rowHas[G.R[i]] && !colHas[G.C[i]]));
+    const ord = [...Array(N).keys()].sort((a, b) => opts[a].length - opts[b].length);
+    const list = [], uR = new Uint8Array(N), uC = new Uint8Array(N), bits = new Uint32Array(W);
+    (function rec(k) { if (list.length > CAP) return; if (k === N) { list.push(bits.slice()); return; } for (const i of opts[ord[k]]) { if (uR[G.R[i]] || uC[G.C[i]]) continue; uR[G.R[i]] = uC[G.C[i]] = 1; bits[i >> 5] |= 1 << (i & 31); rec(k + 1); bits[i >> 5] &= ~(1 << (i & 31)); uR[G.R[i]] = uC[G.C[i]] = 0; } })(0);
+    if (list.length > CAP) return false;
+    setT(d, list); st.built += list.length; return true;
+  }
+  const buildStep = (d, why) => {
+    if (!build(d)) { snap({ fam: "stop", d, text: `Slice ${sym(d)} has more than ${CAP.toLocaleString()} option layers — too many to show. Use the cube-lines method for this puzzle.` }); return false; }
+    snap({ fam: "sbuild", d, text: `Build slice ${sym(d)}: list every way to put ${sym(d)} once in each row, column and box of its slice — ${T[d].length.toLocaleString()} option layer${T[d].length === 1 ? "" : "s"}. ${why}` });
+    return true;
+  };
+  const guess = fr => {
+    g = fr.g.slice(); locked = fr.locked.slice(); T = fr.T.slice(); use = new Array(N + 1).fill(null);
+    T[fr.d] = [fr.opts[fr.k]]; st.guess++;
+    snap({ fam: "guess", d: fr.d, line: cellsOf(fr.opts[fr.k]).map(i => i * N + fr.d - 1), text: `The cuts stopped and no slice is left to open. Guess: slice ${sym(fr.d)} has ${fr.opts.length} options left — try option ${fr.k + 1} of ${fr.opts.length} (the one that clashes least with the other slices).` });
+  };
+  const backtrack = text => {
+    snap({ fam: "back", text: `${text} — the last guess was wrong. Undo it and try the next option.` }); st.back++;
+    while (stack.length) { const fr = stack[stack.length - 1]; fr.k++; if (fr.k < fr.opts.length) { guess(fr); return true; } stack.pop(); }
+    return false;
+  };
+  snap({ fam: "start", text: `${g.filter(Boolean).length} givens placed as solid blocks. Slice order (thinnest first): ${order.filter(d => !locked[d]).map(sym).join(" ")}. Press Play.` });
+  let ok = true;
+  for (const d of order.filter(d => !locked[d]).slice(0, 2)) if (!buildStep(d, `It is one of the 2 thinnest slices (${cnt0[d]} givens${order.filter(e => cnt0[e] === cnt0[d]).length > 1 ? "; tie broken by the fewest free cells in a box" : ""}).`)) { ok = false; break; }
+  while (ok && steps.length < MAX) {
+    if (g.every(v => v)) { snap({ fam: "done", text: `Solved — every slice is locked and every pillar holds exactly one block. ${st.built.toLocaleString()} option layers were built${st.guess ? `, ${st.guess} guess${st.guess > 1 ? "es" : ""}` : ", no guessing"}.` }); break; }
+    const act = order.filter(d => T[d]);
+    // 1) full pillars: an option must use every block of its own number and no cell held by another number
+    const changes = []; let worst = 0, wd = 0;
+    for (const d of act) {
+      const keep = T[d].filter(t => { for (let i = 0; i < NN; i++) if (g[i] && (g[i] === d) !== !!has(t, i)) return false; return true; });
+      if (keep.length !== T[d].length) { changes.push(`${sym(d)}: ${T[d].length.toLocaleString()} → ${keep.length.toLocaleString()}`); if (T[d].length - keep.length > worst) { worst = T[d].length - keep.length; wd = d; } setT(d, keep); }
+    }
+    if (changes.length) { st.taken++; snap({ fam: "staken", d: wd, text: `The full pillars cut the options of ${changes.length === 1 ? "slice" : "slices"} ${changes.join(", ")} — an option can't use a cell another number already holds.` }); }
+    const empty = act.find(d => T[d] && !T[d].length);
+    if (empty) { if (!backtrack(`Slice ${sym(empty)} has no option left`)) { snap({ fam: "stop", text: "No solution." }); break; } continue; }
+    if (changes.length) continue;
+    // 2) lock a slice with one option left
+    const one = act.find(d => T[d].length === 1);
+    if (one) {
+      const nc = cellsOf(T[one][0]).filter(i => !g[i]);
+      for (const i of nc) g[i] = one;
+      setT(one, null); locked[one] = 1; st.lock++;
+      snap({ fam: "slock", d: one, place: nc[0], line: nc.map(i => i * N + one - 1), pillars: nc, text: `🔒 Slice ${sym(one)} has one option left — lock it: ${nc.length ? `its ${nc.length} new block${nc.length > 1 ? "s drop" : " drops"} in and ${nc.length > 1 ? "their pillars are" : "its pillar is"} now full` : "all its blocks were already in place"}. Slice ${sym(one)} is never revisited.` });
+      continue;
+    }
+    // 3) a point used by every option of its slice is certain
+    let did = false;
+    for (const d of act) {
+      const u = useOf(d), nc = []; for (let i = 0; i < NN; i++) if (!g[i] && u[i] === T[d].length) nc.push(i);
+      if (!nc.length) continue;
+      for (const i of nc) place(i, d); st.core += nc.length;
+      snap({ fam: "score", d, place: nc[0], line: nc.map(i => i * N + d - 1), pillars: nc, text: `All ${T[d] ? T[d].length.toLocaleString() : ""} options of slice ${sym(d)} use ${nc.map(rcName).join(", ")} → certain; ${nc.length > 1 ? "those pillars are" : "that pillar is"} now full.` });
+      did = true; break;
+    }
+    if (did) continue;
+    // 4) a pillar only one slice can still reach
+    const reach = (i, d) => T[d] ? useOf(d)[i] > 0 : !G.peers[i].some(j => g[j] === d);
+    const singles = []; let dead = -1;
+    for (let i = 0; i < NN && dead < 0; i++) if (!g[i]) {
+      const who = []; for (let d = 1; d <= N; d++) if (!locked[d] && reach(i, d)) who.push(d);
+      if (!who.length) dead = i;
+      else if (who.length === 1 && !singles.some(([j, e]) => e === who[0] && G.peers[i].includes(j))) singles.push([i, who[0]]);
+    }
+    if (dead >= 0) { if (!backtrack(`Pillar ${rcName(dead)} has no slice left that can reach it`)) { snap({ fam: "stop", text: "No solution." }); break; } continue; }
+    if (singles.length) {
+      for (const [i, d] of singles) place(i, d); st.only += singles.length;
+      snap({ fam: "sonly", d: singles[0][1], place: singles[0][0], line: singles.map(([i, d]) => i * N + d - 1), pillars: singles.map(([i]) => i),
+        text: `Pillar${singles.length > 1 ? "s" : ""} ${singles.map(([i, d]) => `${rcName(i)} → ${sym(d)}`).join(", ")}: only one slice can still reach ${singles.length > 1 ? "each of them" : "it"}.` });
+      continue;
+    }
+    // 5) pairwise clash: an option that overlaps every option of another slice
+    for (const d of act) {
+      if (T[d].length === 1) continue;
+      const keep = T[d].filter(t => act.every(e => e === d || T[e].some(u => disjoint(t, u))));
+      if (keep.length === T[d].length) continue;
+      const before = T[d].length; setT(d, keep); st.pair++;
+      snap({ fam: "spair", d, text: `Slice ${sym(d)}: ${(before - keep.length).toLocaleString()} option${before - keep.length > 1 ? "s" : ""} would share a pillar with every option of another slice → cut (${before.toLocaleString()} → ${keep.length.toLocaleString()}).` });
+      did = true; break;
+    }
+    if (did) continue;
+    // 5b) every slice built and the pair check stuck: check the unlocked slices 3, then 4 at a time
+    if (!order.find(d => !locked[d] && !T[d])) {
+      const gc = groupCut(T, act);
+      if (gc) {
+        use[gc.d] = null; st.group++;
+        snap({ fam: "sgroup", d: gc.d, text: `Every pair of slices still fits, so check the unlocked slices ${gc.k} at a time: ${(gc.before - gc.after).toLocaleString()} option${gc.before - gc.after > 1 ? "s" : ""} of slice ${sym(gc.d)} leave no way to fit ${gc.k === 3 ? "two" : "three"} other slices beside ${gc.before - gc.after > 1 ? "them" : "it"} without sharing a pillar → cut (${gc.before.toLocaleString()} → ${gc.after.toLocaleString()}).` });
+        continue;
+      }
+    }
+    // 6) open the next thinnest slice
+    const next = order.find(d => !locked[d] && !T[d]);
+    if (next) { if (!buildStep(next, `The cuts stopped, so open the next thinnest slice.`)) break; continue; }
+    // 7) guess: the slice with the fewest options, least-clash option first
+    const d = act.slice().sort((a, b) => T[a].length - T[b].length)[0];
+    const clash = t => { let c = 0; for (const e of act) if (e !== d) for (const u of T[e]) if (!disjoint(t, u)) c++; return c; };
+    const opts = T[d].map(t => ({ t, c: clash(t) })).sort((a, b) => a.c - b.c).map(x => x.t);
+    const fr = { g: g.slice(), locked: locked.slice(), T: T.slice(), d, opts, k: 0 };
+    stack.push(fr); guess(fr);
+  }
+  if (steps.length >= MAX) snap({ fam: "stop", text: "Stopped: too many steps to show." });
+  return steps;
+}
+function cubePattern(open) {
+  const N = G.N, NN = N * N, at = (i, d) => i * N + d - 1;
+  // pointing: in a layer, a box whose open blocks sit on one row/column clears the rest of that row/column
+  for (let d = 1; d <= N; d++) for (let b = 0; b < N; b++) {
+    const o = G.boxes[b].filter(i => open[at(i, d)]);
+    if (o.length < 2) continue;
+    for (const [key, units, word] of [[G.R, G.rows, "row"], [G.C, G.cols, "column"]]) {
+      const u = key[o[0]];
+      if (!o.every(i => key[i] === u)) continue;
+      const remove = units[u].filter(i => G.B[i] !== b && open[at(i, d)]).map(i => at(i, d));
+      if (remove.length) return { fam: "point", line: o.map(i => at(i, d)), remove,
+        text: `Layer ${sym(d)}: in box ${b + 1} the open blocks all lie on ${word} ${u + 1} → remove ${remove.length} block${remove.length > 1 ? "s" : ""} from the rest of that ${word}.` };
+    }
+  }
+  // pair pattern in every slice of the cube, both directions
+  const slices = [];
+  for (let d = 1; d <= N; d++) slices.push({ name: `Layer ${sym(d)}`, kind: ["X-wing (rows)", "X-wing (columns)"], m: G.rows.map(row => row.map(i => at(i, d))) });
+  G.rows.forEach((row, r) => slices.push({ name: `Row ${r + 1} slice`, kind: ["naked pair", "hidden pair"], m: row.map(i => [...Array(N).keys()].map(k => i * N + k)) }));
+  G.cols.forEach((col, c) => slices.push({ name: `Column ${c + 1} slice`, kind: ["naked pair", "hidden pair"], m: col.map(i => [...Array(N).keys()].map(k => i * N + k)) }));
+  G.boxes.forEach((bx, b) => slices.push({ name: `Box ${b + 1} slice`, kind: ["naked pair", "hidden pair"], m: bx.map(i => [...Array(N).keys()].map(k => i * N + k)) }));
+  for (const sl of slices) {
+    const mats = [sl.m, sl.m[0].map((_, j) => sl.m.map(row => row[j]))];
+    for (let o = 0; o < 2; o++) {
+      const mat = mats[o], two = [];
+      mat.forEach((line, a) => { const pos = []; line.forEach((x, b) => { if (open[x]) pos.push(b); }); if (pos.length === 2) two.push([a, pos]); });
+      for (let p = 0; p < two.length; p++) for (let q = p + 1; q < two.length; q++) {
+        const [a1, s1] = two[p], [a2, s2] = two[q];
+        if (s1[0] !== s2[0] || s1[1] !== s2[1]) continue;
+        const remove = [];
+        mat.forEach((line, a) => { if (a !== a1 && a !== a2) for (const b of s1) if (open[line[b]]) remove.push(line[b]); });
+        if (remove.length) return { fam: "pair", line: [mat[a1][s1[0]], mat[a1][s1[1]], mat[a2][s1[0]], mat[a2][s1[1]]], remove,
+          text: `${sl.name} (${sl.kind[o]}): two lines have their open blocks in the same 2 places, so those places are taken → remove ${remove.length} other block${remove.length > 1 ? "s" : ""}.` };
+      }
+    }
+  }
+  return null;
+}
+function cubeInit() {
+  cubeStop();
+  const pz = S.puzzle.slice ? S.puzzle.slice() : Array.from(S.puzzle);
+  cube.steps = cube.mode === "slices" ? sliceSolve(pz) : cubeSolve(pz);
+  cube.k = 0;
+  buildMiniBoard();
+  cubeShowStep();
+}
+function buildMiniBoard() {
+  const b = $("miniBoard"), N = G.N; b.innerHTML = "";
+  b.style.gridTemplateColumns = `repeat(${N},1fr)`; b.style.gridTemplateRows = `repeat(${N},1fr)`;
+  for (let i = 0; i < N * N; i++) {
+    const d = document.createElement("div"), r = G.R[i], c = G.C[i];
+    if (c === N - 1) d.classList.add("lc"); else if ((c + 1) % G.BC === 0) d.classList.add("br");
+    if (r === N - 1) d.classList.add("lr"); else if ((r + 1) % G.BR === 0) d.classList.add("bb");
+    b.appendChild(d);
+  }
+  const w = Math.min(280, b.clientWidth || 280) / N;
+  b.style.setProperty("--mfs", Math.max(8, w * 0.55) + "px");
+}
+function cubeShowStep() {
+  const st = cube.steps[cube.k]; if (!st) return;
+  const ev = st.ev, N = G.N, f = FAMS[ev.fam];
+  $("cubeNo").textContent = `Step ${cube.k} of ${cube.steps.length - 1}`;
+  $("cubeTag").textContent = f[0]; $("cubeTag").style.background = f[1];
+  $("cubeText").textContent = ev.text;
+  const cnt = { box: 0, row: 0, col: 0, cell: 0, point: 0, pair: 0, guess: 0, back: 0 };
+  for (let k = 1; k <= cube.k; k++) { const e = cube.steps[k].ev; if (e.fam in cnt) cnt[e.fam]++; }
+  if (st.st) { const t = st.st; $("cubeStats").textContent = `Option layers built ${t.built.toLocaleString()} · slices locked ${t.lock} · certain in a slice ${t.core} · pillar singles ${t.only} · clash cuts ${t.pair}${t.group ? ` · 3/4-slice cuts ${t.group}` : ""} — guesses ${t.guess}${t.back ? ` (${t.back} undone)` : ""}`; }
+  else $("cubeStats").textContent = `Placed by: box ${cnt.box} · row ${cnt.row} · column ${cnt.col} · pillar ${cnt.cell} — patterns ${cnt.point + cnt.pair} — guesses ${cnt.guess}${cnt.back ? ` (${cnt.back} undone)` : ""}`;
+  // mini board
+  const lineCells = new Set((ev.line || []).map(x => (x / N) | 0));
+  [...$("miniBoard").children].forEach((el, i) => {
+    const v = st.grid[i];
+    el.textContent = v ? sym(v) : "";
+    el.className = el.className.replace(/\b(g|sim|ln|cur)\b/g, "").trim();
+    if (v) el.style.setProperty("--h", hueOf(v));
+    if (S.puzzle[i]) el.classList.add("g"); else if (v) el.classList.add("sim");
+    if (lineCells.has(i)) el.classList.add("ln");
+    if (ev.place === i) el.classList.add("cur");
+    // slice mode: shade the focus slice's options on the mini board
+    const hv = st.heat && ev.d && !v ? st.heat[i * N + ev.d - 1] : -1;
+    el.style.background = hv > 0 ? `hsl(${hueOf(ev.d)} 70% 55% / ${(0.15 + 0.7 * hv).toFixed(2)})` : "";
+  });
+  $("cubePlay").textContent = cube.timer ? "⏸ Pause" : (cube.k >= cube.steps.length - 1 ? "↺ Replay" : "▶ Play");
+  $("cubePrev").disabled = cube.k <= 0; $("cubeNext").disabled = cube.k >= cube.steps.length - 1;
+  cube.dirty = true;
+}
+function cubeGo(k) { cube.k = Math.max(0, Math.min(cube.steps.length - 1, k)); cubeShowStep(); }
+function cubeStop() { if (cube.timer) { clearInterval(cube.timer); cube.timer = null; } }
+function cubePlay() {
+  if (cube.timer) { cubeStop(); cubeShowStep(); return; }
+  if (cube.k >= cube.steps.length - 1) cube.k = 0;
+  cube.timer = setInterval(() => { if (cube.k >= cube.steps.length - 1) { cubeStop(); cubeShowStep(); return; } cubeGo(cube.k + 1); }, +$("cubeSpeed").value);
+  cubeShowStep();
+}
+// ---- 3D drawing ----
+function cubeDraw() {
+  const cv = $("cubeCanvas"), w = cv.clientWidth; if (!w) return;
+  const dpr = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(w * dpr); }
+  const ctx = cv.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const css = getComputedStyle(document.documentElement), col = n => css.getPropertyValue(n).trim();
+  ctx.fillStyle = col("--bg"); ctx.fillRect(0, 0, w, w);
+  const st = cube.steps[cube.k]; if (!st) return;
+  const N = G.N, ev = st.ev, u = w * 0.5 / N, gap = u * (1 + cube.spread), half = (N - 1) / 2;
+  const cy = Math.cos(cube.yaw), sy = Math.sin(cube.yaw), cp = Math.cos(cube.pitch), sp = Math.sin(cube.pitch), F = w * 2.2;
+  const proj = (x, y, z) => { const X = x * cy - z * sy, Z1 = x * sy + z * cy, Y = y * cp - Z1 * sp, Z = y * sp + Z1 * cp, s = F / (F + Z); return [w / 2 + X * s, w / 2 - Y * s, Z, s]; };
+  const hl = new Set(ev.line || []), rm = new Set(ev.removed || []), focus = hl.size > 0, sliceFocus = st.heat && ev.d && !focus ? ev.d : 0;
+  const items = [];
+  for (let i = 0; i < N * N; i++) {
+    const x = (G.C[i] - half) * u, z = (G.R[i] - half) * u;
+    for (let d = 1; d <= N; d++) {
+      const idx = i * N + d - 1, placed = st.grid[i] === d, isOpen = st.open[idx], inLine = hl.has(idx), removed = rm.has(idx);
+      if (!placed && !(isOpen && cube.dots) && !inLine && !removed) continue;
+      const [px, py, pz, s] = proj(x, (d - 1 - half) * gap, z);
+      items.push({ px, py, pz, s, d, placed, isOpen, inLine, removed, cur: ev.place === i && placed, given: placed && !!S.puzzle[i], heat: st.heat ? st.heat[idx] : -1 });
+    }
+  }
+  // cube frame
+  const ex = (half + 0.6) * u, ey = half * gap + u * 0.6;
+  const corners = [];
+  for (const a of [-1, 1]) for (const b of [-1, 1]) for (const c of [-1, 1]) corners.push(proj(a * ex, b * ey, c * ex));
+  ctx.strokeStyle = col("--line"); ctx.lineWidth = 1;
+  for (let a = 0; a < 8; a++) for (let b = a + 1; b < 8; b++) if ([1, 2, 4].includes(a ^ b)) { ctx.beginPath(); ctx.moveTo(corners[a][0], corners[a][1]); ctx.lineTo(corners[b][0], corners[b][1]); ctx.stroke(); }
+  // slice mode: pillars that just became full
+  if (ev.pillars) {
+    ctx.strokeStyle = "rgba(138,143,153,.85)"; ctx.lineWidth = 2;
+    for (const i of ev.pillars) {
+      const x = (G.C[i] - half) * u, z = (G.R[i] - half) * u, a = proj(x, -half * gap - u * 0.4, z), b = proj(x, half * gap + u * 0.4, z);
+      ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+    }
+  }
+  items.sort((a, b) => b.pz - a.pz);
+  const accent = col("--accent");
+  for (const it of items) {
+    const h = hueOf(it.d), size = u * 0.72 * it.s, dim = (focus && !it.inLine && !it.cur && !it.removed) || (sliceFocus && it.d !== sliceFocus) ? 0.28 : 1;
+    ctx.globalAlpha = dim;
+    if (it.placed) {
+      ctx.fillStyle = `hsl(${h} 70% ${it.given ? 45 : 58}%)`;
+      ctx.fillRect(it.px - size / 2, it.py - size / 2, size, size);
+      if (it.given) { ctx.strokeStyle = "rgba(0,0,0,.45)"; ctx.lineWidth = 1; ctx.strokeRect(it.px - size / 2, it.py - size / 2, size, size); }
+    } else if (it.isOpen && cube.dots) {
+      const hv = it.heat;   // slice mode: dot size = share of the slice's options that use this point
+      ctx.globalAlpha = dim * (hv >= 0 ? 0.35 + 0.6 * hv : 0.6); ctx.fillStyle = `hsl(${h} 70% 55%)`;
+      ctx.beginPath(); ctx.arc(it.px, it.py, Math.max(1.2, u * (hv >= 0 ? 0.08 + 0.3 * hv : 0.14) * it.s), 0, 7); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    if (it.removed) { ctx.strokeStyle = "#e0443e"; ctx.lineWidth = 1.5; const r = size * 0.35; ctx.beginPath(); ctx.moveTo(it.px - r, it.py - r); ctx.lineTo(it.px + r, it.py + r); ctx.moveTo(it.px + r, it.py - r); ctx.lineTo(it.px - r, it.py + r); ctx.stroke(); }
+    if (it.inLine && !it.cur) { ctx.strokeStyle = accent; ctx.lineWidth = 1.5; ctx.strokeRect(it.px - size / 2, it.py - size / 2, size, size); }
+    if (it.cur) { const g = size * 1.35; ctx.strokeStyle = "#e0443e"; ctx.lineWidth = 3; ctx.strokeRect(it.px - g / 2, it.py - g / 2, g, g); }
+  }
+  // layer labels (one per number)
+  ctx.font = `600 ${Math.max(9, u * 0.7)}px -apple-system,Segoe UI,Roboto,sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  for (let d = 1; d <= N; d++) {
+    const [px, py] = proj(ex + u * 0.9, (d - 1 - half) * gap, -ex);
+    ctx.fillStyle = `hsl(${hueOf(d)} 70% 45%)`;
+    if (st.oc) { const o = st.oc[d]; ctx.textAlign = "left"; ctx.fillText(sym(d) + (o === -2 ? " ✓" : o >= 0 ? " " + o.toLocaleString() : ""), px - u * 0.35, py); }
+    else ctx.fillText(sym(d), px, py);
+  }
+}
+function cubeLoop() {
+  if (!cube.on) { cube.raf = 0; return; }
+  if (cube.auto && !cube.drag && !document.hidden) { cube.yaw += 0.0035; cube.dirty = true; }
+  if (cube.dirty) { cube.dirty = false; cubeDraw(); }
+  cube.raf = requestAnimationFrame(cubeLoop);
+}
+function cubeOpen(on) {
+  cube.on = on;
+  $("cubeCol").classList.toggle("hidden", !on);
+  $("app").classList.toggle("withcube", on);
+  $("cubeBtn").classList.toggle("on", on);
+  if (on) {
+    cubeInit();
+    if (!cube.raf) cube.raf = requestAnimationFrame(cubeLoop);
+    if (window.innerWidth < 1100) setTimeout(() => $("cubeCol").scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  } else cubeStop();
+  sizeBoard();
+}
+$("cubeBtn").addEventListener("click", () => cubeOpen(!cube.on));
+$("cubeClose").addEventListener("click", () => cubeOpen(false));
+$("cubePlay").addEventListener("click", cubePlay);
+$("cubeNext").addEventListener("click", () => { cubeStop(); cubeGo(cube.k + 1); });
+$("cubePrev").addEventListener("click", () => { cubeStop(); cubeGo(cube.k - 1); });
+$("cubeReset").addEventListener("click", () => { cubeStop(); cubeGo(0); });
+$("cubeSpeed").addEventListener("change", () => { if (cube.timer) { cubeStop(); cubePlay(); } });
+$("cubeSpread").addEventListener("input", e => { cube.spread = +e.target.value; cube.dirty = true; });
+$("cubeAuto").addEventListener("change", e => { cube.auto = e.target.checked; });
+$("cubeDots").addEventListener("change", e => { cube.dots = e.target.checked; cube.dirty = true; });
+$("cubeMode").addEventListener("change", e => {
+  cube.mode = e.target.value;
+  $("sliceNote").classList.toggle("hidden", cube.mode !== "slices"); $("legSlice").classList.toggle("hidden", cube.mode !== "slices");
+  if (cube.on) cubeInit();
+});
+const cv3 = $("cubeCanvas");
+cv3.addEventListener("pointerdown", e => { cube.drag = { x: e.clientX, y: e.clientY }; cv3.setPointerCapture(e.pointerId); });
+cv3.addEventListener("pointermove", e => {
+  if (!cube.drag) return;
+  cube.yaw += (e.clientX - cube.drag.x) * 0.01;
+  cube.pitch = Math.max(-1.4, Math.min(1.4, cube.pitch + (e.clientY - cube.drag.y) * 0.01));
+  cube.drag = { x: e.clientX, y: e.clientY }; cube.dirty = true;
+});
+["pointerup", "pointercancel"].forEach(t => cv3.addEventListener(t, () => { cube.drag = null; }));
+window.addEventListener("resize", () => { if (cube.on) { cube.dirty = true; buildMiniBoard(); cubeShowStep(); } });
+
+/* ---------- puzzle family + Rubik view ---------- */
+function puzzleFamily() { return $("optFamily").value === "classic" ? "classic" : "varied"; }
+$("optFamily").addEventListener("change", () => {
+  try { localStorage.setItem(STORE + ".family", puzzleFamily()); } catch (e) {}
+  toast(puzzleFamily() === "classic" ? "New puzzles: Classic — solvable by Rubik moves" : "New puzzles: Varied — from all families");
+});
+try { if (localStorage.getItem(STORE + ".family") === "classic") $("optFamily").value = "classic"; } catch (e) {}
+$("rubikBtn").addEventListener("click", () => {
+  // the puzzle travels in the part of the address after "#", which stays on this device
+  const p = S.puzzle.map(v => SYMBOLS[v] || "0").join("");
+  const a = document.createElement("a");
+  a.href = `LayerSudoku-Rubik.html#n=${S.N}&p=${p}`; a.target = "_blank"; a.rel = "noopener";
+  document.body.appendChild(a); a.click(); a.remove();
+  if (S.family !== "classic") toast("This puzzle is Varied — the Rubik view will explain why moves can't solve it");
+});
+
+// boot
+renderDaily();
+renderChallenge();
+{ let t = "auto", p = "pastel";
+  try {
+    t = localStorage.getItem(STORE + ".theme") || "auto";
+    p = localStorage.getItem(STORE + ".palette") || (localStorage.getItem(STORE + ".colors") === "0" ? "plain" : "pastel");
+  } catch (e) {}
+  applyTheme(t); applyPalette(p); }
+try { const m = localStorage.getItem(STORE + ".mistakes"); if (m === "0") $("optMistakes").checked = false; } catch (e) {}
+try { if (localStorage.getItem(STORE + ".sound") === "0") $("optSound").checked = false; } catch (e) {}
+S = load();
+if (S) { S.undo = S.undo || []; startGame(); if (S.solved) $("saveNote").textContent = "Solved — tap New for another."; }
+else newGame(9, "easy");
+</script>
+</body>
+</html>
