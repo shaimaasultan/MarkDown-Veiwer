@@ -411,7 +411,7 @@
     return problems;
   }
 
-  // The file list: one entry per document with its type icon; the type filter hides and shows kinds.
+  // The file list: one entry per document with its type icon; the toolbar menu hides and shows kinds.
   async function checkFileList() {
     const problems = [];
     const entries = window.TESTDOCS.map(([n, b64]) => ({ path: n, file: new File([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], n) }));
@@ -419,22 +419,40 @@
     await sleep(500);
     const items = () => [...document.querySelectorAll('#fileList li')];
     if (items().length !== entries.length) problems.push(`list ${items().length} of ${entries.length}`);
-    const btn = document.querySelector('#typeFilter .csv-cols-btn');
-    if (!btn || !/Types: (\d+) of \1/.test(btn.textContent)) problems.push('types button: ' + (btn && btn.textContent));
-    const md = [...document.querySelectorAll('#typeFilter .csv-cols-list label')].find(l => l.textContent.includes('Markdown'));
+    const btn = document.getElementById('typeMenuBtn');
+    const menu = document.getElementById('folderTypeCounts');
+    const wrap = document.getElementById('typeMenuWrap');
+    if (!btn || !menu || !wrap || wrap.hidden) {
+      problems.push('file type menu is missing');
+      return problems;
+    }
+    if (!menu.hidden) btn.click();
+    btn.click();
+    if (menu.hidden || btn.getAttribute('aria-expanded') !== 'true') problems.push('file type menu did not open');
+    const md = menu.querySelector('input[data-type="md"]');
     const mdCount = window.TESTDOCS.filter(([n]) => /\.md$/i.test(n)).length;
-    if (!md || !md.textContent.includes(`(${mdCount})`)) problems.push('markdown count: ' + (md && md.textContent));
-    md.querySelector('input').checked = false; md.querySelector('input').dispatchEvent(new Event('change'));
+    if (!md || !md.closest('label').textContent.includes(String(mdCount))) {
+      problems.push('markdown count: ' + (md && md.closest('label').textContent));
+      return problems;
+    }
+    const showType = (id, shown) => {
+      const input = menu.querySelector(`input[data-type="${id}"]`);
+      if (input && input.checked !== shown) {
+        input.checked = shown;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    };
+    showType('md', false);
     if (items().length !== entries.length - mdCount || items().some(li => /\.md$/i.test(li.dataset.path))) problems.push('hiding Markdown: ' + items().length);
     // Opening a Markdown file while Markdown is hidden shows Markdown again.
     const mdName = window.TESTDOCS.find(([n]) => /\.md$/i.test(n))[0];
     await openDoc(mdName);
     await sleep(200);
     if (items().length !== entries.length || hiddenTypes().has('md')) problems.push('opening a hidden kind did not show it: ' + items().length);
-    md.querySelector('input').checked = false; md.querySelector('input').dispatchEvent(new Event('change'));
-    const all = [...document.querySelectorAll('#typeFilter .csv-cols-tools button')].find(b => b.textContent === 'Show all');
-    all.click();
+    showType('md', false);
+    for (const input of [...menu.querySelectorAll('input[data-type]')]) showType(input.dataset.type, true);
     if (items().length !== entries.length) problems.push('show all: ' + items().length);
+    btn.click();
     if (!items().every(li => li.querySelector('.type-icon') && li.querySelector('.type-icon').textContent)) problems.push('type icons');
     return problems;
   }

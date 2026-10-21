@@ -63,7 +63,7 @@ Every point below, with where it is implemented and how it was tested, is listed
 - **Never goes online.** All libraries are bundled (`app\source\lib\`) and packed into the signed Content DLL. The WebView2 engine is started so that it cannot look up any internet address, without background networking, component updates, pings, SmartScreen checks or Microsoft-account sign-in. Pictures a document links to on the web are shown as *not loaded*. (Only the optional `Check-Updates.cmd`, when you run it, asks two fixed sites for version numbers - see [Checking for updates](#checking-for-updates).)
 - **Links ask first.** Web and mail links open outside the app only after a question that shows the real address.
 - **Private.** The window runs InPrivate, so no history of the documents you view is kept. Camera, microphone, location, notifications and clipboard reading are refused; downloads come only from the viewer itself; the right-click menu has no Share, web capture or other browser extras.
-- **Stays in the document's folder.** Folder links (junctions, symbolic links) cannot lead outside it, and very large files (over 50 MB of text, or 200 MB of media or Excel) are not opened. A document cannot draw over the viewer's own controls, and a diagram cannot add CSS of its own.
+- **Scoped file access.** Each window keeps a resolved directory handle for its read boundary (the Git worktree root, or the parent of the document folder outside a worktree). Opened files are checked by their final handle path, so junctions and symbolic links cannot redirect reads outside that boundary. Very large files (over 50 MB of text, or 200 MB of media or Excel) are not opened. A document cannot draw over the viewer's own controls, and a diagram cannot add CSS of its own.
 - **Where a file came from, and Microsoft Defender.** Each file the app opens is checked on this computer: its Mark of the Web (Windows' "downloaded from the internet" tag) shows as "⚠ From the internet: site" in the status line and in the safety report, and Microsoft Defender - asked through AMSI, as Windows does for scripts - is asked about its contents; a file it knows as malware raises a red popup, "✗ Microsoft Defender: malware" and a "Not safe" report. Nothing goes online and the file is only read.
 - **Blocked-code alert.** When a file contains code (scripts, event handlers, code links), a popup says so when it opens: nothing ran, and it is a file to be careful with elsewhere. If the window's security policy ever has to stop code itself, that is shown too.
 - **No copy-paste traps.** Text inside code examples cannot be hidden or restyled, so what you copy is what you see.
@@ -275,7 +275,7 @@ that choosing columns in `docs\test\fixtures\tables\wide.csv` (40 columns) works
 runs from a temporary copy of `app\source\` (removed afterwards), served on 127.0.0.1 only under a random path, in
 a new empty Edge profile that cannot look up any host name.
 
-**Current test limitation:** `docs\test\tools\selftest.js` still searches for the removed `#typeFilter` panel. As written, `Test-Viewer.cmd` can stop during its file-list check; it does not verify the current **View File types** toolbar menu or the HTML Preview interaction. Update the self-test before treating a full run as a pass for those features.
+**Current test limitation:** `docs\test\tools\selftest.js` now targets the current **View File types** menu. The HTML Preview interaction and the scope-root replacement race still need dedicated coverage; this update has not been run or built in this review.
 
 ## Project layout
 

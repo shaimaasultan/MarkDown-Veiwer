@@ -91,17 +91,25 @@ static class Program
 
     static string appDir;
 
-    // What one window may read: its document, the document's folder (for the file list) and the folder it may
-    // read from (the git repository, or one level above the document). Each window has its own, so a document
-    // opened later from another folder gets a window of its own that can read only that folder.
+    // Each window's read boundary is the containing Git worktree, or the parent of the document folder when
+    // there is no worktree. Hold the resolved directory open for the lifetime of every window sharing this
+    // scope: later requests must not be able to redirect the boundary by replacing its path with a junction.
     sealed class DocScope
     {
-        public readonly string File, Dir, RepoRoot, AllowRoot;
-        public static readonly DocScope None = new DocScope(null, null, null, null);
+        public readonly string File, Dir, RepoRoot, AllowRoot, RealAllowRoot;
+        readonly SafeFileHandle rootHandle;
+        readonly object referenceLock = new object();
+        readonly bool immortal;
+        int references;
+        bool disposed;
+        public static readonly DocScope None = new DocScope(null, null, null, null, null, null, true);
 
-        DocScope(string file, string dir, string repoRoot, string allowRoot)
+        DocScope(string file, string dir, string repoRoot, string allowRoot, SafeFileHandle rootHandle, string realAllowRoot, bool immortal = false)
         {
             File = file; Dir = dir; RepoRoot = repoRoot; AllowRoot = allowRoot;
+            this.rootHandle = rootHandle;
+            RealAllowRoot = realAllowRoot;
+            this.immortal = immortal;
         }
 
         public static DocScope For(string file)
@@ -111,7 +119,47 @@ static class Program
             string git = FindGitRoot(dir);
             // Allow one level up so "../images/x.png" from a docs folder still works.
             DirectoryInfo parent = Directory.GetParent(dir);
-            return new DocScope(file, dir, git ?? dir, git ?? (parent != null ? parent.FullName : dir));
+            string allowRoot = git ?? (parent != null ? parent.FullName : dir);
+            SafeFileHandle root = null;
+            string realRoot = null;
+            try
+            {
+                root = CreateFileW(allowRoot, 0, 0x1 | 0x2, IntPtr.Zero, 3,
+                                   0x02000000 /* BACKUP_SEMANTICS */, IntPtr.Zero);
+                if (!root.IsInvalid) realRoot = RealPath(root);
+                if (root.IsInvalid || realRoot == null) { root.Dispose(); root = null; }
+            }
+            catch { if (root != null) root.Dispose(); root = null; }
+            return new DocScope(file, dir, git ?? dir, allowRoot, root, realRoot);
+        }
+
+        public bool HasPinnedRoot
+        {
+            get { return rootHandle != null && !rootHandle.IsInvalid && !rootHandle.IsClosed && RealAllowRoot != null; }
+        }
+
+        public bool Acquire()
+        {
+            if (immortal) return true;
+            lock (referenceLock)
+            {
+                if (disposed) return false;
+                references++;
+                return true;
+            }
+        }
+
+        public void Release()
+        {
+            if (immortal) return;
+            SafeFileHandle close = null;
+            lock (referenceLock)
+            {
+                if (disposed || references == 0) return;
+                references--;
+                if (references == 0) { disposed = true; close = rootHandle; }
+            }
+            if (close != null) close.Dispose();
         }
 
         public string StartUrl
@@ -858,8 +906,9 @@ static class Program
         sb.AppendLine();
         sb.AppendLine("PREVIEW ONLY: Markdown files are displayed, never executed. Scripts, event handlers,");
         sb.AppendLine("javascript: links, frames, forms and plugins in a document are removed before display");
-        sb.AppendLine("and also blocked by the window's security policy. Only Markdown, text, images, audio and");
-        sb.AppendLine("video files are ever read from disk; HTML, scripts, PDFs and programs are refused.");
+        sb.AppendLine("and also blocked by the window's security policy. Supported text and media types are read;");
+        sb.AppendLine("HTML is text by default, with an optional script-free sandboxed preview. Unsupported files");
+        sb.AppendLine("such as PDFs and programs are refused.");
         sb.AppendLine();
         sb.AppendLine("NO NETWORK PORT: the page is shown at a private address inside this window and every");
         sb.AppendLine("request is answered by the program itself. Developer tools are off, and the app will not");
@@ -871,7 +920,8 @@ static class Program
         sb.AppendLine();
         sb.AppendLine("PRIVATE: the window runs InPrivate - no history of the documents you view is kept. No camera,");
         sb.AppendLine("microphone, location, notification or clipboard-reading access; downloads only from the viewer.");
-        sb.AppendLine("Folder links (junctions, symbolic links) cannot lead outside the document's folder.");
+        sb.AppendLine("Each window holds a resolved directory boundary open; file handles are checked against it,");
+        sb.AppendLine("so junctions and symbolic links cannot redirect reads outside that boundary.");
         sb.AppendLine();
         if (signature != null)
         {
@@ -1013,6 +1063,8 @@ static class Program
             startUrl = url;
             this.scope = scope;
             this.app = app;
+            if (!scope.Acquire()) throw new ObjectDisposedException("DocScope");
+            scopeAcquired = true;
             SuspendLayout();
             AutoScaleDimensions = new System.Drawing.SizeF(96F, 96F);
             AutoScaleMode = AutoScaleMode.Dpi;
@@ -1028,6 +1080,21 @@ static class Program
             ResumeLayout(true);
             Shown += (s, e) => FitToWorkingArea();
             Load += async (s, e) => await StartAsync();
+        }
+
+        bool scopeAcquired;
+
+        protected override void Dispose(bool disposing)
+        {
+            try { base.Dispose(disposing); }
+            finally
+            {
+                if (disposing && scopeAcquired)
+                {
+                    scopeAcquired = false;
+                    scope.Release();
+                }
+            }
         }
 
         // Keep the initial window inside the usable area of the screen it opened on. ClientSize is
@@ -1427,30 +1494,23 @@ static class Program
         Send(s, 200, Mime(name), body, csp, headOnly);
     }
 
-    // A checked file and its scope root held open together. The file is read through this exact handle, so a
-    // link cannot be swapped after its final path has been checked.
+    // A checked file held open for reading. Its final path was checked against the stable, scope-lifetime root handle.
     sealed class ScopedFile : IDisposable
     {
         public readonly string Path;
         public readonly FileStream Content;
-        readonly SafeFileHandle root;
 
-        public ScopedFile(string path, FileStream content, SafeFileHandle root)
+        public ScopedFile(string path, FileStream content)
         {
             Path = path;
             Content = content;
-            this.root = root;
         }
 
-        public void Dispose()
-        {
-            Content.Dispose();
-            root.Dispose();
-        }
+        public void Dispose() { Content.Dispose(); }
     }
 
-    // Opens and validates the file before returning it. The root handle prevents the scope directory itself
-    // from being renamed while this request is being served; the content handle prevents replacement/deletion.
+    // Opens and validates the file before returning it. The scope's anchored root handle stays open across
+    // requests; the content handle prevents the checked file from being replaced while its bytes are read.
     static ScopedFile AllowedFile(Stream s, string webPath, bool headOnly, DocScope scope)
     {
         string full;
@@ -1458,7 +1518,7 @@ static class Program
         catch { NotFound(s); return null; }
 
         string allowRoot = scope.AllowRoot;
-        if (allowRoot == null || !IsUnder(full, allowRoot))
+        if (allowRoot == null || !scope.HasPinnedRoot || !IsUnder(full, allowRoot))
         {
             Send(s, 403, "text/plain", Encoding.UTF8.GetBytes("Forbidden"), null, headOnly);
             return null;
@@ -1471,35 +1531,24 @@ static class Program
             return null;
         }
 
-        SafeFileHandle root = CreateFileW(allowRoot, 0, 0x1 | 0x2, IntPtr.Zero, 3,
-                                          0x02000000 /* BACKUP_SEMANTICS */, IntPtr.Zero);
-        if (root.IsInvalid)
-        {
-            root.Dispose();
-            Send(s, 403, "text/plain", Encoding.UTF8.GetBytes("Forbidden"), null, headOnly);
-            return null;
-        }
         FileStream content = null;
         try
         {
-            string realRoot = RealPath(root);
-            if (realRoot == null) throw new UnauthorizedAccessException();
             // No write/delete sharing: the checked file identity and its bytes remain stable through the read.
             content = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.Read);
             string real = RealPath(content.SafeFileHandle);
-            if (real == null || !IsUnder(real, realRoot))
+            if (real == null || !IsUnder(real, scope.RealAllowRoot))
             {
                 content.Dispose();
-                root.Dispose();
                 Send(s, 403, "text/plain", Encoding.UTF8.GetBytes("Forbidden"), null, headOnly);
                 return null;
             }
-            return new ScopedFile(full, content, root);
+            return new ScopedFile(full, content);
         }
-        catch (FileNotFoundException) { if (content != null) content.Dispose(); root.Dispose(); NotFound(s); return null; }
-        catch (DirectoryNotFoundException) { if (content != null) content.Dispose(); root.Dispose(); NotFound(s); return null; }
-        catch (UnauthorizedAccessException) { if (content != null) content.Dispose(); root.Dispose(); Send(s, 403, "text/plain", Encoding.UTF8.GetBytes("Forbidden"), null, headOnly); return null; }
-        catch { if (content != null) content.Dispose(); root.Dispose(); throw; }
+        catch (FileNotFoundException) { if (content != null) content.Dispose(); NotFound(s); return null; }
+        catch (DirectoryNotFoundException) { if (content != null) content.Dispose(); NotFound(s); return null; }
+        catch (UnauthorizedAccessException) { if (content != null) content.Dispose(); Send(s, 403, "text/plain", Encoding.UTF8.GetBytes("Forbidden"), null, headOnly); return null; }
+        catch { if (content != null) content.Dispose(); throw; }
     }
 
     static byte[] ReadBytes(Stream stream)
