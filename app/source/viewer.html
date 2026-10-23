@@ -645,29 +645,39 @@
     .csv-col-choice .type-icon { width: 1.6em; text-align: center; color: var(--muted); }
     /* ---- Compare two versions ---- */
     dialog#compare {
-      width: min(1200px, calc(100vw - 32px)); height: calc(100vh - 48px); padding: 1rem 1.25rem;
+      width: min(1440px, calc(100vw - 28px)); height: calc(100vh - 28px); max-height: 1000px; padding: 1rem 1.25rem;
       border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--fg);
     }
     dialog#compare[open] { display: flex; flex-direction: column; }
     dialog#compare::backdrop { background: rgba(0, 0, 0, .55); }
     .cmp-head h2 { margin: 0 0 .5rem; font-size: 1.15rem; }
-    .cmp-pick { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; font-size: .88rem; }
-    .cmp-pick select { max-width: 360px; padding: .3rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); }
+    .cmp-pick { display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); align-items: stretch; gap: .75rem; font-size: .88rem; }
+    .cmp-source { min-width: 0; padding: .75rem; border: 1px solid var(--border); border-radius: 9px; background: var(--panel); }
+    .cmp-source h3 { margin: 0 0 .55rem; font-size: .95rem; }
+    .cmp-source-controls { display: flex; flex-wrap: wrap; gap: .45rem; }
+    .cmp-source select { min-width: min(14rem,100%); max-width: 100%; padding: .4rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); }
+    .cmp-source-name { margin-top: .55rem; font-weight: 650; overflow-wrap: anywhere; }
+    .cmp-source-path { color: var(--muted); font-size: .78rem; overflow-wrap: anywhere; }
     .cmp-vs { color: var(--muted); }
     .cmp-opt { color: var(--muted); }
+    .cmp-options { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem 1rem; margin-top: .65rem; }
     .cmp-summary { margin: .6rem 0; padding: .45rem .7rem; border-radius: 6px; font-size: .88rem; background: var(--panel); }
     .cmp-summary.ok { color: var(--ok); background: var(--ok-bg); }
     .cmp-summary.warn { color: var(--warn-fg); background: var(--warn-bg2); }
     .cmp-summary.bad { color: var(--bad); background: var(--bad-bg); }
-    #cmpBody { flex: 1; overflow: auto; border: 1px solid var(--border); border-radius: 6px; font: .8rem/1.55 ui-monospace, Consolas, monospace; }
-    .cmp-row { display: grid; grid-template-columns: 3.4rem 3.4rem 1.4rem 1fr; }
-    .cmp-n { color: var(--muted); text-align: right; padding-right: .5rem; user-select: none; }
-    .cmp-mark { text-align: center; user-select: none; font-weight: 700; }
-    .cmp-text { white-space: pre-wrap; word-break: break-all; padding-right: .6rem; unicode-bidi: plaintext; }
-    .cmp-row.del { background: rgba(207, 34, 46, .1); }
-    .cmp-row.add { background: rgba(26, 127, 55, .1); }
-    .cmp-row.del .cmp-mark { color: var(--bad); }
-    .cmp-row.add .cmp-mark { color: var(--ok); }
+    .cmp-meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; margin-top: .7rem; }
+    .cmp-meta-grid[hidden] { display: none; }
+    .cmp-meta-panel { min-width: 0; border: 1px solid var(--border); border-radius: 8px; padding: .65rem .75rem; background: var(--panel); }
+    .cmp-meta-panel h3 { margin: 0 0 .4rem; font-size: .82rem; }
+    .cmp-meta-panel dl { display: grid; grid-template-columns: minmax(6rem,auto) minmax(0,1fr); gap: .2rem .6rem; margin: 0; font-size: .77rem; }
+    .cmp-meta-panel dt { color: var(--muted); }
+    .cmp-meta-panel dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+    #cmpBody { flex: 1; min-height: 100px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; font: .78rem/1.55 ui-monospace, Consolas, monospace; }
+    .cmp-row { display: grid; grid-template-columns: 3.2rem minmax(0,1fr) 3.2rem minmax(0,1fr); min-width: 650px; }
+    .cmp-n { color: var(--muted); text-align: right; padding: 0 .5rem; user-select: none; border-right: 1px solid var(--border); }
+    .cmp-text { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; padding: 0 .55rem; unicode-bidi: plaintext; }
+    .cmp-row.del .cmp-old { background: rgba(207, 34, 46, .11); }
+    .cmp-row.add .cmp-new { background: rgba(26, 127, 55, .11); }
     .cmp-w-del { background: rgba(207, 34, 46, .3); border-radius: 2px; text-decoration: line-through; }
     .cmp-w-add { background: rgba(26, 127, 55, .3); border-radius: 2px; }
     .cmp-row.cmp-current { box-shadow: inset 3px 0 0 var(--accent); }
@@ -675,6 +685,8 @@
     .cmp-fold:hover { color: var(--accent); }
     dialog#compare .actions { display: flex; align-items: center; gap: .5rem; justify-content: flex-end; margin-top: .75rem; }
     #cmpPos { margin-right: auto; color: var(--muted); font-size: .85rem; }
+    @media (max-width: 900px) { .cmp-pick { grid-template-columns: 1fr; } .cmp-vs { display: none; } }
+    @media (max-width: 600px) { .cmp-meta-grid { grid-template-columns: 1fr; } dialog#compare { padding: .75rem; } }
 
     /* ---- Folder comparison dashboard ---- */
     dialog#folderCompareDlg {
@@ -908,7 +920,7 @@
         <button id="compareMenuBtn" class="btn secondary" aria-haspopup="menu" aria-expanded="false">⇄ Compare ▾</button>
         <div id="compareMenu" class="menu" role="menu" hidden>
           <div class="menu-label">Compare versions</div>
-          <button id="cmpBtn" type="button" role="menuitem" disabled title="Compare this document with another version">📄 Compare documents<span>Review line changes between two files</span></button>
+          <button id="cmpBtn" type="button" role="menuitem" disabled title="Compare two supported text files side by side">📄 Compare files<span>Review differences and file characteristics side by side</span></button>
           <button id="folderCompareBtn" type="button" role="menuitem">📊 Compare folders<span>Build a detailed folder comparison dashboard</span></button>
         </div>
       </div>
@@ -1014,15 +1026,14 @@
 
   <dialog id="compare" aria-labelledby="cmpTitle">
     <div class="cmp-head">
-      <h2 id="cmpTitle">⇄ Compare</h2>
+      <h2 id="cmpTitle">⇄ Compare files</h2>
       <div class="cmp-pick">
-        <span>This document: <b id="cmpThis"></b></span>
-        <span class="cmp-vs">compared with</span>
-        <select id="cmpOther" aria-label="The other version"></select>
-        <button id="cmpBrowse" class="btn secondary" type="button">📄 Other file…</button>
-        <input type="file" id="cmpFile" accept=".md,.markdown,.mdown,.mkd,.txt" hidden>
-        <label class="cmp-opt"><input type="checkbox" id="cmpSpaces"> Ignore spaces</label>
+        <section class="cmp-source" aria-labelledby="cmpLeftHeading"><h3 id="cmpLeftHeading">Earlier file</h3><div class="cmp-source-controls"><select id="cmpLeft" aria-label="Earlier file"></select><button id="cmpBrowseLeft" class="btn secondary" type="button">📄 Choose file…</button><input type="file" id="cmpFileLeft" hidden></div><div id="cmpLeftName" class="cmp-source-name">Choose a file</div><div id="cmpLeftPath" class="cmp-source-path"></div></section>
+        <span class="cmp-vs" aria-hidden="true">⇄</span>
+        <section class="cmp-source" aria-labelledby="cmpRightHeading"><h3 id="cmpRightHeading">Updated file</h3><div class="cmp-source-controls"><select id="cmpOther" aria-label="Updated file"></select><button id="cmpBrowse" class="btn secondary" type="button">📄 Choose file…</button><input type="file" id="cmpFile" hidden></div><div id="cmpRightName" class="cmp-source-name">Choose a file</div><div id="cmpRightPath" class="cmp-source-path"></div></section>
       </div>
+      <div class="cmp-options"><button id="cmpCharacteristicsToggle" class="btn secondary" type="button" aria-expanded="false" aria-controls="cmpMetaGrid">ℹ File characteristics</button><label class="cmp-opt"><input type="checkbox" id="cmpSpaces"> Ignore whitespace when comparing</label></div>
+      <div id="cmpMetaGrid" class="cmp-meta-grid" hidden><section id="cmpLeftMeta" class="cmp-meta-panel" aria-label="Earlier file characteristics"></section><section id="cmpRightMeta" class="cmp-meta-panel" aria-label="Updated file characteristics"></section></div>
       <div id="cmpSummary" class="cmp-summary"></div>
     </div>
     <div id="cmpBody"></div>

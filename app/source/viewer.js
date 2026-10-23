@@ -696,7 +696,7 @@ function renderDoc({ anchor = null, keepScroll = false } = {}) {
     findBtn.disabled = false;
     copyBtn.disabled = !!currentBinary;
     srcBtn.disabled = true;
-    cmpBtn.disabled = !!currentBinary;
+    cmpBtn.disabled = false;
     updateExportMenuForCurrentFile();
     updateDocumentMenuAvailability();
     for (const li of fileList.children) li.classList.toggle('active', key(li.dataset.path) === key(currentPath));
@@ -6086,10 +6086,13 @@ const cmpBody = document.getElementById('cmpBody');
 const cmpSummary = document.getElementById('cmpSummary');
 const cmpOther = document.getElementById('cmpOther');
 const cmpFile = document.getElementById('cmpFile');
+const cmpLeft = document.getElementById('cmpLeft');
+const cmpFileLeft = document.getElementById('cmpFileLeft');
 const cmpBtn = document.getElementById('cmpBtn');
 const CMP_CONTEXT = 3;            // unchanged lines kept around each change
 const CMP_MAX_CELLS = 9e6;        // lines-left × lines-right still compared exactly
-let cmpOtherText = null, cmpOtherName = '', cmpChanges = [], cmpAt = -1;
+let cmpLeftData = null, cmpRightData = null, cmpChanges = [], cmpAt = -1;
+const cmpLoadTokens = { left: 0, right: 0 };
 
 const splitLines = s => { const l = s.replace(/\r\n|\r/g, '\n').split('\n'); if (l.length > 1 && l[l.length - 1] === '') l.pop(); return l; };
 
@@ -6138,10 +6141,75 @@ function cmpText(el, text, marks, side) {
   }
 }
 
+function cmpFormatBytes(n) {
+  if (!Number.isFinite(n)) return '—';
+  if (n < 1024) return `${n.toLocaleString()} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let size = n, unit = 'B';
+  for (const next of units) { size /= 1024; unit = next; if (size < 1024) break; }
+  return `${size.toLocaleString(undefined, { maximumFractionDigits: 1 })} ${unit}`;
+}
+
+function cmpCharacteristics(data) {
+  const text = data.text;
+  const chars = Array.from(text), lines = splitLines(text);
+  const crlf = (text.match(/\r\n/g) || []).length;
+  const cr = (text.match(/\r(?!\n)/g) || []).length;
+  const lf = (text.match(/(?<!\r)\n/g) || []).length;
+  const unusual = chars.filter(ch => charKind(ch.codePointAt(0)) !== null).length;
+  const nonAscii = chars.filter(ch => ch.codePointAt(0) > 0x7F).length;
+  const words = text.trim() ? (text.trim().match(/\S+/g) || []).length : 0;
+  const endings = [crlf && `CRLF ${fmt(crlf)}`, lf && `LF ${fmt(lf)}`, cr && `CR ${fmt(cr)}`].filter(Boolean).join(' · ') || 'No line breaks';
+  return [
+    ['File type', typeOf(data.path || data.name)?.label || 'Text file'],
+    ['File size', cmpFormatBytes(data.info?.bytes ?? new Blob([text]).size)],
+    ['Encoding', data.info?.name || 'Unknown'],
+    ['Byte-order mark', data.info?.bom || 'Unknown'],
+    ['Lines', fmt(lines.length)],
+    ['Characters', fmt(chars.length)],
+    ['Words', fmt(words)],
+    ['Line endings', endings],
+    ['Final newline', /(?:\r\n|\r|\n)$/.test(text) ? 'Yes' : 'No'],
+    ['Non-ASCII characters', fmt(nonAscii)],
+    ['Invisible / unusual characters', fmt(unusual)],
+    ['Last modified', data.lastModified ? new Date(data.lastModified).toLocaleString() : 'Not available']
+  ];
+}
+
+function cmpRenderMetadata(side, data) {
+  const root = document.getElementById(side === 'left' ? 'cmpLeftMeta' : 'cmpRightMeta');
+  root.replaceChildren();
+  const heading = document.createElement('h3'); heading.textContent = side === 'left' ? 'Earlier file characteristics' : 'Updated file characteristics';
+  root.append(heading);
+  if (!data) { root.append(document.createTextNode('Select a file to see its details.')); return; }
+  const dl = document.createElement('dl');
+  for (const [label, value] of cmpCharacteristics(data)) {
+    const dt = document.createElement('dt'); dt.textContent = label;
+    const dd = document.createElement('dd'); dd.textContent = value;
+    dl.append(dt, dd);
+  }
+  root.append(dl);
+}
+
+function cmpSetSide(side, data) {
+  const left = side === 'left';
+  if (left) cmpLeftData = data; else cmpRightData = data;
+  document.getElementById(left ? 'cmpLeftName' : 'cmpRightName').textContent = data?.name || 'Choose a file';
+  document.getElementById(left ? 'cmpLeftPath' : 'cmpRightPath').textContent = data?.path || '';
+  cmpRenderMetadata(side, data);
+  if (cmpLeftData && cmpRightData) runCompare();
+  else {
+    cmpBody.replaceChildren(); cmpChanges = []; cmpAt = -1;
+    cmpSummary.className = 'cmp-summary';
+    cmpSummary.textContent = 'Choose both files to compare their contents and characteristics.';
+    document.getElementById('cmpPos').textContent = '';
+  }
+}
+
 function runCompare() {
-  if (cmpOtherText === null) return;
+  if (!cmpLeftData || !cmpRightData) return;
   const ignore = document.getElementById('cmpSpaces').checked;
-  const before = splitLines(cmpOtherText), after = splitLines(currentSource);
+  const before = splitLines(cmpLeftData.text), after = splitLines(cmpRightData.text);
   const norm = l => ignore ? l.replace(/\s+/g, ' ').trim() : l;
   const ids = new Map();
   const id = l => { const k = norm(l); if (!ids.has(k)) ids.set(k, ids.size); return ids.get(k); };
@@ -6178,14 +6246,14 @@ function runCompare() {
   const rowEl = r => {
     const el = document.createElement('div');
     el.className = 'cmp-row ' + (r.op === '-' ? 'del' : r.op === '+' ? 'add' : 'same');
-    const na = document.createElement('span'); na.className = 'cmp-n'; na.textContent = r.op === '+' ? '' : r.a + 1;
-    const nb = document.createElement('span'); nb.className = 'cmp-n'; nb.textContent = r.op === '-' ? '' : r.b + 1;
-    const mk = document.createElement('span'); mk.className = 'cmp-mark'; mk.textContent = r.op === '=' ? '' : r.op === '-' ? '−' : '+';
-    const tx = document.createElement('span'); tx.className = 'cmp-text';
-    if (r.op === '=') appendWithMarkers(tx, after[r.b]);
-    else if (r.op === '-') cmpText(tx, before[r.a], r.pair !== null ? wordMarks(before[r.a], after[r.pair]) : null, 'a');
-    else cmpText(tx, after[r.b], r.pair !== null ? wordMarks(before[r.pair], after[r.b]) : null, 'b');
-    el.append(na, nb, mk, tx);
+    const leftNum = document.createElement('span'); leftNum.className = 'cmp-n'; leftNum.textContent = r.op === '+' ? '' : r.a + 1;
+    const leftText = document.createElement('span'); leftText.className = 'cmp-text cmp-old';
+    const rightNum = document.createElement('span'); rightNum.className = 'cmp-n'; rightNum.textContent = r.op === '-' ? '' : r.b + 1;
+    const rightText = document.createElement('span'); rightText.className = 'cmp-text cmp-new';
+    if (r.op === '=') { appendWithMarkers(leftText, before[r.a]); appendWithMarkers(rightText, after[r.b]); }
+    else if (r.op === '-') cmpText(leftText, before[r.a], r.pair !== null ? wordMarks(before[r.a], after[r.pair]) : null, 'a');
+    else cmpText(rightText, after[r.b], r.pair !== null ? wordMarks(before[r.pair], after[r.b]) : null, 'b');
+    el.append(leftNum, leftText, rightNum, rightText);
     if (r.start) cmpChanges.push(el);
     return el;
   };
@@ -6205,7 +6273,7 @@ function runCompare() {
   cmpBody.scrollTop = 0;
   cmpSummary.className = 'cmp-summary ' + (blocks ? 'warn' : 'ok');
   cmpSummary.textContent = blocks
-    ? `${plural(blocks, 'change')}: ${plural(removed, 'line')} only in “${cmpOtherName}” (red), ${plural(added, 'line')} only in this document (green)` +
+    ? `${plural(blocks, 'change')}: ${plural(removed, 'line')} only in “${cmpLeftData.name}” (red), ${plural(added, 'line')} only in “${cmpRightData.name}” (green)` +
       (ignore ? ' · spaces ignored' : '')
     : `✓ No differences${ignore ? ' (ignoring spaces)' : ''}.`;
   if (blocks) stepCompare(1);
@@ -6221,46 +6289,78 @@ function stepCompare(dir) {
   document.getElementById('cmpPos').textContent = `${cmpAt + 1} / ${cmpChanges.length}`;
 }
 
+async function cmpLoadPath(side, path) {
+  const token = ++cmpLoadTokens[side];
+  if (!path) { cmpSetSide(side, null); return; }
+  cmpSetSide(side, null);
+  try {
+    if (key(path) === key(currentPath) && currentInfo) {
+      if (token !== cmpLoadTokens[side]) return;
+      cmpSetSide(side, { text: currentSource, name: fileName(path) + (isEdited() ? ' (unsaved edits)' : ''), path,
+        info: currentInfo, lastModified: fileMap.get(key(path))?.file?.lastModified || 0 });
+      return;
+    }
+    const entry = await readDoc(path);
+    if (token !== cmpLoadTokens[side]) return;
+    cmpSetSide(side, { ...entry, name: fileName(entry.path), lastModified: fileMap.get(key(entry.path))?.file?.lastModified || 0 });
+  } catch (e) { if (token === cmpLoadTokens[side]) { cmpSetSide(side, null); cmpSummary.className = 'cmp-summary bad'; cmpSummary.textContent = e.message; } }
+}
+
 function openCompare() {
   if (!currentPath) return;
-  document.getElementById('cmpThis').textContent = fileName(currentPath) + (isEdited() ? ' (with unsaved replacements)' : '');
-  cmpFile.accept = FILE_TYPES.filter(t => t.id !== 'xlsx').flatMap(t => t.exts.map(ext => '.' + ext)).join(',');
-  cmpOther.replaceChildren(new Option('Choose the other version…', ''));
-  for (const p of mdPaths) {
-    if (key(p) === key(currentPath) || !typeOf(p) || typeOf(p).id === 'xlsx') continue;
-    cmpOther.append(new Option(listBase && key(p).startsWith(key(listBase)) ? p.slice(listBase.length) : p, p));
+  cmpLoadTokens.left++; cmpLoadTokens.right++;
+  const initialLeft = typeOf(currentPath)?.id === 'xlsx' ? '' : currentPath;
+  const accept = FILE_TYPES.filter(t => t.id !== 'xlsx').flatMap(t => t.exts.map(ext => '.' + ext)).join(',');
+  cmpFile.accept = accept; cmpFileLeft.accept = accept;
+  for (const select of [cmpLeft, cmpOther]) {
+    select.replaceChildren(new Option('Choose a file from this folder…', ''));
+    for (const path of mdPaths) {
+      if (!typeOf(path) || typeOf(path).id === 'xlsx') continue;
+      const label = listBase && key(path).startsWith(key(listBase)) ? path.slice(listBase.length) : path;
+      select.append(new Option(label, path));
+    }
+    select.value = '';
   }
+  cmpLeft.value = initialLeft;
   cmpOther.value = '';
-  cmpOtherText = null;
-  cmpChanges = [];
-  document.getElementById('cmpPos').textContent = '';
-  cmpBody.replaceChildren();
+  document.getElementById('cmpSpaces').checked = false;
+  const characteristicsToggle = document.getElementById('cmpCharacteristicsToggle');
+  document.getElementById('cmpMetaGrid').hidden = true;
+  characteristicsToggle.setAttribute('aria-expanded', 'false');
+  characteristicsToggle.textContent = 'ℹ File characteristics';
+  cmpChanges = []; cmpAt = -1;
+  cmpSetSide('left', null); cmpSetSide('right', null);
+  if (initialLeft) cmpLoadPath('left', initialLeft);
   cmpSummary.className = 'cmp-summary';
-  cmpSummary.textContent = 'Pick another text file from this folder, or “Other file…” for one anywhere on your PC.';
+  cmpSummary.textContent = 'Choose an earlier and updated file to compare their contents and characteristics.';
   cmpDlg.showModal();
 }
 
-cmpOther.addEventListener('change', async () => {
-  if (!cmpOther.value) return;
-  try {
-    const entry = await readDoc(cmpOther.value);
-    cmpOtherText = entry.text;
-    cmpOtherName = fileName(entry.path);
-    runCompare();
-  } catch (e) { cmpSummary.className = 'cmp-summary bad'; cmpSummary.textContent = e.message; }
+document.getElementById('cmpCharacteristicsToggle').addEventListener('click', ev => {
+  const grid = document.getElementById('cmpMetaGrid');
+  grid.hidden = !grid.hidden;
+  ev.currentTarget.setAttribute('aria-expanded', String(!grid.hidden));
+  ev.currentTarget.textContent = grid.hidden ? 'ℹ File characteristics' : 'ℹ Hide characteristics';
 });
+cmpLeft.addEventListener('change', () => cmpLoadPath('left', cmpLeft.value));
+cmpOther.addEventListener('change', () => cmpLoadPath('right', cmpOther.value));
+document.getElementById('cmpBrowseLeft').addEventListener('click', () => cmpFileLeft.click());
 document.getElementById('cmpBrowse').addEventListener('click', () => cmpFile.click());
-cmpFile.addEventListener('change', async () => {
-  const f = cmpFile.files[0];
-  cmpFile.value = '';
-  if (!f) return;
+async function cmpReadPickedFile(input, side) {
+  const token = ++cmpLoadTokens[side];
+  const file = input.files[0]; input.value = '';
+  if (!file) return;
+  cmpSetSide(side, null);
   try {
-    cmpOtherText = decodeBytes(await f.arrayBuffer()).text;
-    cmpOtherName = f.name;
-    cmpOther.value = '';
-    runCompare();
-  } catch (e) { cmpSummary.className = 'cmp-summary bad'; cmpSummary.textContent = `Could not read ${f.name}: ${e.message}`; }
-});
+    const decoded = decodeBytes(await file.arrayBuffer());
+    if (token !== cmpLoadTokens[side]) return;
+    decoded.info.bytes = file.size;
+    cmpSetSide(side, { text: decoded.text, info: decoded.info, name: file.name, path: file.name, lastModified: file.lastModified });
+    (side === 'left' ? cmpLeft : cmpOther).value = '';
+  } catch (e) { if (token === cmpLoadTokens[side]) { cmpSetSide(side, null); cmpSummary.className = 'cmp-summary bad'; cmpSummary.textContent = `Could not read ${file.name}: ${e.message}`; } }
+}
+cmpFileLeft.addEventListener('change', () => cmpReadPickedFile(cmpFileLeft, 'left'));
+cmpFile.addEventListener('change', () => cmpReadPickedFile(cmpFile, 'right'));
 document.getElementById('cmpSpaces').addEventListener('change', runCompare);
 document.getElementById('cmpPrev').addEventListener('click', () => stepCompare(-1));
 document.getElementById('cmpNext').addEventListener('click', () => stepCompare(1));
