@@ -4930,6 +4930,9 @@ document.addEventListener('keydown', ev => {
 wireDropdown(document.getElementById('openMenuBtn'), document.getElementById('openMenu'), {
   onSelect: item => (item.dataset.open === 'folder' ? picker : filePicker).click()
 });
+wireDropdown(document.getElementById('compareMenuBtn'), document.getElementById('compareMenu'), {
+  onSelect: item => item.id === 'cmpBtn' ? openCompare() : openFolderCompare()
+});
 const documentMenuBtn = document.getElementById('documentMenuBtn');
 const documentMenu = document.getElementById('documentMenu');
 const documentMenuGroup = document.getElementById('documentMenuGroup');
@@ -6262,7 +6265,394 @@ document.getElementById('cmpSpaces').addEventListener('change', runCompare);
 document.getElementById('cmpPrev').addEventListener('click', () => stepCompare(-1));
 document.getElementById('cmpNext').addEventListener('click', () => stepCompare(1));
 document.getElementById('cmpClose').addEventListener('click', () => cmpDlg.close());
-cmpBtn.addEventListener('click', openCompare);
+
+// ---------------------------------------------------------------- compare two folders: local, exact-byte inventory plus a portable static HTML report.
+// The directory inputs grant access only to files the user selected. No file content is uploaded,
+// persisted, or written into the report; text line totals are calculated in memory for small files.
+const fcdDlg = document.getElementById('folderCompareDlg');
+const fcdLeftPicker = document.getElementById('folderCompareLeftPicker');
+const fcdRightPicker = document.getElementById('folderCompareRightPicker');
+const fcdRun = document.getElementById('fcdRun');
+const fcdSave = document.getElementById('fcdSave');
+let fcdLeft = null, fcdRight = null, fcdData = null, fcdCancel = false;
+const FCD_MAX_FILES_PER_FOLDER = 5000;
+const FCD_BYTE_CHUNK = 64 * 1024;
+const FCD_LINE_STATS_MAX_BYTES = 2 * 1024 * 1024;
+
+function folderSelection(fileList) {
+  const files = [...fileList];
+  if (!files.length) return null;
+  const first = (files[0].webkitRelativePath || files[0].name).replace(/\\/g, '/');
+  const root = first.split('/')[0] || 'Selected folder';
+  const entries = new Map();
+  for (const file of files) {
+    const full = (file.webkitRelativePath || file.name).replace(/\\/g, '/');
+    const relative = full.startsWith(root + '/') ? full.slice(root.length + 1) : full;
+    const path = relative || file.name;
+    const k = path.toLocaleLowerCase('en-US');
+    if (!entries.has(k)) entries.set(k, { path, file });
+  }
+  return { name: root, entries, count: entries.size, bytes: files.reduce((n, f) => n + f.size, 0) };
+}
+
+function fcdFormatBytes(n) {
+  if (!Number.isFinite(n)) return '—';
+  if (!n) return '0 B';
+  const unit = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(unit.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
+  return `${(n / (1024 ** i)).toLocaleString(undefined, { maximumFractionDigits: i ? 1 : 0 })} ${unit[i]}`;
+}
+
+function fcdCanCompare() {
+  return !!fcdLeft && !!fcdRight &&
+    fcdLeft.count <= FCD_MAX_FILES_PER_FOLDER && fcdRight.count <= FCD_MAX_FILES_PER_FOLDER;
+}
+
+function fcdSetSelection(side, selection) {
+  const pathInput = document.getElementById(side === 'left' ? 'fcdLeftPath' : 'fcdRightPath');
+  if (selection) selection.fullPath = pathInput.value.trim();
+  if (side === 'left') fcdLeft = selection; else fcdRight = selection;
+  const target = document.getElementById(side === 'left' ? 'fcdLeftInfo' : 'fcdRightInfo');
+  target.replaceChildren();
+  if (!selection) target.textContent = 'No folder selected';
+  else {
+    const name = document.createElement('strong'); name.textContent = selection.name;
+    const detail = document.createElement('span'); detail.textContent = `${fmt(selection.count)} files · ${fcdFormatBytes(selection.bytes)}`;
+    target.append(name, document.createElement('br'), detail);
+    if (selection.count > FCD_MAX_FILES_PER_FOLDER) {
+      const limit = document.createElement('span'); limit.className = 'fcd-limit';
+      limit.textContent = `Choose a folder with ${fmt(FCD_MAX_FILES_PER_FOLDER)} files or fewer.`;
+      target.append(document.createElement('br'), limit);
+    }
+  }
+  fcdRun.disabled = !fcdCanCompare();
+  document.getElementById('fcdDashboard').hidden = true;
+  document.getElementById('fcdProgressWrap').hidden = true;
+  fcdSave.disabled = true;
+  fcdData = null;
+}
+
+document.getElementById('fcdLeftPath').addEventListener('input', () => {
+  if (fcdLeft) fcdLeft.fullPath = document.getElementById('fcdLeftPath').value.trim();
+  fcdRun.disabled = !fcdCanCompare(); fcdSave.disabled = !fcdData || !fcdCanCompare();
+});
+document.getElementById('fcdRightPath').addEventListener('input', () => {
+  if (fcdRight) fcdRight.fullPath = document.getElementById('fcdRightPath').value.trim();
+  fcdRun.disabled = !fcdCanCompare(); fcdSave.disabled = !fcdData || !fcdCanCompare();
+});
+
+function openFolderCompare() {
+  fcdCancel = false;
+  if (!fcdDlg.open) fcdDlg.showModal();
+}
+
+document.getElementById('fcdChooseLeft').addEventListener('click', () => fcdLeftPicker.click());
+document.getElementById('fcdChooseRight').addEventListener('click', () => fcdRightPicker.click());
+fcdLeftPicker.addEventListener('change', () => {
+  if (fcdLeftPicker.files.length) document.getElementById('fcdLeftPath').value = '';
+  fcdSetSelection('left', folderSelection(fcdLeftPicker.files)); fcdLeftPicker.value = '';
+});
+fcdRightPicker.addEventListener('change', () => {
+  if (fcdRightPicker.files.length) document.getElementById('fcdRightPath').value = '';
+  fcdSetSelection('right', folderSelection(fcdRightPicker.files)); fcdRightPicker.value = '';
+});
+document.getElementById('fcdClose').addEventListener('click', () => fcdDlg.close());
+document.getElementById('fcdCancel').addEventListener('click', () => { fcdCancel = true; });
+fcdDlg.addEventListener('cancel', ev => {
+  if (!document.getElementById('fcdCancel').hidden) { ev.preventDefault(); fcdCancel = true; }
+});
+
+async function fcdFilesEqual(a, b) {
+  if (a.size !== b.size) return false;
+  for (let offset = 0; offset < a.size; offset += FCD_BYTE_CHUNK) {
+    if (fcdCancel) return null;
+    const end = Math.min(a.size, offset + FCD_BYTE_CHUNK);
+    const [left, right] = await Promise.all([a.slice(offset, end).arrayBuffer(), b.slice(offset, end).arrayBuffer()]);
+    const x = new Uint8Array(left), y = new Uint8Array(right);
+    for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false;
+  }
+  return true;
+}
+
+async function fcdFingerprint(file) {
+  const span = Math.min(16 * 1024, file.size);
+  const chunks = [new Uint8Array(await file.slice(0, span).arrayBuffer())];
+  if (file.size > span) chunks.push(new Uint8Array(await file.slice(Math.max(span, file.size - span), file.size).arrayBuffer()));
+  let hash = 2166136261;
+  for (const bytes of chunks) for (const byte of bytes) hash = Math.imul(hash ^ byte, 16777619) >>> 0;
+  return `${file.size}:${hash.toString(16)}`;
+}
+
+async function fcdLineChanges(before, after, path) {
+  const type = typeOf(path);
+  if (!type || type.id === 'xlsx' || before.size > FCD_LINE_STATS_MAX_BYTES || after.size > FCD_LINE_STATS_MAX_BYTES) return null;
+  const a = splitLines(decodeBytes(await before.arrayBuffer()).text);
+  const b = splitLines(decodeBytes(await after.arrayBuffer()).text);
+  if (a.length * b.length > 1e6 || a.length > 5000 || b.length > 5000) return null;
+  const ids = new Map();
+  const id = line => { if (!ids.has(line)) ids.set(line, ids.size); return ids.get(line); };
+  const steps = diffKeys(a.map(id), b.map(id), 1e6);
+  if (!steps) return null;
+  let added = 0, removed = 0;
+  for (const step of steps) { if (step[0] === '+') added++; else if (step[0] === '-') removed++; }
+  return { added, removed };
+}
+
+function fcdTypeName(path) {
+  const type = typeOf(path);
+  return type ? type.label : (extOf(path) ? `.${extOf(path)} file` : 'File');
+}
+
+function fcdStatusName(status) {
+  return ({ added: 'Added', removed: 'Removed', modified: 'Modified', renamed: 'Moved / renamed', unchanged: 'Unchanged', error: 'Could not compare' })[status] || status;
+}
+
+function fcdSetProgress(value, max, message) {
+  const wrap = document.getElementById('fcdProgressWrap');
+  wrap.hidden = false;
+  const progress = document.getElementById('fcdProgress');
+  progress.max = Math.max(1, max); progress.value = Math.min(value, progress.max);
+  document.getElementById('fcdProgressText').textContent = message;
+}
+
+async function runFolderComparison() {
+  if (!fcdLeft || !fcdRight || fcdRun.disabled) return;
+  fcdCancel = false;
+  const total = fcdLeft.count + fcdRight.count;
+  const items = [], leftOnly = [], rightOnly = [];
+  const keys = [...new Set([...fcdLeft.entries.keys(), ...fcdRight.entries.keys()])].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+  const progressMax = Math.max(1, keys.length * 2);
+  let progress = 0, interrupted = false;
+  fcdRun.disabled = true;
+  document.getElementById('fcdChooseLeft').disabled = true;
+  document.getElementById('fcdChooseRight').disabled = true;
+  document.getElementById('fcdCancel').hidden = false;
+  document.getElementById('fcdCancel').disabled = false;
+  document.getElementById('fcdClose').disabled = true;
+  document.getElementById('fcdSave').disabled = true;
+  document.getElementById('fcdProgressWrap').hidden = false;
+  document.getElementById('fcdDashboard').hidden = true;
+  try {
+    for (const k of keys) {
+      if (fcdCancel) { interrupted = true; break; }
+      const left = fcdLeft.entries.get(k) || null, right = fcdRight.entries.get(k) || null;
+      const item = { path: right?.path || left.path, before: left?.file || null, after: right?.file || null, status: '', lines: null, message: '' };
+      if (!progress) fcdSetProgress(0, progressMax, `Comparing ${item.path}`);
+      if (!left) { item.status = 'added'; rightOnly.push(item); }
+      else if (!right) { item.status = 'removed'; leftOnly.push(item); }
+      else {
+        try {
+          const same = await fcdFilesEqual(left.file, right.file);
+          if (same === null) { interrupted = true; break; }
+          item.status = same ? 'unchanged' : 'modified';
+          if (!same) {
+            try { item.lines = await fcdLineChanges(left.file, right.file, item.path); }
+            catch { item.message = 'Exact byte comparison succeeded; line totals were unavailable.'; }
+          }
+        } catch (e) { item.status = 'error'; item.message = e?.message || 'The selected file could not be read.'; }
+      }
+      items.push(item);
+      progress++;
+      if (progress % 8 === 0 || progress === keys.length) {
+        fcdSetProgress(progress, progressMax, `Comparing files · ${fmt(progress)} of ${fmt(keys.length)}`);
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+      else if (progress === 1) fcdSetProgress(progress, progressMax, `Comparing ${item.path}`);
+    }
+    if (!interrupted) {
+      const candidates = new Map();
+      for (const item of rightOnly) {
+        if (!item.after || fcdCancel) break;
+        try {
+          const fingerprint = await fcdFingerprint(item.after);
+          if (!candidates.has(fingerprint)) candidates.set(fingerprint, []);
+          candidates.get(fingerprint).push(item);
+        } catch { /* It remains an added file when a rename hint cannot be computed. */ }
+        progress++;
+        if (progress % 8 === 0) { fcdSetProgress(progress, progressMax, 'Checking for moved or renamed files'); await new Promise(resolve => setTimeout(resolve, 0)); }
+      }
+      for (const item of leftOnly) {
+        if (fcdCancel) break;
+        let fingerprint;
+        try { fingerprint = await fcdFingerprint(item.before); } catch { progress++; continue; }
+        const bucket = candidates.get(fingerprint) || [];
+        for (let i = 0; i < bucket.length; i++) {
+          if (bucket[i].status !== 'added') continue;
+          let same;
+          try { same = await fcdFilesEqual(item.before, bucket[i].after); } catch { continue; }
+          if (same === null) { interrupted = true; break; }
+          if (!same) continue;
+          const match = bucket[i];
+          item.fromPath = item.path;
+          item.path = match.path;
+          item.after = match.after;
+          item.status = 'renamed';
+          match.status = 'paired';
+          break;
+        }
+        progress++;
+        if (progress % 8 === 0) { fcdSetProgress(progress, progressMax, 'Checking for moved or renamed files'); await new Promise(resolve => setTimeout(resolve, 0)); }
+      }
+      if (fcdCancel) interrupted = true;
+    }
+    if (interrupted) {
+      fcdData = null;
+      document.getElementById('fcdProgressText').textContent = 'Comparison cancelled. You can run it again.';
+      return;
+    }
+    fcdData = {
+      earlier: fcdLeft, updated: fcdRight,
+      items: items.filter(x => x.status !== 'paired').sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true, sensitivity: 'base' })),
+      generated: new Date()
+    };
+    renderFolderDashboard(fcdData);
+    fcdSetProgress(progressMax, progressMax, `${fmt(total)} selected file entries reviewed`);
+    document.getElementById('fcdDashboard').hidden = false;
+    fcdSave.disabled = false;
+  } catch (e) {
+    document.getElementById('fcdProgressText').textContent = `Comparison stopped: ${e?.message || 'unexpected error'}`;
+  } finally {
+    fcdRun.disabled = !fcdCanCompare();
+    document.getElementById('fcdChooseLeft').disabled = false;
+    document.getElementById('fcdChooseRight').disabled = false;
+    document.getElementById('fcdClose').disabled = false;
+    document.getElementById('fcdCancel').hidden = true;
+    document.getElementById('fcdCancel').disabled = true;
+  }
+}
+
+fcdRun.addEventListener('click', runFolderComparison);
+
+function renderFolderDashboard(data) {
+  const items = data.items;
+  const counts = { added: 0, removed: 0, modified: 0, renamed: 0, unchanged: 0, error: 0 };
+  const extStats = new Map();
+  for (const item of items) {
+    counts[item.status] = (counts[item.status] || 0) + 1;
+    const ext = extOf(item.path), type = fcdTypeName(item.path);
+    const key = ext || '(no extension)';
+    if (!extStats.has(key)) extStats.set(key, { type, files: 0, added: 0, removed: 0, modified: 0, renamed: 0, error: 0 });
+    const stats = extStats.get(key); stats.files++;
+    if (item.status in stats && item.status !== 'unchanged') stats[item.status]++;
+  }
+  const cardData = [
+    ['Earlier files', fmt(data.earlier.count), fcdFormatBytes(data.earlier.bytes)],
+    ['Updated files', fmt(data.updated.count), fcdFormatBytes(data.updated.bytes)],
+    ['Added', fmt(counts.added), 'In updated folder'],
+    ['Removed', fmt(counts.removed), 'Missing from updated folder'],
+    ['Modified', fmt(counts.modified), 'Same relative path, different bytes'],
+    ['Moved / renamed', fmt(counts.renamed), 'Exact content found at a new path'],
+    ['Unchanged', fmt(counts.unchanged), 'Exact byte match'],
+    ['Net size change', (data.updated.bytes - data.earlier.bytes >= 0 ? '+' : '−') + fcdFormatBytes(Math.abs(data.updated.bytes - data.earlier.bytes)), 'Updated minus earlier']
+  ];
+  const overview = document.getElementById('fcdOverview'); overview.replaceChildren();
+  for (const [label, value, sub] of cardData) {
+    const card = document.createElement('div'); card.className = 'fcd-card';
+    const l = document.createElement('span'); l.className = 'fcd-card-label'; l.textContent = label;
+    const v = document.createElement('strong'); v.className = 'fcd-card-value'; v.textContent = value;
+    const s = document.createElement('span'); s.className = 'fcd-card-sub'; s.textContent = sub;
+    card.append(l, v, s); overview.append(card);
+  }
+  const all = Object.values(counts).reduce((n, v) => n + v, 0);
+  const breakdown = document.getElementById('fcdStatusBreakdown'); breakdown.replaceChildren();
+  const list = document.createElement('div'); list.className = 'fcd-status-list';
+  for (const status of ['added', 'removed', 'modified', 'renamed', 'unchanged', 'error']) {
+    const row = document.createElement('div'); row.className = 'fcd-status-row'; row.dataset.status = status;
+    const label = document.createElement('span'); label.textContent = fcdStatusName(status);
+    const track = document.createElement('span'); track.className = 'fcd-status-track';
+    const bar = document.createElement('span'); bar.className = 'fcd-status-bar';
+    bar.style.width = `${all ? counts[status] / all * 100 : 0}%`; track.append(bar);
+    const count = document.createElement('strong'); count.textContent = fmt(counts[status]);
+    row.append(label, track, count); list.append(row);
+  }
+  breakdown.append(list);
+  const typesBody = document.querySelector('#fcdTypesTable tbody'); typesBody.replaceChildren();
+  const typeRows = [...extStats.entries()].sort((a, b) => b[1].files - a[1].files || a[0].localeCompare(b[0], undefined, { sensitivity: 'base' }));
+  for (const [ext, stats] of typeRows) {
+    const row = document.createElement('tr');
+    for (const value of [stats.type, fmt(stats.files), fmt(stats.added), fmt(stats.removed), fmt(stats.modified + stats.renamed)]) {
+      const cell = document.createElement('td'); cell.textContent = value; row.append(cell);
+    }
+    row.title = ext; typesBody.append(row);
+  }
+  const body = document.querySelector('#fcdInventory tbody'); body.replaceChildren();
+  for (const item of items) {
+    const row = document.createElement('tr'); row.dataset.status = item.status; row.dataset.path = (item.fromPath ? item.fromPath + ' ' : '') + item.path;
+    const statusCell = document.createElement('td');
+    const pill = document.createElement('span'); pill.className = `fcd-pill ${item.status}`; pill.textContent = fcdStatusName(item.status); statusCell.append(pill);
+    const path = document.createElement('td'); path.className = 'path'; path.textContent = item.fromPath ? `${item.path} (was ${item.fromPath})` : item.path; path.title = item.fromPath ? `${item.fromPath} → ${item.path}` : item.path;
+    const type = document.createElement('td'); type.textContent = fcdTypeName(item.path);
+    const before = document.createElement('td'); before.textContent = item.before ? `${fcdFormatBytes(item.before.size)} · ${item.before.lastModified ? new Date(item.before.lastModified).toLocaleDateString() : 'date unavailable'}` : '—';
+    const after = document.createElement('td'); after.textContent = item.after ? `${fcdFormatBytes(item.after.size)} · ${item.after.lastModified ? new Date(item.after.lastModified).toLocaleDateString() : 'date unavailable'}` : '—';
+    const lines = document.createElement('td'); lines.textContent = item.lines ? `+${fmt(item.lines.added)} / −${fmt(item.lines.removed)}` : (item.status === 'modified' ? 'Not available for this size or type' : '—');
+    if (item.message) row.title = item.message;
+    row.append(statusCell, path, type, before, after, lines); body.append(row);
+  }
+  document.getElementById('fcdInventoryNote').textContent = `${fmt(items.length)} relative paths · line totals are shown for supported text files up to ${fcdFormatBytes(FCD_LINE_STATS_MAX_BYTES)} · folder data remains in memory for this session.`;
+  document.getElementById('fcdNoRows').hidden = items.length > 0;
+  document.getElementById('fcdPathFilter').value = '';
+  document.getElementById('fcdStatusFilter').value = 'all';
+  filterFolderInventory();
+}
+
+function filterFolderInventory() {
+  const query = document.getElementById('fcdPathFilter').value.trim().toLocaleLowerCase();
+  const status = document.getElementById('fcdStatusFilter').value;
+  let visible = 0;
+  for (const row of document.querySelectorAll('#fcdInventory tbody tr')) {
+    const show = (status === 'all' || row.dataset.status === status) && (!query || row.dataset.path.toLocaleLowerCase().includes(query));
+    row.hidden = !show; if (show) visible++;
+  }
+  document.getElementById('fcdNoRows').hidden = visible > 0;
+}
+document.getElementById('fcdPathFilter').addEventListener('input', filterFolderInventory);
+document.getElementById('fcdStatusFilter').addEventListener('change', filterFolderInventory);
+
+function buildFolderReport(data) {
+  const rows = data.items.map(item => {
+    const fileName = item.fromPath ? `${item.path} (moved from ${item.fromPath})` : item.path;
+    const before = item.before ? `${fcdFormatBytes(item.before.size)} · ${new Date(item.before.lastModified).toLocaleString()}` : '—';
+    const after = item.after ? `${fcdFormatBytes(item.after.size)} · ${new Date(item.after.lastModified).toLocaleString()}` : '—';
+    const lines = item.lines ? `+${fmt(item.lines.added)} / −${fmt(item.lines.removed)}` : (item.status === 'modified' ? 'Not available' : '—');
+    return `<tr><td><span class="pill ${item.status}">${esc(fcdStatusName(item.status))}</span></td><td>${esc(fileName)}</td><td>${esc(fcdTypeName(item.path))}</td><td>${esc(before)}</td><td>${esc(after)}</td><td>${esc(lines)}</td></tr>`;
+  }).join('');
+  const counts = { added: 0, removed: 0, modified: 0, renamed: 0, unchanged: 0, error: 0 };
+  for (const item of data.items) counts[item.status] = (counts[item.status] || 0) + 1;
+  const total = data.items.length || 1;
+  const stats = Object.entries(counts).map(([status, count]) => `<div class="status"><span>${esc(fcdStatusName(status))}</span><span class="track"><i class="${status}" style="width:${count / total * 100}%"></i></span><b>${fmt(count)}</b></div>`).join('');
+  const typeStats = new Map();
+  for (const item of data.items) {
+    const ext = extOf(item.path) || '(no extension)';
+    if (!typeStats.has(ext)) typeStats.set(ext, { type: fcdTypeName(item.path), files: 0, added: 0, removed: 0, changed: 0 });
+    const row = typeStats.get(ext); row.files++;
+    if (item.status === 'added') row.added++; else if (item.status === 'removed') row.removed++; else if (item.status === 'modified' || item.status === 'renamed') row.changed++;
+  }
+  const types = [...typeStats.entries()].sort((a, b) => b[1].files - a[1].files || a[0].localeCompare(b[0]));
+    const typeRows = types.map(([ext, s]) => `<tr><td>${esc(s.type)}</td><td>${fmt(s.files)}</td><td>${fmt(s.added)}</td><td>${fmt(s.removed)}</td><td>${fmt(s.changed)}</td></tr>`).join('');
+  const same = counts.unchanged, differenceRate = data.items.length ? (1 - same / data.items.length) * 100 : 0;
+  const delta = data.updated.bytes - data.earlier.bytes;
+  const generated = data.generated.toLocaleString();
+  const escValue = value => esc(value);
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="generator" content="Markdown Viewer"><title>Folder comparison — ${escValue(data.earlier.name)} and ${escValue(data.updated.name)}</title><style>
+    :root{color-scheme:light;--ink:#172b4d;--muted:#5d6b82;--line:#d9e2ef;--paper:#fff;--panel:#f4f7fb;--blue:#1769aa;--green:#137547;--red:#bd3340;--amber:#925f00}*{box-sizing:border-box}body{margin:0;background:#eef3f9;color:var(--ink);font:15px/1.5 "Segoe UI",Arial,sans-serif}.wrap{max-width:1440px;margin:auto;padding:32px}.hero{padding:30px;border-radius:16px;color:#fff;background:linear-gradient(125deg,#163b67,#176d91 66%,#268d8e);box-shadow:0 12px 35px #163b6726}.eyebrow{text-transform:uppercase;letter-spacing:.12em;font-size:.75rem;opacity:.8}.hero h1{margin:.3rem 0;font-size:clamp(1.8rem,4vw,2.7rem)}.hero p{margin:.2rem 0;color:#e2f0f7}.versions{display:flex;flex-wrap:wrap;align-items:center;gap:.6rem;margin-top:1.1rem}.version{padding:.55rem .8rem;border:1px solid #ffffff55;border-radius:8px;background:#ffffff15}.arrow{font-size:1.3rem}.meta{margin-top:.8rem;font-size:.8rem;color:#d1e5ed}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.8rem;margin:1.2rem 0}.card,.panel{background:var(--paper);border:1px solid var(--line);border-radius:11px;box-shadow:0 3px 12px #19334b0a}.card{padding:1rem}.card label{display:block;color:var(--muted);font-size:.76rem}.card strong{display:block;margin:.2rem 0;font-size:1.45rem}.card small{color:var(--muted)}.grid{display:grid;grid-template-columns:minmax(280px,.8fr) minmax(420px,1.2fr);gap:1rem}.panel{padding:1rem;min-width:0}.panel h2{margin:0 0 .8rem;font-size:1rem}.status{display:grid;grid-template-columns:7rem 1fr 2.5rem;gap:.6rem;align-items:center;margin:.55rem 0;font-size:.82rem}.track{height:8px;overflow:hidden;border-radius:99px;background:#e9eef5}.track i{display:block;height:100%;background:var(--blue)}i.added{background:var(--green)}i.removed{background:var(--red)}i.modified{background:#ce8e18}i.renamed{background:#7257bd}i.unchanged{background:#22966e}i.error{background:var(--red)}table{width:100%;border-collapse:collapse;font-size:.8rem}th,td{padding:.55rem .6rem;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{background:#f4f7fb;color:#44546a;position:sticky;top:0}td:nth-child(n+2):not(:nth-child(2)){white-space:nowrap}.inventory{margin-top:1rem}.inventory .scroll{max-height:65vh;overflow:auto;border:1px solid var(--line);border-radius:8px}.path{min-width:260px;overflow-wrap:anywhere}.pill{display:inline-block;padding:.18rem .5rem;border-radius:99px;background:#e8edf5;font-size:.72rem;font-weight:700}.pill.added{background:#e0f4e8;color:var(--green)}.pill.removed,.pill.error{background:#fbe8e8;color:var(--red)}.pill.modified{background:#fff2d4;color:var(--amber)}.pill.renamed{background:#eee9fb;color:#6043a5}.pill.unchanged{background:#e0f4e8;color:var(--green)}.foot{margin:1rem 0;color:var(--muted);font-size:.78rem}.empty{padding:1rem;color:var(--muted)}@media(max-width:850px){.wrap{padding:16px}.grid{grid-template-columns:1fr}.hero{padding:20px}.inventory .scroll{max-height:none}table{font-size:.74rem}}
+    .version-path{display:block;margin-top:.2rem;max-width:min(75vw,70rem);overflow-wrap:anywhere;font-size:.78rem;color:#e2f0f7}
+    </style></head><body><main class="wrap"><header class="hero"><div class="eyebrow">Markdown Viewer · Folder analysis</div><h1>Folder comparison report</h1><p>A file-by-file view of what changed between two folder versions.</p><div class="versions"><span class="version"><b>Earlier</b> · ${escValue(data.earlier.name)}<small class="version-path">${escValue(data.earlier.fullPath || 'Full path not entered')}</small></span><span class="arrow" aria-hidden="true">→</span><span class="version"><b>Updated</b> · ${escValue(data.updated.name)}<small class="version-path">${escValue(data.updated.fullPath || 'Full path not entered')}</small></span></div><div class="meta">Created ${escValue(generated)} · Exact bytes compared · All analysis stayed on this PC</div></header>
+    <section class="cards"><div class="card"><label>Earlier files</label><strong>${fmt(data.earlier.count)}</strong><small>${fcdFormatBytes(data.earlier.bytes)}</small></div><div class="card"><label>Updated files</label><strong>${fmt(data.updated.count)}</strong><small>${fcdFormatBytes(data.updated.bytes)}</small></div><div class="card"><label>Added</label><strong>${fmt(counts.added)}</strong><small>In updated folder</small></div><div class="card"><label>Removed</label><strong>${fmt(counts.removed)}</strong><small>Missing from updated folder</small></div><div class="card"><label>Modified</label><strong>${fmt(counts.modified)}</strong><small>Same path, different bytes</small></div><div class="card"><label>Moved / renamed</label><strong>${fmt(counts.renamed)}</strong><small>Exact content found at a new path</small></div><div class="card"><label>Unchanged</label><strong>${fmt(counts.unchanged)}</strong><small>Exact byte match</small></div><div class="card"><label>Net size change</label><strong>${delta >= 0 ? '+' : '−'}${fcdFormatBytes(Math.abs(delta))}</strong><small>Updated minus earlier</small></div></section>
+    <section class="grid"><article class="panel"><h2>Change summary</h2>${stats}<p class="foot">${differenceRate.toFixed(1)}% of relative paths differ, including additions and removals.</p></article><article class="panel"><h2>File types</h2><div class="scroll"><table><thead><tr><th>Type</th><th>Files</th><th>Added</th><th>Removed</th><th>Changed</th></tr></thead><tbody>${typeRows || '<tr><td colspan="5" class="empty">No files to report.</td></tr>'}</tbody></table></div></article></section>
+    <section class="panel inventory"><h2>Complete file inventory · ${fmt(data.items.length)} paths</h2><p class="foot">Line totals are shown for supported text files within the in-memory analysis limit. No source content is included in this report.</p><div class="scroll"><table><thead><tr><th>Status</th><th>Relative path</th><th>Type</th><th>Earlier size · modified</th><th>Updated size · modified</th><th>Text line changes</th></tr></thead><tbody>${rows || '<tr><td colspan="6" class="empty">Both folders are empty.</td></tr>'}</tbody></table></div></section>
+    <footer class="foot">Generated by Markdown Viewer · This is a static, script-free HTML report.</footer></main></body></html>`;
+}
+
+fcdSave.addEventListener('click', async () => {
+  if (!fcdData) return;
+  try {
+    const html = buildFolderReport(fcdData);
+    const name = `Folder-comparison-${fcdData.generated.toISOString().slice(0, 10)}.html`;
+    const saved = await saveFileAs(new Blob([html], { type: 'text/html;charset=utf-8' }), name,
+      { description: 'HTML report', accept: { 'text/html': ['.html', '.htm'] } });
+    if (saved) showToast(`Saved “${saved}”. It is a self-contained, script-free dashboard that you can open in this viewer.`);
+  } catch (e) { showToast(`Saving the dashboard failed: ${e?.message || 'unexpected error'}`); }
+});
 
 // Programmatic scrolling of one side must not scroll the other side back.
 let quietView = 0, quietSrc = 0;

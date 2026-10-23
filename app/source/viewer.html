@@ -676,6 +676,74 @@
     dialog#compare .actions { display: flex; align-items: center; gap: .5rem; justify-content: flex-end; margin-top: .75rem; }
     #cmpPos { margin-right: auto; color: var(--muted); font-size: .85rem; }
 
+    /* ---- Folder comparison dashboard ---- */
+    dialog#folderCompareDlg {
+      width: min(1440px, calc(100vw - 28px)); height: calc(100vh - 28px); max-height: 1000px;
+      padding: 1rem 1.25rem; border: 1px solid var(--border); border-radius: 12px;
+      background: var(--bg); color: var(--fg);
+    }
+    dialog#folderCompareDlg[open] { display: flex; flex-direction: column; gap: .8rem; }
+    dialog#folderCompareDlg::backdrop { background: rgba(0, 0, 0, .6); }
+    .fcd-head h2 { margin: 0 0 .25rem; font-size: 1.2rem; }
+    .fcd-head .note, .fcd-source p, .fcd-panel .note { margin: .2rem 0; color: var(--muted); font-size: .8rem; }
+    .fcd-pickers { display: grid; grid-template-columns: 1fr auto 1fr; align-items: stretch; gap: .75rem; }
+    .fcd-source, .fcd-panel { min-width: 0; border: 1px solid var(--border); border-radius: 9px; background: var(--panel); padding: .75rem; }
+    .fcd-source-heading { display: flex; align-items: center; gap: .65rem; margin-bottom: .65rem; }
+    .fcd-source-heading h3, .fcd-panel h3 { margin: 0; font-size: .95rem; }
+    .fcd-step { display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: 50%; color: var(--accent); background: var(--active); font-weight: 700; font-size: .75rem; }
+    .fcd-source-info { margin-top: .55rem; min-height: 2.4rem; color: var(--muted); font-size: .82rem; overflow-wrap: anywhere; }
+    .fcd-source-info strong { color: var(--fg); }
+    .fcd-path-label { display: block; margin-top: .65rem; color: var(--muted); font-size: .78rem; }
+    .fcd-full-path { width: 100%; margin-top: .25rem; padding: .45rem .55rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; font-size: .82rem; }
+    .fcd-limit { color: var(--bad); font-weight: 600; }
+    .fcd-arrow { align-self: center; color: var(--muted); font-size: 1.5rem; }
+    .fcd-run-row { display: flex; align-items: center; gap: .65rem; min-height: 2.3rem; }
+    .fcd-progress-wrap { display: flex; align-items: center; gap: .55rem; flex: 1; }
+    .fcd-progress-wrap[hidden] { display: none; }
+    .fcd-progress-wrap progress { width: min(22rem, 50%); accent-color: var(--accent); }
+    #fcdDashboard:not([hidden]) { display: flex; flex-direction: column; gap: .7rem; flex: 1; min-height: 0; overflow: auto; }
+    .fcd-overview { display: grid; grid-template-columns: repeat(8, minmax(110px, 1fr)); gap: .5rem; }
+    .fcd-card { min-width: 0; border: 1px solid var(--border); border-radius: 8px; padding: .6rem .7rem; background: var(--panel); }
+    .fcd-card-label { display: block; color: var(--muted); font-size: .72rem; }
+    .fcd-card-value { display: block; margin-top: .2rem; font-size: 1.15rem; font-weight: 700; overflow-wrap: anywhere; }
+    .fcd-card-sub { display: block; margin-top: .18rem; color: var(--muted); font-size: .7rem; }
+    .fcd-grid { display: grid; grid-template-columns: minmax(250px, .85fr) minmax(400px, 1.15fr); gap: .7rem; }
+    .fcd-panel h3 { margin-bottom: .55rem; }
+    .fcd-status-list { display: grid; gap: .38rem; }
+    .fcd-status-row { display: grid; grid-template-columns: 7rem minmax(35px, 1fr) 3rem; gap: .5rem; align-items: center; font-size: .78rem; }
+    .fcd-status-track { height: .45rem; border-radius: 1rem; overflow: hidden; background: var(--bg); }
+    .fcd-status-bar { height: 100%; min-width: 0; background: var(--accent); }
+    .fcd-status-row[data-status="added"] .fcd-status-bar, .fcd-pill.added { background: var(--ok-bg); color: var(--ok); }
+    .fcd-status-row[data-status="removed"] .fcd-status-bar, .fcd-pill.removed { background: var(--bad-bg); color: var(--bad); }
+    .fcd-status-row[data-status="modified"] .fcd-status-bar, .fcd-pill.modified { background: var(--warn-bg); color: var(--warn); }
+    .fcd-status-row[data-status="renamed"] .fcd-status-bar, .fcd-pill.renamed { background: var(--active); color: var(--accent); }
+    .fcd-status-row[data-status="unchanged"] .fcd-status-bar, .fcd-pill.unchanged { background: var(--ok); }
+    .fcd-status-row[data-status="error"] .fcd-status-bar, .fcd-pill.error { background: var(--bad-bg); color: var(--bad); }
+    .fcd-table-scroll { max-width: 100%; overflow: auto; }
+    #fcdTypesTable, #fcdInventory { width: 100%; border-collapse: collapse; font-size: .76rem; }
+    #fcdTypesTable th, #fcdTypesTable td, #fcdInventory th, #fcdInventory td { border-bottom: 1px solid var(--border); padding: .38rem .5rem; text-align: left; white-space: nowrap; }
+    #fcdTypesTable th, #fcdInventory th { position: sticky; top: 0; z-index: 1; background: var(--panel); color: var(--muted); font-weight: 600; }
+    #fcdTypesTable td:not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; }
+    #fcdTypesTable tbody tr:last-child td, #fcdInventory tbody tr:last-child td { border-bottom: 0; }
+    .fcd-files-panel { display: flex; flex-direction: column; min-height: 190px; flex: 1; }
+    .fcd-files-heading { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: .6rem; }
+    .fcd-filters { display: flex; flex-wrap: wrap; gap: .45rem; }
+    .fcd-filters input, .fcd-filters select { padding: .4rem .55rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; font-size: .8rem; }
+    #fcdPathFilter { width: min(18rem, 45vw); }
+    .fcd-inventory-scroll { min-height: 100px; flex: 1; border: 1px solid var(--border); border-radius: 6px; }
+    #fcdInventory td.path { max-width: 42vw; overflow: hidden; text-overflow: ellipsis; }
+    .fcd-pill { display: inline-block; padding: .15rem .4rem; border-radius: 999px; font-size: .68rem; font-weight: 650; }
+    .fcd-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .55rem; justify-content: flex-end; }
+    .fcd-actions .note { margin-right: auto; color: var(--muted); font-size: .75rem; }
+    @media (max-width: 900px) {
+      dialog#folderCompareDlg { padding: .75rem; }
+      .fcd-overview { grid-template-columns: repeat(4, minmax(90px, 1fr)); }
+      .fcd-grid { grid-template-columns: 1fr; }
+      .fcd-pickers { grid-template-columns: 1fr; }
+      .fcd-arrow { display: none; }
+    }
+    @media (max-width: 560px) { .fcd-overview { grid-template-columns: repeat(2, minmax(90px, 1fr)); } .fcd-actions .note { flex-basis: 100%; } }
+
     /* ---- A picture's text (like Notepad) ---- */
     dialog#textView {
       width: min(1100px, calc(100vw - 32px)); height: calc(100vh - 48px); padding: 1rem 1.25rem;
@@ -836,7 +904,14 @@
       </div>
     </div>
     <div class="toolbar-group toolbar-document" role="group" aria-label="Document tools">
-      <button id="cmpBtn" class="btn secondary" disabled title="Compare this document with another version">⇄ Compare</button>
+      <div class="menu-wrap">
+        <button id="compareMenuBtn" class="btn secondary" aria-haspopup="menu" aria-expanded="false">⇄ Compare ▾</button>
+        <div id="compareMenu" class="menu" role="menu" hidden>
+          <div class="menu-label">Compare versions</div>
+          <button id="cmpBtn" type="button" role="menuitem" disabled title="Compare this document with another version">📄 Compare documents<span>Review line changes between two files</span></button>
+          <button id="folderCompareBtn" type="button" role="menuitem">📊 Compare folders<span>Build a detailed folder comparison dashboard</span></button>
+        </div>
+      </div>
     </div>
     <div class="toolbar-group toolbar-view" role="group" aria-label="View settings">
       <button id="hiddenBtn" class="btn secondary" title="Show invisible characters in the document (Ctrl+Shift+H)">¶ Hidden</button>
@@ -956,6 +1031,58 @@
       <button id="cmpPrev" class="btn secondary" type="button">↑ Previous change</button>
       <button id="cmpNext" class="btn secondary" type="button">↓ Next change</button>
       <button id="cmpClose" class="btn" type="button">Close</button>
+    </div>
+  </dialog>
+
+  <input type="file" id="folderCompareLeftPicker" webkitdirectory directory multiple>
+  <input type="file" id="folderCompareRightPicker" webkitdirectory directory multiple>
+  <dialog id="folderCompareDlg" aria-labelledby="folderCompareTitle">
+    <div class="fcd-head">
+      <div>
+        <h2 id="folderCompareTitle">📊 Folder comparison dashboard</h2>
+        <p class="note">Choose an earlier folder and an updated folder to compare. The browser does not provide their full paths; enter them below if you want them shown in the report. Files are compared on this PC; nothing is uploaded. The saved HTML report contains folder names, any paths you enter, and comparison details, not file contents.</p>
+      </div>
+    </div>
+    <div class="fcd-pickers">
+      <section class="fcd-source" aria-labelledby="fcdLeftHeading">
+        <div class="fcd-source-heading"><span class="fcd-step">01</span><div><h3 id="fcdLeftHeading">Earlier folder</h3><p>Baseline version</p></div></div>
+        <button id="fcdChooseLeft" class="btn secondary" type="button">📁 Choose earlier folder…</button>
+        <label class="fcd-path-label" for="fcdLeftPath">Full folder path (optional)</label>
+        <input id="fcdLeftPath" class="fcd-full-path" type="text" autocomplete="off" spellcheck="false" placeholder="For example, C:\\Projects\\Earlier\\MarkdownViewer">
+        <div id="fcdLeftInfo" class="fcd-source-info">No folder selected</div>
+      </section>
+      <div class="fcd-arrow" aria-hidden="true">→</div>
+      <section class="fcd-source" aria-labelledby="fcdRightHeading">
+        <div class="fcd-source-heading"><span class="fcd-step">02</span><div><h3 id="fcdRightHeading">Updated folder</h3><p>Version to compare against</p></div></div>
+        <button id="fcdChooseRight" class="btn secondary" type="button">📁 Choose updated folder…</button>
+        <label class="fcd-path-label" for="fcdRightPath">Full folder path (optional)</label>
+        <input id="fcdRightPath" class="fcd-full-path" type="text" autocomplete="off" spellcheck="false" placeholder="For example, C:\\Projects\\Updated\\MarkdownViewer">
+        <div id="fcdRightInfo" class="fcd-source-info">No folder selected</div>
+      </section>
+    </div>
+    <div class="fcd-run-row">
+      <button id="fcdRun" class="btn" type="button" disabled>Compare folders</button>
+      <button id="fcdCancel" class="btn secondary" type="button" hidden>Cancel comparison</button>
+      <div id="fcdProgressWrap" class="fcd-progress-wrap" hidden>
+        <progress id="fcdProgress" max="1" value="0"></progress><span id="fcdProgressText" class="note"></span>
+      </div>
+    </div>
+    <div id="fcdDashboard" hidden>
+      <div id="fcdOverview" class="fcd-overview"></div>
+      <div class="fcd-grid">
+        <section class="fcd-panel"><h3>Change summary</h3><div id="fcdStatusBreakdown"></div></section>
+        <section class="fcd-panel"><h3>File types</h3><div class="fcd-table-scroll"><table id="fcdTypesTable"><thead><tr><th>Type</th><th>Files</th><th>Added</th><th>Removed</th><th>Changed</th></tr></thead><tbody></tbody></table></div></section>
+      </div>
+      <section class="fcd-panel fcd-files-panel">
+        <div class="fcd-files-heading"><div><h3>File inventory</h3><p id="fcdInventoryNote" class="note"></p></div><div class="fcd-filters"><input id="fcdPathFilter" type="search" placeholder="Filter file paths…" aria-label="Filter compared file paths"><select id="fcdStatusFilter" aria-label="Filter by comparison status"><option value="all">All statuses</option><option value="added">Added</option><option value="removed">Removed</option><option value="modified">Modified</option><option value="renamed">Moved or renamed</option><option value="unchanged">Unchanged</option><option value="error">Could not compare</option></select></div></div>
+        <div class="fcd-table-scroll fcd-inventory-scroll"><table id="fcdInventory"><thead><tr><th>Status</th><th>Relative path</th><th>File type</th><th>Earlier</th><th>Updated</th><th>Line changes</th></tr></thead><tbody></tbody></table></div>
+        <p id="fcdNoRows" class="note" hidden>No files match these filters.</p>
+      </section>
+    </div>
+    <div class="actions fcd-actions">
+      <span id="fcdPrivacyNote" class="note">Exact byte comparison · no file contents saved in the report</span>
+      <button id="fcdSave" class="btn secondary" type="button" disabled>🌐 Save HTML dashboard</button>
+      <button id="fcdClose" class="btn" type="button">Close</button>
     </div>
   </dialog>
 
