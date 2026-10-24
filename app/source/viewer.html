@@ -299,9 +299,15 @@
       position: relative; width: 45%; min-width: 320px; flex-shrink: 0; border-left: 1px solid var(--border);
       background: var(--panel); overflow: auto; padding: .75rem 0 2rem;
     }
+    #srcPanel.editing { width: 55%; }
+    .src-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+    .src-tools { display: flex; gap: .25rem; }
+    .src-tools .btn { padding: .25rem .45rem; font-size: .75rem; }
     :root:not([data-src-open]) #srcPanel { display: none; }
     :root[data-src-open] #toc { display: none; }
     #srcView { position: relative; font: .8rem/1.55 ui-monospace, Consolas, monospace; color: var(--fg); }
+    #srcEditor { display: block; width: 100%; min-height: 65vh; padding: .5rem .75rem; resize: vertical; border: 0; background: var(--bg); color: var(--fg); font: .8rem/1.55 ui-monospace, Consolas, monospace; tab-size: 2; white-space: pre; overflow-wrap: normal; }
+    #srcEditor[hidden] { display: none; }
     .sl { display: block; direction: ltr; padding: 0 .9rem 0 3.6rem; white-space: pre-wrap; word-break: break-all; cursor: pointer; }
     .sl::before { content: attr(data-n); display: inline-block; width: 2.8rem; margin-left: -3.2rem; margin-right: .4rem; text-align: right; color: var(--muted); user-select: none; }
     .sl .st { unicode-bidi: plaintext; }
@@ -688,6 +694,22 @@
     @media (max-width: 900px) { .cmp-pick { grid-template-columns: 1fr; } .cmp-vs { display: none; } }
     @media (max-width: 600px) { .cmp-meta-grid { grid-template-columns: 1fr; } dialog#compare { padding: .75rem; } }
 
+    /* ---- Review and fix document issues ---- */
+    dialog#fixErrorsDlg { width: min(980px, calc(100vw - 32px)); max-height: calc(100vh - 40px); padding: 1rem 1.25rem; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--fg); }
+    dialog#fixErrorsDlg::backdrop { background: rgba(0,0,0,.55); }
+    #fixErrorsDlg h2 { margin: 0 0 .35rem; }
+    .fix-note { color: var(--muted); font-size: .85rem; }
+    #fixIssueStatus { margin: .65rem 0; padding: .55rem .7rem; border-radius: 7px; background: var(--panel); }
+    #fixIssueList { max-height: 35vh; overflow: auto; padding-left: 1.3rem; }
+    #fixIssueList li { margin: .45rem 0; overflow-wrap: anywhere; }
+    #fixIssueList button { margin-left: .5rem; }
+    .fix-issue-jump { padding: 0; border: 0; background: transparent; color: var(--fg); font: inherit; text-align: left; text-decoration: underline dotted; text-underline-offset: .15em; cursor: pointer; }
+    .fix-issue-jump:hover { color: var(--accent); text-decoration-style: solid; }
+    .fix-safe { margin-top: .75rem; padding: .75rem; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+    .fix-safe h3 { margin: 0 0 .35rem; font-size: .95rem; }
+    .fix-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: .5rem; margin-top: .8rem; }
+    .fix-actions .fix-note { margin-right: auto; }
+
     /* ---- Folder comparison dashboard ---- */
     dialog#folderCompareDlg {
       width: min(1440px, calc(100vw - 28px)); height: calc(100vh - 28px); max-height: 1000px;
@@ -952,6 +974,7 @@
         <button id="documentMenuBtn" class="btn secondary" aria-haspopup="menu" aria-expanded="false">📚 Document ▾</button>
         <div id="documentMenu" class="menu" role="menu" hidden>
           <div class="menu-label">Document panels</div>
+          <button id="fixErrorsBtn" type="button" role="menuitem" disabled title="Review detected issues and safe corrections">🛠 Fix errors<span>Review problems before applying any changes</span></button>
           <button id="tocBtn" type="button" role="menuitem" aria-pressed="false" disabled title="Show/hide the table of contents (Ctrl+Shift+O)">📑 Contents</button>
           <button id="imgBtn" type="button" role="menuitem" aria-pressed="false" disabled title="Show/hide the list of pictures in this document (Ctrl+Shift+G)">🖼️ Images</button>
           <button id="linkBtn" type="button" role="menuitem" aria-pressed="false" disabled title="Show/hide the list of links in this document (Ctrl+Shift+L)">🔗 Links</button>
@@ -1000,7 +1023,8 @@
       Why the text on screen is shorter than the file: formatting symbols and layout lines are removed
       (<b>−</b>), and a few things are added (<b>+</b>, e.g. a line break shown as a space).
       Characters include spaces but not line breaks; viewed lines are non-empty lines; viewed words are
-      the readable text (code blocks, equations and diagram labels are shown but not counted as words).</p>
+      the readable text (code blocks, equations and diagram labels are shown but not counted as words).
+      Any residual is listed as rendered text outside the Markdown model.</p>
     <div id="bdStatus" class="bd-status"></div>
     <div class="table-wrap">
       <table id="bdTable">
@@ -1021,6 +1045,23 @@
     <div class="actions">
       <button id="insHighlight" class="btn secondary" title="Turn on ¶ Hidden: label every invisible character in the document">¶ Highlight in document</button>
       <button id="insClose" class="btn">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="fixErrorsDlg" aria-labelledby="fixErrorsTitle">
+    <h2 id="fixErrorsTitle">🛠 Review document issues</h2>
+      <p class="fix-note">Review the detected issues first. Click a line-based issue to jump to its source. Markdown is permissive, so this is a focused checker rather than a complete validator. Nothing changes until you choose an action, and changes stay unsaved until you save them.</p>
+    <div id="fixIssueStatus" role="status" aria-live="polite"></div>
+    <ul id="fixIssueList"></ul>
+    <section class="fix-safe">
+      <h3>Safe formatting cleanup</h3>
+      <p id="fixFormattingSummary" class="fix-note"></p>
+      <button id="fixFormattingApply" class="btn secondary" type="button" disabled>Apply safe formatting</button>
+    </section>
+    <div class="fix-actions">
+      <span class="fix-note">Security and ambiguous link issues are listed for review, never auto-rewritten.</span>
+      <button id="fixSave" class="btn secondary" type="button" disabled>💾 Save…</button>
+      <button id="fixClose" class="btn" type="button">Close</button>
     </div>
   </dialog>
 
@@ -1183,7 +1224,8 @@
       <ol id="imgList"></ol>
     </nav>
     <section id="srcPanel" aria-label="Markdown source">
-      <div class="toc-title" id="srcTitle">Source</div>
+      <div class="toc-title src-head"><span id="srcTitle">Source</span><span class="src-tools"><button id="srcEditBtn" class="btn secondary" type="button" title="Edit Markdown source at the highlighted line">✎ Edit</button><button id="srcUndoBtn" class="btn secondary" type="button" disabled title="Undo a Markdown source edit">↶ Undo</button><button id="srcApplyBtn" class="btn secondary" type="button" hidden disabled>Apply</button><button id="srcCancelBtn" class="btn secondary" type="button" hidden>Cancel</button><button id="srcSaveBtn" class="btn" type="button" disabled>💾 Save…</button></span></div>
+      <textarea id="srcEditor" aria-label="Editable Markdown source" spellcheck="false" hidden></textarea>
       <div id="srcView"></div>
     </section>
     <nav id="linkPanel" aria-label="Links in this document">

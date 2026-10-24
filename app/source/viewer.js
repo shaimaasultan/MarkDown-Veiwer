@@ -497,10 +497,13 @@ function mediaEntry(path) {
 // Documents visited by following links or the file list, for Back / Forward.
 const navBack = [], navFwd = [];
 let fileStamp = null;          // version of the open file on disk (auto-reload)
+let srcEditMode = false;       // source editor can be opened after the initial document load
 
 async function openDoc(path, anchor, { fromHistory = false, scroll = null } = {}) {
-  if (isEdited() && key(path) !== key(currentPath || '') &&
-      !confirm('This document has unsaved replacements. Open another document and discard them?')) return false;
+  const sourceDraft = srcEditMode && srcEditor.value !== currentSource;
+  if ((sourceDraft || (isEdited() && key(path) !== key(currentPath || ''))) &&
+      !confirm('This document has unsaved changes. Open another document and discard them?')) return false;
+  if (sourceDraft) { srcEditor.value = currentSource; srcEditMode = false; updateSrcEditorUi(); }
   const from = currentPath ? { path: currentPath, scroll: content.scrollTop } : null;
   let entry;
   try { entry = MEDIA_FILE.test(path) && !MD_RE.test(path) ? mediaEntry(path) : /\.xlsx$/i.test(path) ? await readBinaryDoc(path) : await readDoc(path); }
@@ -514,6 +517,7 @@ async function openDoc(path, anchor, { fromHistory = false, scroll = null } = {}
   currentBinary = entry.bytes || null;
   resetEdits();
   renderDoc({ anchor });
+  updateSrcEditorUi();
   // Its kind is hidden in the file list (☰ Types): show that kind again, so the open file is in the list.
   const openType = typeOf(currentPath);
   if (openType) { const h = hiddenTypes(); if (h.has(openType.id)) { h.delete(openType.id); setHiddenTypes(h); buildList(); } }
@@ -697,6 +701,7 @@ function renderDoc({ anchor = null, keepScroll = false } = {}) {
     copyBtn.disabled = !!currentBinary;
     srcBtn.disabled = true;
     cmpBtn.disabled = false;
+    document.getElementById('fixErrorsBtn').disabled = typeOf(currentPath)?.id !== 'md';
     updateExportMenuForCurrentFile();
     updateDocumentMenuAvailability();
     for (const li of fileList.children) li.classList.toggle('active', key(li.dataset.path) === key(currentPath));
@@ -743,6 +748,7 @@ function renderDoc({ anchor = null, keepScroll = false } = {}) {
   findBtn.disabled = false;
   srcBtn.disabled = false;
   cmpBtn.disabled = false;
+  document.getElementById('fixErrorsBtn').disabled = typeOf(currentPath)?.id !== 'md';
   updateExportMenuForCurrentFile();
   updateDocumentMenuAvailability();
   for (const li of fileList.children) li.classList.toggle('active', key(li.dataset.path) === key(currentPath));
@@ -2947,10 +2953,20 @@ function updateStats() {
   // Explain the difference and check the explanation adds up exactly.
   let analysis = null;
   try { analysis = analyzeDocument(currentSource); } catch (e) { console.warn('Breakdown:', e); }
+  const sourceStats = { lines: srcLines, chars: charCount(src), words: countWords(src) };
+  const viewedStats = { lines: shownLines, chars: charCount(shown), words };
+  if (analysis) {
+    const unexplained = Object.fromEntries(['lines', 'chars', 'words'].map(k => [
+      k, sourceStats[k] - analysis.cats.reduce((sum, category) => sum + category[k], 0) - viewedStats[k]
+    ]));
+    if (Object.values(unexplained).some(Boolean)) {
+      analysis.cats.push({ name: 'Rendered text outside the Markdown model', ...unexplained });
+    }
+  }
   lastBreakdown = {
     path: currentPath,
-    source: { lines: srcLines, chars: charCount(src), words: countWords(src) },
-    viewed: { lines: shownLines, chars: charCount(shown), words },
+    source: sourceStats,
+    viewed: viewedStats,
     analysis
   };
   // ✓ only when the categories explain the source → viewed difference for lines, chars and words.
@@ -4655,6 +4671,10 @@ function updateReplaceUi() {
   const save = document.getElementById('replaceSave');
   save.disabled = !isEdited();
   save.textContent = isEdited() ? `💾 Save… (${fmt(undoStack.length)} change${undoStack.length === 1 ? '' : 's'})` : '💾 Save…';
+  const sourceSave = document.getElementById('srcSaveBtn');
+  if (sourceSave) sourceSave.disabled = srcEditMode || !isEdited();
+  const sourceUndo = document.getElementById('srcUndoBtn');
+  if (sourceUndo) sourceUndo.disabled = srcEditMode || !undoStack.length;
 }
 
 // The text that replaces one match: literal, or with $1, $2… when "Regular expression" is on.
@@ -4756,7 +4776,7 @@ replaceInput.addEventListener('keydown', ev => {
   if (ev.key === 'Enter') { ev.preventDefault(); if (ev.ctrlKey) replaceAll(); else replaceOne(); }
   else if (ev.key === 'Escape') { ev.preventDefault(); closeFind(); }
 });
-window.addEventListener('beforeunload', ev => { if (isEdited()) { ev.preventDefault(); ev.returnValue = ''; } });
+window.addEventListener('beforeunload', ev => { if (isEdited() || (srcEditMode && srcEditor.value !== currentSource)) { ev.preventDefault(); ev.returnValue = ''; } });
 
 // ---------------------------------------------------------------- 📋 Copy clean
 // Removes invisible characters that can hide or change text; unusual spaces become normal
@@ -4947,6 +4967,240 @@ function updateDocumentMenuAvailability() {
   }
 }
 wireDropdown(documentMenuBtn, documentMenu);
+
+const fixErrorsDlg = document.getElementById('fixErrorsDlg');
+const fixErrorsBtn = document.getElementById('fixErrorsBtn');
+const fixIssueList = document.getElementById('fixIssueList');
+
+function fixIssue(text, actionText, action, sourceLine) {
+  const li = document.createElement('li');
+  if (sourceLine > 0) {
+    const jump = document.createElement('button'); jump.type = 'button'; jump.className = 'fix-issue-jump';
+    jump.textContent = `${text} · line ${fmt(sourceLine)}`;
+    jump.title = 'Show this location in the document source';
+    jump.addEventListener('click', () => { fixErrorsDlg.close(); showSourceLine(sourceLine); });
+    li.append(jump);
+  } else li.append(document.createTextNode(text));
+  if (actionText && action) {
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'btn secondary';
+    button.textContent = actionText; button.addEventListener('click', action); li.append(button);
+  }
+  fixIssueList.append(li);
+}
+
+function fixSourceLineForText(text) {
+  if (!text) return 0;
+  const at = currentSource.indexOf(text);
+  return at < 0 ? 0 : currentSource.slice(0, at).split(/\r\n|\r|\n/).length;
+}
+
+function guessUntaggedBlock(lines) {
+  const block = lines.join('\n').trim();
+  if (!block || lines.some(line => /^\s*(?:#{1,6}\s|>|[-*+]\s|\d+[.)]\s|```|~~~)/.test(line))) return null;
+  const mathCharsOnly = !/[^\sA-Za-z0-9\\{}()+\-*\/=^_<>|.,:;]/.test(block);
+  const startsMath = /^\\(?:frac|sqrt|sum|prod|int|lim|alpha|beta|gamma|theta|pi|begin|partial|cdot|times|infty)\b/.test(block) ||
+    /^[A-Za-z][\w]*\s*(?:[_^=<>])/.test(block) || /^[A-Za-z][\w]*\([^)]*\)\s*=/.test(block);
+  if (mathCharsOnly && startsMath)
+    return { type: 'math', tag: 'math' };
+
+  const checks = [
+    ['python', /^(?:\s*(?:from\s+\w[\w.]*\s+import\b|import\s+\w|def\s+\w+\s*\(|class\s+\w+\s*[:(]|print\s*\(|if\s+.+:|for\s+.+\s+in\s+.+:|return\b))/],
+    ['javascript', /^(?:\s*(?:const|let|var|function|export|import)\b|\s*(?:console\.(?:log|warn|error)|document\.|window\.)|\s*=>)/],
+    ['powershell', /^(?:\s*(?:#requires\b|param\s*\(|\$[\w:]+\s*=|Write-(?:Host|Output|Error)\b|Get-\w+\b|Set-\w+\b|function\s+\w+))/i],
+    ['csharp', /^(?:\s*(?:using\s+[\w.]+;|namespace\s+[\w.]+|public\s+(?:static\s+)?(?:class|void|int|string)\b|Console\.(?:Write|Read)))/],
+    ['bash', /^(?:\s*(?:#!\s*\/|set\s+-[a-z]|echo\s|if\s+\[\[?|for\s+\w+\s+in\b|function\s+\w+|(?:cd|grep|awk|sed)\s))/],
+    ['sql', /^(?:\s*(?:SELECT\b|INSERT\s+INTO\b|UPDATE\s+\w+\s+SET\b|CREATE\s+(?:TABLE|VIEW)\b|DELETE\s+FROM\b))/i],
+    ['html', /^(?:\s*(?:<!doctype\s+html|<\/?(?:html|head|body|script|style|div|section|p|table)\b))/i],
+    ['json', /^\s*["[{]/]
+  ];
+  for (const [tag, re] of checks) {
+    const matches = lines.filter(line => re.test(line)).length;
+    if (lines.length < 2 || matches < 2) continue;
+    if (tag === 'json') {
+      try { JSON.parse(block); } catch { continue; }
+    }
+    return { type: tag === 'html' && /<script\b/i.test(block) ? 'script' : 'code', tag };
+  }
+  return null;
+}
+
+function addMissingFormatTags(text) {
+  const parts = text.split(/(\r\n|\r|\n)/), rows = [];
+  let offset = 0;
+  for (let i = 0; i < parts.length; i += 2) {
+    const line = parts[i], eol = parts[i + 1] || '';
+    rows.push({ text: line, eol, start: offset, end: offset + line.length });
+    offset += line.length + eol.length;
+  }
+  const counts = new Map();
+  for (const row of rows) if (row.eol) counts.set(row.eol, (counts.get(row.eol) || 0) + 1);
+  const eol = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] || '\n';
+  const inserts = [], tagged = [];
+  let frontMatter = rows[0]?.text === '---', fence = null;
+  for (let i = 0; i < rows.length;) {
+    const line = rows[i].text;
+    if (frontMatter) {
+      if (i > 0 && /^(?:---|\.\.\.)\s*$/.test(line)) frontMatter = false;
+      i++; continue;
+    }
+    const openFence = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fence) {
+      if (new RegExp(`^ {0,3}${fence.char}{${fence.length},}[ \\t]*$`).test(line)) fence = null;
+      i++; continue;
+    }
+    if (openFence) { fence = { char: openFence[1][0], length: openFence[1].length }; i++; continue; }
+    if (!line.trim() || /^(?: {4,}|\t)/.test(line)) { i++; continue; }
+    const first = i;
+    while (i < rows.length && rows[i].text.trim() && !/^(?: {4,}|\t)/.test(rows[i].text) && !/^ {0,3}(?:`{3,}|~{3,})/.test(rows[i].text)) i++;
+    const end = i - 1, blockLines = rows.slice(first, i).map(row => row.text);
+    const inferred = guessUntaggedBlock(blockLines);
+    if (inferred) {
+      const opener = inferred.tag === 'math' ? '$$' : `\`\`\`${inferred.tag}`;
+      const closer = inferred.tag === 'math' ? '$$' : '```';
+      inserts.push({ at: rows[first].start, text: opener + eol });
+      inserts.push({ at: rows[end].end, text: eol + closer });
+      tagged.push({ ...inferred, line: first + 1 });
+    }
+  }
+  for (const item of inserts.sort((a, b) => b.at - a.at)) text = text.slice(0, item.at) + item.text + text.slice(item.at);
+  return { text, tagged };
+}
+
+function safeFormattingPlan(text) {
+  const tagPlan = addMissingFormatTags(text);
+  text = tagPlan.text;
+  const parts = text.split(/(\r\n|\r|\n)/), rows = [];
+  for (let i = 0; i < parts.length; i += 2) {
+    if (i === parts.length - 1 && parts[i] === '') continue; // split's empty tail after a final newline
+    rows.push({ text: parts[i], eol: parts[i + 1] || '' });
+  }
+  const eolCounts = new Map();
+  for (const row of rows) if (row.eol) eolCounts.set(row.eol, (eolCounts.get(row.eol) || 0) + 1);
+  const eol = [...eolCounts].sort((a, b) => b[1] - a[1])[0]?.[0] || '\n';
+  let result = '', fence = null, inIndentedCode = false, frontMatter = rows[0]?.text === '---', blankRun = 0, trailing = 0, blankRuns = 0;
+  const trailingLines = [], blankRunLines = [];
+  for (let index = 0; index < rows.length; index++) {
+    const row = rows[index];
+    if (frontMatter) {
+      result += row.text + row.eol;
+      if (index > 0 && /^(?:---|\.\.\.)\s*$/.test(row.text)) frontMatter = false;
+      continue;
+    }
+    const open = /^ {0,3}(`{3,}|~{3,})/.exec(row.text);
+    if (!fence && open) { fence = { char: open[1][0], length: open[1].length }; blankRun = 0; result += row.text + row.eol; continue; }
+    if (fence) {
+      result += row.text + row.eol;
+      const close = new RegExp(`^ {0,3}${fence.char === '`' ? '`' : '~'}{${fence.length},}[ \\t]*$`).test(row.text);
+      if (close) fence = null;
+      continue;
+    }
+    const indentedCode = /^(?: {4,}|\t)/.test(row.text);
+    if (indentedCode || (inIndentedCode && !row.text.trim())) {
+      inIndentedCode = true; blankRun = 0; result += row.text + row.eol; continue;
+    }
+    inIndentedCode = false;
+    if (!row.text.trim() && row.eol) {
+      blankRun++;
+      if (blankRun > 1) { if (blankRun === 2) { blankRuns++; blankRunLines.push(index + 1); } continue; }
+      result += row.eol; continue;
+    }
+    blankRun = 0;
+    const trimmed = row.text.replace(/[ \t]{3,}$/, match => { trailing++; trailingLines.push(index + 1); return '  '; });
+    result += trimmed + row.eol;
+  }
+  const missingFinal = !!text && !/(?:\r\n|\r|\n)$/.test(text);
+  if (missingFinal) result += eol;
+  return { result, trailing, blankRuns, missingFinal, trailingLines, blankRunLines, finalLine: rows.length || 1, tagged: tagPlan.tagged };
+}
+
+async function refreshFixIssues() {
+  const scanPath = currentPath, scanText = currentSource;
+  fixIssueList.replaceChildren();
+  document.getElementById('fixIssueStatus').textContent = 'Checking formatting, links, encoding and document warnings…';
+  const plan = safeFormattingPlan(scanText);
+  const { trailing, blankRuns, missingFinal } = plan;
+  if (trailing) fixIssue(`${fmt(trailing)} line(s) have more than two trailing spaces. Cleanup preserves deliberate two-space Markdown line breaks.`, null, null, plan.trailingLines[0]);
+  if (blankRuns) fixIssue(`${fmt(blankRuns)} run(s) have extra blank lines.`, null, null, plan.blankRunLines[0]);
+  if (missingFinal) fixIssue('The file does not end with a newline.', null, null, plan.finalLine);
+  for (const item of plan.tagged) fixIssue(`Unformatted ${item.type} block detected; cleanup will wrap it in a ${item.tag === 'math' ? 'math' : item.tag + ' code'} fence.`, null, null, item.line);
+  const formattingSummary = document.getElementById('fixFormattingSummary');
+  const tagCounts = new Map();
+  for (const item of plan.tagged) tagCounts.set(item.tag, (tagCounts.get(item.tag) || 0) + 1);
+  const tagSummary = [...tagCounts].map(([tag, count]) => `add ${fmt(count)} ${tag} tag(s)`).join(', ');
+  const actions = [trailing && `${fmt(trailing)} trailing-space line(s)`, blankRuns && `${fmt(blankRuns)} extra blank-line run(s)`, missingFinal && 'add final newline', tagSummary].filter(Boolean);
+  formattingSummary.textContent = actions.length ? `Proposed: ${actions.join(' · ')}. Code and script fences display as text and never run. Existing fences, indented code, and YAML front matter are preserved; review before applying.` : 'No safe formatting cleanup is needed.';
+  document.getElementById('fixFormattingApply').disabled = plan.result === scanText;
+
+  try { await checkBrokenLinks(); } catch { }
+  if (scanPath !== currentPath || scanText !== currentSource) return;
+  const brokenLinks = linkEntries.filter(e => e.a.classList.contains('link-broken'));
+  for (const entry of brokenLinks) {
+    const href = entry.a.dataset.origHref || entry.a.getAttribute('href') || '';
+    const label = entry.a.textContent.trim() || '(unnamed link)';
+    const line = Number(entry.a.closest('[data-src-line]')?.dataset.srcLine) || fixSourceLineForText(href);
+    fixIssue(`Broken reference “${label}” → ${href}`, 'Find in source', () => {
+      fixErrorsDlg.close(); openFind();
+      if (!replaceMode) setReplaceMode(true);
+      findInput.value = href; replaceInput.value = '';
+      runFind(false); updateSourceMatches(); showSourceMatch();
+    }, line);
+  }
+
+  if (currentInfo?.note) fixIssue(`Encoding: ${/UTF-32/i.test(currentInfo.name) ? 'UTF-32 was detected, but the viewer cannot decode it reliably enough to create a corrected copy. Use a UTF-32-aware editor to convert it.' : currentInfo.note}`);
+  if (currentInfo && !/UTF-8|ASCII/i.test(currentInfo.name) && !/UTF-32/i.test(currentInfo.name)) {
+    fixIssue(`Detected ${currentInfo.name}. Save a UTF-8 copy if the decoded text looks correct.`, 'Save UTF-8 copy', async () => {
+      const base = fileName(currentPath).replace(/\.md$/i, '');
+      try {
+        const saved = await saveFileAs(new Blob([currentSource], { type: 'text/markdown;charset=utf-8' }), `${base}-utf8.md`,
+          { description: 'Markdown UTF-8 copy', accept: { 'text/markdown': ['.md', '.markdown'] } });
+        if (saved) showToast(`Saved “${saved}” as UTF-8. Review the text to confirm the original encoding decoded correctly.`);
+      } catch (e) { showToast(`Could not save the UTF-8 copy: ${e.message}`); }
+    });
+  }
+  lastInspection = inspectCharacters(scanText, currentInfo);
+  for (const item of [...lastInspection.zeroWidth, ...lastInspection.hidden]) {
+    const count = item.count - item.benign;
+    if (!count || !CHAR_KINDS[item.kind]?.warn) continue;
+    fixIssue(`${charName(item.cp)} (${uPlus(item.cp)}) appears ${fmt(count)} time(s). Review before removing it.`, 'Review characters', () => { fixErrorsDlg.close(); showInspection(); }, [...item.lines][0]);
+  }
+  for (const item of lastInspection.placeholders) {
+    fixIssue(`${item.kind}: “${item.text}” appears ${fmt(item.count)} time(s).`, 'Review characters', () => { fixErrorsDlg.close(); showInspection(); }, [...item.lines][0]);
+  }
+  if (lastSafety?.source === scanText) {
+    for (const finding of lastSafety.findings || []) {
+      if (finding.level === 'note') continue;
+      for (const item of finding.items || []) {
+        const review = finding.blocked
+          ? ' The viewer blocks or removes this content; review before editing.'
+          : ' Review this finding before editing.';
+        fixIssue(`${finding.title}: ${item.what}.${review}`, null, null, item.line);
+      }
+    }
+  }
+  if (!fixIssueList.children.length) fixIssue('No automatically detectable issues were found.');
+  document.getElementById('fixIssueStatus').textContent = `${fmt(fixIssueList.children.length)} item(s) to review · no edits have been applied.`;
+}
+
+fixErrorsBtn.addEventListener('click', async () => {
+  if (typeOf(currentPath)?.id !== 'md') return;
+  document.getElementById('fixSave').disabled = !isEdited();
+  if (!fixErrorsDlg.open) fixErrorsDlg.showModal();
+  await refreshFixIssues();
+});
+
+document.getElementById('fixFormattingApply').addEventListener('click', async () => {
+  const fixed = safeFormattingPlan(currentSource).result;
+  if (fixed === currentSource) return;
+  applyEdit(fixed, 'Applied safe formatting cleanup. Changes are unsaved; use Save to keep them.');
+  document.getElementById('fixSave').disabled = !isEdited();
+  await refreshFixIssues();
+});
+document.getElementById('fixSave').addEventListener('click', async () => {
+  await saveEdited();
+  document.getElementById('fixSave').disabled = !isEdited();
+});
+document.getElementById('fixClose').addEventListener('click', () => fixErrorsDlg.close());
+
 wireDropdown(document.getElementById('themeBtn'), document.getElementById('themeMenu'), {
   onSelect: item => {
     applyTheme(item.dataset.theme, true);
@@ -5565,7 +5819,7 @@ function toggleToc() {
   if ('imgsOpen' in root.dataset || 'linksOpen' in root.dataset || 'srcOpen' in root.dataset) {   // same place: back to Contents
     closeImages();
     closeLinks();
-    closeSource();
+    if (!closeSource()) return;
     if (narrowScreen.matches ? 'tocOpen' in root.dataset : loadPrefLive('toc') === 'shown') { updateTocButton(); updateTocActive(); return; }
   }
   if (narrowScreen.matches) {
@@ -5826,7 +6080,7 @@ function toggleImages() {
     root.dataset.imgsOpen = '';
     delete root.dataset.tocOpen;
     closeLinks();
-    closeSource();
+    if (!closeSource()) return;
     updateImgButton();
     updateTocButton();
     updateImagesActive();
@@ -5944,7 +6198,9 @@ async function checkBrokenLinks() {
       body.append(note);
     }
   }
-  if (broken) document.getElementById('linkTitle').textContent += ` · ${fmt(broken)} broken`;
+  const flagged = linkEntries.filter(e => linkFlags(e.a.dataset.origHref || e.a.getAttribute('href') || '').length).length;
+  document.getElementById('linkTitle').textContent = `Links (${fmt(linkEntries.length)})` +
+    (flagged ? ` · ⚠ ${fmt(flagged)} flagged` : '') + (broken ? ` · ${fmt(broken)} broken` : '');
 }
 
 function goToLink(a) {
@@ -5997,7 +6253,7 @@ function toggleLinks() {
   if ('linksOpen' in root.dataset) closeLinks();
   else {
     closeImages();
-    closeSource();
+    if (!closeSource()) return;
     root.dataset.linksOpen = '';
     delete root.dataset.tocOpen;
     updateLinkButton();
@@ -6013,8 +6269,15 @@ linkBtn.addEventListener('click', toggleLinks);
 const srcPanel = document.getElementById('srcPanel');
 const srcView = document.getElementById('srcView');
 const srcBtn = document.getElementById('srcBtn');
+const srcEditor = document.getElementById('srcEditor');
+const srcEditBtn = document.getElementById('srcEditBtn');
+const srcUndoBtn = document.getElementById('srcUndoBtn');
+const srcApplyBtn = document.getElementById('srcApplyBtn');
+const srcCancelBtn = document.getElementById('srcCancelBtn');
+const srcSaveBtn = document.getElementById('srcSaveBtn');
 const SRC_MAX_LINES = 30000;
 let srcDirty = true;
+let srcPendingLine = 1;
 const srcIsOpen = () => 'srcOpen' in document.documentElement.dataset;
 
 // Top-level blocks → the source line they start on (front matter counted).
@@ -6810,7 +7073,10 @@ srcView.addEventListener('click', ev => {
 
 // Open the source at a line (e.g. from the safety report) and point it out.
 function showSourceLine(n) {
+  srcPendingLine = Math.max(1, Number(n) || 1);
   if (!srcIsOpen()) toggleSource();
+  if (!srcIsOpen()) return;
+  if (srcEditMode) { srcSelectEditorLine(srcPendingLine); return; }
   const row = srcView.children[n - 1];
   if (!row) return;
   quietSrc = now() + 300;
@@ -6821,13 +7087,77 @@ function showSourceLine(n) {
   scrollViewToLine(n, true);
 }
 
+function srcSelectEditorLine(line) {
+  const starts = [0];
+  for (const m of srcEditor.value.matchAll(/\r\n|\r|\n/g)) starts.push(m.index + m[0].length);
+  const lineIndex = Math.min(Math.max(0, line - 1), starts.length - 1);
+  const start = starts[lineIndex];
+  const nextBreak = srcEditor.value.slice(start).search(/[\r\n]/);
+  const end = nextBreak < 0 ? srcEditor.value.length : start + nextBreak;
+  srcEditor.focus();
+  srcEditor.setSelectionRange(start, end);
+  const style = getComputedStyle(srcEditor);
+  const lineHeight = parseFloat(style.lineHeight) || 20;
+  const topPadding = parseFloat(style.paddingTop) || 0;
+  srcEditor.scrollTop = Math.max(0, topPadding + lineIndex * lineHeight - (srcEditor.clientHeight - lineHeight) / 2);
+}
+
+function updateSrcEditorUi() {
+  srcView.hidden = srcEditMode;
+  srcEditor.hidden = !srcEditMode;
+  srcPanel.classList.toggle('editing', srcEditMode);
+  srcEditBtn.hidden = srcEditMode || typeOf(currentPath)?.id !== 'md';
+  srcUndoBtn.hidden = srcEditMode;
+  srcApplyBtn.hidden = !srcEditMode;
+  srcCancelBtn.hidden = !srcEditMode;
+  srcUndoBtn.disabled = !undoStack.length;
+  srcApplyBtn.disabled = srcEditor.value === currentSource;
+  srcSaveBtn.disabled = srcEditMode || !isEdited();
+}
+
+function beginSourceEdit() {
+  if (typeOf(currentPath)?.id !== 'md') return;
+  srcEditor.value = currentSource;
+  srcEditMode = true;
+  updateSrcEditorUi();
+  requestAnimationFrame(() => srcSelectEditorLine(srcPendingLine));
+}
+
+function cancelSourceEdit() {
+  if (srcEditor.value !== currentSource && !confirm('Discard the un-applied edits in the source editor?')) return;
+  srcEditor.value = currentSource; srcEditMode = false;
+  updateSrcEditorUi();
+}
+
+function applySourceEdit() {
+  if (!srcEditMode || srcEditor.value === currentSource) return;
+  const updated = srcEditor.value;
+  const line = srcEditor.value.slice(0, srcEditor.selectionStart).split(/\r\n|\r|\n/).length;
+  srcEditMode = false;
+  updateSrcEditorUi();
+  srcPendingLine = line;
+  applyEdit(updated, 'Applied source edit. Changes remain unsaved until you choose Save…');
+  updateSrcEditorUi();
+  showSourceLine(Math.min(line, currentSource.split(/\r\n|\r|\n/).length));
+}
+
+srcEditBtn.addEventListener('click', beginSourceEdit);
+srcUndoBtn.addEventListener('click', () => { undoEdit(); updateSrcEditorUi(); });
+srcApplyBtn.addEventListener('click', applySourceEdit);
+srcCancelBtn.addEventListener('click', cancelSourceEdit);
+srcSaveBtn.addEventListener('click', async () => { await saveEdited(); updateSrcEditorUi(); });
+srcEditor.addEventListener('input', updateSrcEditorUi);
+
 function updateSrcButton() {
   setDocumentMenuToggle(srcBtn, srcIsOpen() && !srcBtn.disabled);
 }
 function closeSource() {
+  if (srcEditMode && srcEditor.value !== currentSource && !confirm('Discard the un-applied edits in the source editor?')) return false;
+  if (srcEditMode) { srcEditor.value = currentSource; srcEditMode = false; updateSrcEditorUi(); }
   delete document.documentElement.dataset.srcOpen;
   updateSrcButton();
   updateTocButton();
+  return true;
 }
 function toggleSource() {
   if (srcBtn.disabled) return;
