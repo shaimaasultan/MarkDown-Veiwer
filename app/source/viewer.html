@@ -392,6 +392,11 @@
     #bdTable .n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
     #bdTable tr.total td { font-weight: 600; background: var(--panel); }
     #bdTable tr.bad td { color: var(--bad); background: var(--bad-bg); font-weight: 600; }
+    #bdTable tr.bd-residual td { color: var(--bad); background: var(--bad-bg); font-weight: 600; }
+    .bd-residual-label { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; text-decoration: underline dotted; text-underline-offset: .15em; cursor: pointer; }
+    .bd-residual-label:hover { text-decoration-style: solid; }
+    #bdTable tr.bd-residual-detail td { padding: .55rem .7rem; background: var(--bad-bg); color: var(--bad); }
+    .bd-residual-detail pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: .82rem/1.5 ui-monospace, Consolas, monospace; }
     .bd-status { padding: .5rem .75rem; border-radius: 6px; margin: .5rem 0 .75rem; font-weight: 600; font-size: .9rem; }
     .bd-status.ok { color: var(--ok); background: var(--ok-bg); }
     .bd-status.bad { color: var(--bad); background: var(--bad-bg); }

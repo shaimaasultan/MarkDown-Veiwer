@@ -2903,6 +2903,35 @@ function readingTime(words) {
   return `${Math.floor(minutes / 60)} h ${Math.round(minutes % 60)} min read`;
 }
 
+function unmappedRenderedText(modelText, renderedText) {
+  const lines = text => text.split(/\r\n|\r|\n|\u2028|\u2029/);
+  const key = line => line.replace(/[\u200B-\u200D\u2060\uFEFF\uFDD0\uFDD1]/g, '').replace(/\s+/gu, ' ').trim();
+  const expected = new Map();
+  for (const line of lines(modelText)) {
+    const normalized = key(line);
+    if (normalized) expected.set(normalized, (expected.get(normalized) || 0) + 1);
+  }
+  const extra = [];
+  for (const line of lines(renderedText)) {
+    const normalized = key(line);
+    if (!normalized) continue;
+    const count = expected.get(normalized) || 0;
+    if (count) expected.set(normalized, count - 1);
+    else extra.push(line.trim());
+  }
+  if (extra.length) return [...new Set(extra)];
+
+  // If formatting changed a line instead of adding one, isolate the changed rendered fragment.
+  let start = 0;
+  while (start < modelText.length && start < renderedText.length && modelText[start] === renderedText[start]) start++;
+  let modelEnd = modelText.length, renderedEnd = renderedText.length;
+  while (modelEnd > start && renderedEnd > start && modelText[modelEnd - 1] === renderedText[renderedEnd - 1]) {
+    modelEnd--; renderedEnd--;
+  }
+  const fragment = renderedText.slice(start, renderedEnd).trim();
+  return fragment ? [fragment] : [];
+}
+
 function updateStats() {
   const stats = document.getElementById('stats');
   if (!currentPath) { stats.replaceChildren(); return; }
@@ -2960,7 +2989,11 @@ function updateStats() {
       k, sourceStats[k] - analysis.cats.reduce((sum, category) => sum + category[k], 0) - viewedStats[k]
     ]));
     if (Object.values(unexplained).some(Boolean)) {
-      analysis.cats.push({ name: 'Rendered text outside the Markdown model', ...unexplained });
+      analysis.cats.push({
+        name: 'Rendered text outside the Markdown model',
+        ...unexplained,
+        examples: unmappedRenderedText(analysis.visible, shown)
+      });
     }
   }
   lastBreakdown = {
@@ -3039,7 +3072,28 @@ function showBreakdown() {
 
   const cats = d.analysis ? [...d.analysis.cats].sort((a, b) =>
     Math.abs(b.chars) - Math.abs(a.chars) || Math.abs(b.words) - Math.abs(a.words) || Math.abs(b.lines) - Math.abs(a.lines)) : [];
-  for (const c of cats) tbody.append(row('', c.name, c, true));
+  for (const c of cats) {
+    if (c.name !== 'Rendered text outside the Markdown model') { tbody.append(row('', c.name, c, true)); continue; }
+    const residualRow = row('bd-residual', c.name, c, true);
+    const labelCell = residualRow.firstElementChild;
+    const label = el('button', 'bd-residual-label', c.name);
+    const examples = c.examples || [];
+    const exactText = examples.length ? examples.join('\n') : 'The measured difference could not be isolated to a standalone text fragment.';
+    label.title = `Rendered text not otherwise mapped:\n${exactText}`;
+    label.setAttribute('aria-expanded', 'false');
+    label.setAttribute('aria-controls', 'bdResidualDetail');
+    labelCell.replaceChildren(label);
+
+    const detailRow = el('tr', 'bd-residual-detail');
+    detailRow.id = 'bdResidualDetail'; detailRow.hidden = true;
+    const detailCell = el('td'); detailCell.colSpan = 4;
+    detailCell.append(el('pre', '', exactText)); detailRow.append(detailCell);
+    label.addEventListener('click', () => {
+      detailRow.hidden = !detailRow.hidden;
+      label.setAttribute('aria-expanded', String(!detailRow.hidden));
+    });
+    tbody.append(residualRow, detailRow);
+  }
 
   const expected = {}, gap = {};
   for (const k of KEYS) {
