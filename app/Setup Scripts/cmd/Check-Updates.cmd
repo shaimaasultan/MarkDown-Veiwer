@@ -1,5 +1,5 @@
 @echo off
-rem Checks nuget.org and the npm registry for newer versions of the WebView2 SDK and the bundled libraries.
-rem Only reports - nothing is downloaded or installed. The viewer itself never goes online.
+rem Checks for newer WebView2 SDK DLLs and bundled libraries, and whether app\dist has picked up the
+rem project's SDK DLLs. Only reports - nothing is downloaded or installed. The app has a separate daily SDK-only check.
 "%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\check-updates.ps1"
 pause

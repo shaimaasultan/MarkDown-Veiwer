@@ -73,7 +73,7 @@ function blobURL(entry) {
   return urlCache.get(k);
 }
 
-// This app never goes online: pictures and media a document links to on the web are not loaded.
+// Document previews never fetch pictures or media from web addresses.
 const isWeb = href => /^(?:https?:)?\/\//i.test((href || '').trim());
 
 function markWeb(el, src) {
@@ -83,9 +83,9 @@ function markWeb(el, src) {
     el.classList.remove('zoomable');
     el.classList.add('web');
     el.dataset.origAlt = el.getAttribute('alt') || '';
-    el.alt = `🌐 Web picture not loaded (this app never goes online): ${src}`;
+    el.alt = `🌐 Web picture not loaded (external pictures are disabled): ${src}`;
   }
-  el.title = `Not loaded — this app never goes online: ${src}`;
+  el.title = `Not loaded — external pictures are disabled: ${src}`;
 }
 
 // ---------------------------------------------------------------- sanitizer
@@ -7621,7 +7621,7 @@ document.addEventListener('keydown', ev => {
 // ---------------------------------------------------------------- export as a web page
 // One self-contained .html file: the document as shown (light theme), with its pictures, math fonts and
 // diagrams embedded. No scripts, and a security policy in the file that forbids them; web pictures are
-// left out (this app never goes online).
+// left out (external pictures are never fetched by the document preview).
 const toDataURL = blob => new Promise((resolve, reject) => {
   const r = new FileReader();
   r.onload = () => resolve(r.result);
@@ -7979,6 +7979,7 @@ async function initApp() {
   renderConnStatus();
   fetchFirewall();
   setInterval(fetchFirewall, 60000);
+  refreshWebViewUpdateStatus();
 
   const file = new URLSearchParams(location.search).get('file') || info.file;
   if (!file) return;
@@ -8004,7 +8005,7 @@ function renderConnStatus() {
 // Nothing listens on the network, so no firewall rules are needed; the app reports that, whether the
 // block rules Setup adds for its program are in place, and whether Windows Firewall itself is on.
 let firewall = null;
-const firewallOk = () => !!(firewall && firewall.readable && (firewall.state === 'nonetwork' || firewall.state === 'blocked'));
+const firewallOk = () => !!(firewall && firewall.readable && firewall.firewallOn && (firewall.state === 'nonetwork' || firewall.state === 'blocked'));
 
 async function fetchFirewall() {
   try { firewall = await (await fetch(apiBase + 'firewall')).json(); } catch { /* app closed */ }
@@ -8017,7 +8018,7 @@ function renderFirewall() {
   document.getElementById('appStatus').hidden = false;
   badge.hidden = false;
   badge.className = 'breakdown-btn ' + (firewallOk() ? 'ok' : 'bad');
-  badge.textContent = `🛡 Firewall: ${firewallOk() ? firewall.label || 'no network port' : 'status unknown'}`;
+  badge.textContent = `🛡 Firewall: ${firewall.readable ? firewall.label || 'status unknown' : 'status unknown'}`;
   badge.title = `${firewall.summary}. ${firewall.detail} — click for details`;
   // Keep the About window's row current if it's open.
   const row = document.getElementById('fwRow');
@@ -8036,14 +8037,73 @@ function fillFirewallRow(dd) {
 }
 document.getElementById('fwBadge').addEventListener('click', () => showAbout());
 
+// The green WebView2 pill doubles as an SDK freshness indicator. The viewer EXE itself stays
+// network-blocked; its private endpoint reports the result from the signed, fixed-host helper.
+let webViewUpdateTag = null;
+let webViewUpdatePoll = null;
+async function refreshWebViewUpdateStatus() {
+  if (!APP || !webViewUpdateTag) return;
+  try {
+    const response = await fetch(apiBase + 'webview2-update', { cache: 'no-store' });
+    if (!response.ok) throw new Error('status unavailable');
+    const result = await response.json();
+    const state = ['checking', 'current', 'available', 'unknown'].includes(result.state) ? result.state : 'unknown';
+    const labels = {
+      checking: ['WebView2 · Checking', 'checking'],
+      current: ['WebView2 · Up to date', ''],
+      available: ['WebView2 · Update available', 'update-available'],
+      unknown: ['WebView2 · Check unavailable', 'status-unknown']
+    };
+    const [label, className] = labels[state];
+    webViewUpdateTag.textContent = label;
+    webViewUpdateTag.className = 'app-tag' + (className ? ' ' + className : '');
+    const details = [];
+    if (result.current) details.push('Bundled SDK: ' + result.current);
+    if (result.latest) details.push('Latest stable SDK: ' + result.latest);
+    if (result.checked) {
+      const date = new Date(result.checked);
+      if (!Number.isNaN(date.getTime())) details.push('Checked: ' + date.toLocaleString());
+    }
+    const explanations = {
+      checking: 'Checking the fixed NuGet SDK version endpoint. No files are downloaded.',
+      current: 'The bundled WebView2 SDK is current. The check runs at most once every 24 hours.',
+      available: 'A newer stable WebView2 SDK is available. Review it with Check-Updates.cmd; nothing is downloaded automatically.',
+      unknown: 'The latest SDK version could not be checked. Check your connection or run Check-Updates.cmd.'
+    };
+    webViewUpdateTag.title = [explanations[state], ...details].join('\n');
+    if (state === 'checking') {
+      if (!webViewUpdatePoll) webViewUpdatePoll = setInterval(async () => {
+        await refreshWebViewUpdateStatus();
+        if (!webViewUpdateTag || !webViewUpdateTag.textContent.includes('Checking')) {
+          clearInterval(webViewUpdatePoll);
+          webViewUpdatePoll = null;
+        }
+      }, 1200);
+    } else if (webViewUpdatePoll) {
+      clearInterval(webViewUpdatePoll);
+      webViewUpdatePoll = null;
+    }
+  } catch {
+    webViewUpdateTag.textContent = 'WebView2 · Status unavailable';
+    webViewUpdateTag.className = 'app-tag status-unknown';
+    webViewUpdateTag.title = 'Could not read the local WebView2 SDK update status.';
+    if (webViewUpdatePoll) {
+      clearInterval(webViewUpdatePoll);
+      webViewUpdatePoll = null;
+    }
+  }
+}
+
 if (APP) initApp();
 
 // The app's name tag in the header.
 {
   const tag = document.createElement('span');
   tag.className = 'app-tag';
-  tag.textContent = 'WebView2';
+  tag.textContent = APP ? 'WebView2 · Checking' : 'WebView2';
+  if (APP) tag.classList.add('checking');
   tag.title = 'Own window, bundled libraries, no network port';
+  webViewUpdateTag = tag;
   document.querySelector('header h1').append(' ', tag);
 }
 

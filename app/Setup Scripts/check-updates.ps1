@@ -3,7 +3,7 @@
 # installed on this PC (read locally).
 #   check-updates.ps1    exit code: 0 up to date, 1 updates available, 2 could not check everything
 #
-# The viewer itself never goes online; only this script does, and only when you run it:
+# This manual checker contacts these hosts only when you run it. The app also has a separate daily SDK-only check:
 # - HTTPS only, to two fixed hosts (api.nuget.org, registry.npmjs.org); redirects are not followed;
 # - every answer has a 15-second time limit and a size limit, and only a version number is taken from it;
 # - nothing is downloaded or installed: the SDK files are pinned by SHA-256 in build.ps1, so an update is a
@@ -58,13 +58,15 @@ function Add-Row($name, $current, $latest, $note) {
     $rows.Add([pscustomobject]@{ Name = $name; Current = $current; Latest = $(if (Test-Version $latest) { $latest } else { '?' }); State = $state; Note = $note })
 }
 
-# The WebView2 SDK this project builds with (all three files must agree).
+# The WebView2 SDK DLLs this project builds and ships (all three files must agree).
 $sdkVersions = @('Microsoft.Web.WebView2.Core.dll', 'Microsoft.Web.WebView2.WinForms.dll', 'WebView2Loader.dll' |
     ForEach-Object { (Get-Item -LiteralPath (Join-Path $root "app\Setup Scripts\webview2\$_")).VersionInfo.FileVersion } | Select-Object -Unique)
 if ($sdkVersions.Count -ne 1) { throw "The WebView2 SDK files in app\Setup Scripts\webview2\ have different versions: $($sdkVersions -join ', ')" }
+$sdkFiles = @('Microsoft.Web.WebView2.Core.dll', 'Microsoft.Web.WebView2.WinForms.dll', 'WebView2Loader.dll')
 $index = Get-Json 'https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/index.json' 'api.nuget.org' 1MB
 $stable = @($index.versions | Where-Object { $_ -is [string] -and (Test-Version $_) } | Sort-Object { [version]$_ })
-Add-Row 'WebView2 SDK (Microsoft.Web.WebView2)' $sdkVersions[0] $(if ($stable.Count) { $stable[-1] } else { $null }) 'nuget.org, stable releases'
+$sdkLatest = if ($stable.Count) { $stable[-1] } else { $null }
+Add-Row 'WebView2 SDK DLLs (build input)' $sdkVersions[0] $sdkLatest 'A newer SDK means refresh the signed DLLs and rebuild the app'
 
 # The bundled libraries, as listed in viewer.js (the build checks the files match these versions).
 $js = [IO.File]::ReadAllText((Join-Path $root 'app\source\viewer.js'))
@@ -76,6 +78,36 @@ foreach ($lib in @(@('marked', 'marked'), @('KaTeX', 'katex'), @('highlight.js',
 
 $rows | Format-Table Name, Current, Latest, State -AutoSize | Out-String -Width 120 | Write-Host
 
+# Say explicitly whether this project needs new SDK DLLs, and whether its current build output has picked up
+# the SDK DLLs already pinned in the project. The app and Setup do not update themselves.
+$sdkState = $rows | Where-Object Name -eq 'WebView2 SDK DLLs (build input)' | Select-Object -First 1
+if ($sdkState.State -eq 'UPDATE AVAILABLE') {
+    Write-Host "WEBVIEW2 APP DLL UPDATE AVAILABLE: stable SDK $($sdkState.Latest) is newer than the project DLLs ($($sdkState.Current)). After reviewing the release, update the three signed files and SHA-256 pins, then rebuild and install." -ForegroundColor Yellow
+} elseif ($sdkState.State -eq 'up to date') {
+    Write-Host "WebView2 app SDK DLLs: project inputs are current at $($sdkState.Current)."
+} else {
+    Write-Host 'WebView2 app DLL update status could not be determined.' -ForegroundColor Yellow
+}
+
+$dist = Join-Path $root 'app\dist'
+$buildNeedsRefresh = $false
+$distMissing = @($sdkFiles | Where-Object { -not (Test-Path -LiteralPath (Join-Path $dist $_) -PathType Leaf) })
+if ($distMissing.Count) {
+    $buildNeedsRefresh = $true
+    Write-Host "Application build output is missing SDK DLLs (missing: $($distMissing -join ', ')); run Install.cmd or build.ps1 to build and copy the project SDK files." -ForegroundColor Yellow
+} else {
+    $distDiffers = @($sdkFiles | Where-Object {
+        (Get-FileHash -LiteralPath (Join-Path $root "app\Setup Scripts\webview2\$_") -Algorithm SHA256).Hash -ne
+        (Get-FileHash -LiteralPath (Join-Path $dist $_) -Algorithm SHA256).Hash
+    })
+    if ($distDiffers.Count) {
+        $buildNeedsRefresh = $true
+        Write-Host "Application build output is stale for these WebView2 SDK DLLs: $($distDiffers -join ', '). Rebuild with Install.cmd or build.ps1 to pick them up." -ForegroundColor Yellow
+    } else {
+        Write-Host 'Application build output has picked up all three current project WebView2 SDK DLLs.' -ForegroundColor Green
+    }
+}
+
 # The WebView2 Runtime on this PC (updated by Windows / Microsoft Edge Update, not by this project).
 $runtime = foreach ($k in 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
                           'HKCU:\Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}') {
@@ -84,6 +116,7 @@ $runtime = @($runtime | Where-Object { $_ }) | Select-Object -First 1
 Write-Host "WebView2 Runtime on this PC: $(if ($runtime) { $runtime } else { 'not found' }) (kept up to date by Windows)"
 
 $updates = @($rows | Where-Object State -eq 'UPDATE AVAILABLE')
+if ($buildNeedsRefresh) { $updates += [pscustomobject]@{ Name = 'WebView2 application build output'; Current = 'stale'; Latest = $sdkVersions[0]; State = 'UPDATE AVAILABLE' } }
 $failed = @($rows | Where-Object State -eq 'could not check')
 Write-Host ''
 if ($updates.Count) {
@@ -97,6 +130,20 @@ if ($failed.Count) { Write-Host "Could not check: $(($failed | ForEach-Object Na
 # Remember the result for Install.cmd's reminder.
 $stateDir = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'MarkdownViewerWebView2'
 New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
+$webState = if ($sdkState.State -eq 'UPDATE AVAILABLE') { 'available' }
+            elseif ($sdkState.State -eq 'could not check') { 'unknown' }
+            elseif ($buildNeedsRefresh) { 'build-stale' }
+            else { 'current' }
+$statusPath = Join-Path $stateDir 'webview2-update-status.txt'
+$statusTemp = $statusPath + '.' + [Guid]::NewGuid().ToString('N') + '.new'
+$statusText = "checked=$([DateTime]::UtcNow.ToString('o'))`r`nstate=$webState`r`ncurrent=$($sdkState.Current)`r`nlatest=$($sdkState.Latest)`r`n"
+try {
+    $statusBytes = [Text.Encoding]::UTF8.GetBytes($statusText)
+    $statusStream = [IO.File]::Open($statusTemp, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try { $statusStream.Write($statusBytes, 0, $statusBytes.Length); $statusStream.Flush($true) } finally { $statusStream.Dispose() }
+    if ([IO.File]::Exists($statusPath)) { [IO.File]::Replace($statusTemp, $statusPath, $null) }
+    else { [IO.File]::Move($statusTemp, $statusPath) }
+} finally { if ([IO.File]::Exists($statusTemp)) { [IO.File]::Delete($statusTemp) } }
 $lines = @("checked=$((Get-Date).ToString('s'))", "complete=$(-not $failed.Count)") + @($updates | ForEach-Object { "update=$($_.Name) $($_.Current) -> $($_.Latest)" })
 [IO.File]::WriteAllLines((Join-Path $stateDir 'update-check.txt'), [string[]]$lines)
 exit $(if ($failed.Count) { 2 } elseif ($updates.Count) { 1 } else { 0 })

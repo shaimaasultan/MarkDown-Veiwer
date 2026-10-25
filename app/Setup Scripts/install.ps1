@@ -2,7 +2,7 @@
 #   checks the project folder against the record of the last install, records it again, builds and signs the
 #   program as you (build.ps1), then installs it with the Setup that build made - the same steps as on any
 #   other PC: one administrator prompt copies it to C:\Program Files\MarkdownViewerWebView2 (where no program
-#   running as you can change its files or put a DLL next to them) and adds the firewall rules that block its
+#   running as you can change its files or put a DLL next to them) and adds the viewer firewall rules that block its
 #   network traffic; then the .md / .markdown / .mdown / .mkd file association, Open with, Start menu entries
 #   and the Settings > Apps entry are made for your own account. No script file is installed: Program Files
 #   gets the program, Uninstall.exe and the project record (for Check-Source.cmd).
@@ -102,7 +102,7 @@ if ($LASTEXITCODE -ne 0) {
 
 # Install with the Setup just built (the same steps as on any other PC): one administrator prompt - for
 # Windows PowerShell, which runs only Setup's copy step from its checked bytes - copies the files into Program
-# Files and adds the firewall rules; then Setup registers the file types, Open with, Start menu and Settings >
+# Files and adds the viewer firewall rules; then Setup registers the file types, Open with, Start menu and Settings >
 # Apps for you. A new signing certificate, or open viewer windows, are asked about in a Yes/No box.
 $version = (Get-Item (Join-Path $dist $exeName)).VersionInfo.ProductVersion
 $setupFile = Join-Path $here "release\MarkdownViewer-Setup-$version.exe"

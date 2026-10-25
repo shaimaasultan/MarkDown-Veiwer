@@ -1,9 +1,9 @@
 # Markdown Viewer (WebView2)
 
-A preview-only Markdown viewer for Windows. Double-click a `.md` file and it opens in the app's own
-window with figures, math, code colouring and diagrams — and the app never runs code from a document
-and never goes online. It also shows CSV/TSV tables, JSON, Excel workbooks, XML, Jupyter notebooks, source
-code, config files and logs the same way: as data and text, never run.
+A Markdown and file viewer for Windows. Double-click a `.md` file and it opens in the app's own
+window with figures, math, code colouring and diagrams. The viewer never runs code from a document.
+It also shows CSV/TSV tables, JSON, Excel workbooks, XML, Jupyter notebooks, source code, config files
+and logs as data and text, never run.
 
 [![Watch the promo video](docs/promo-poster.png)](docs/promo.mp4)
 
@@ -62,7 +62,7 @@ Every point below, with where it is implemented and how it was tested, is listed
 
 - **Preview only.** Scripts, event handlers, `javascript:` links, frames, forms and plugins in rendered documents are removed before display and also blocked by the window's Content-Security-Policy. Supported text files are shown as text; HTML has an optional sanitized preview in a sandboxed frame with no script permission and `script-src 'none'`. CSS is parsed as styling data; imports and resource URLs are discarded, and external requests are blocked. No document code is executed.
 - **No network port.** The page lives at a private address (`https://mdviewer.example`) that exists only inside the app window; every request is answered by the program itself.
-- **Never goes online.** All libraries are bundled (`app\source\lib\`) and packed into the signed Content DLL. The WebView2 engine is started so that it cannot look up any internet address, without background networking, component updates, pings, SmartScreen checks or Microsoft-account sign-in. Pictures a document links to on the web are shown as *not loaded*. (Only the optional `Check-Updates.cmd`, when you run it, asks two fixed sites for version numbers - see [Checking for updates](#checking-for-updates).)
+- **Documents and the viewer page do not access the internet.** All libraries are bundled (`app\source\lib\`) and packed into the signed Content DLL. The WebView2 engine is started so it cannot look up internet addresses; linked web pictures are shown as *not loaded*. The viewer EXE stays firewall-blocked. A signed helper process checks only the stable WebView2 SDK version at `api.nuget.org`, at most once a day, so the header's WebView2 badge can show whether an update is available. It sends no document data and downloads nothing. The optional `Check-Updates.cmd` performs the fuller manual check, including bundled library versions; see [Checking for updates](#checking-for-updates).
 - **Links ask first.** Web and mail links open outside the app only after a question that shows the real address.
 - **Private.** The window runs InPrivate, so no history of the documents you view is kept. Camera, microphone, location, notifications and clipboard reading are refused; downloads come only from the viewer itself; the right-click menu has no Share, web capture or other browser extras.
 - **Scoped file access.** Each window keeps a resolved directory handle for its read boundary (the Git worktree root, or the parent of the document folder outside a worktree). Opened files are checked by their final handle path, so junctions and symbolic links cannot redirect reads outside that boundary. Very large files (over 50 MB of text, or 200 MB of media or Excel) are not opened. A document cannot draw over the viewer's own controls, and a diagram cannot add CSS of its own.
@@ -82,7 +82,8 @@ Every point below, with where it is implemented and how it was tested, is listed
 - **Genuine engine.** After the WebView2 engine starts, the app checks that it is Microsoft's `msedgewebview2.exe`, signed and under Program Files (which only an administrator can change); otherwise no document is shown.
 - **No developer access.** Developer tools are off; the app refuses to show documents if WebView2 remote debugging has been switched on, or if it cannot check.
 - **Safe install.** The app is installed in Program Files, where only an administrator can change it, by Setup (also what `Install.cmd` runs). Only the copy step runs with administrator rights: Windows PowerShell from System32 with a short readable command - what the administrator prompt's "Show more details" shows - that runs only the copy step from Setup's bytes after checking their SHA-256, so a swapped Setup never runs and nothing is started elevated from the Downloads folder. It trusts nothing it is handed: it works out the folder itself, checks every file's SHA-256 and signature in a staging folder only administrators can change, and writes nothing into your folders. No script file is installed. All scripts use only Windows PowerShell's own modules (limited with plain text before any command runs) and start PowerShell by full path; neither the build nor the installer runs from an administrator window. See [Install](#install).
-- **Firewall rules with every install.** Setup's administrator step adds two Windows Firewall rules that block all traffic in and out of the installed `MarkdownViewerWebView2.exe` (it takes no path from outside, so they can only ever be made for this app); `Uninstall.exe` removes them. They do not cover the WebView2 engine (`msedgewebview2.exe`), which Windows shares with other apps.
+- **Viewer firewall rules.** Setup blocks inbound and outbound traffic for the installed `MarkdownViewerWebView2.exe` on Domain, Private and Public profiles; metered connections use their assigned profile. After installation it checks the exact rule names, executable path, direction, block action, enabled state, all-profile mask, unrestricted protocol/address/port/interface scope and that Windows Firewall is enabled for all three profiles. The runtime status badge only reports a full block when it can verify those settings; otherwise it reports the rules as incomplete, firewall off, or status unknown. `Uninstall.exe` removes only the viewer's rules. They do not cover the shared WebView2 engine (`msedgewebview2.exe`). The viewer has no Python editor or runner; Python files are displayed as text and never executed.
+- **Optional Python firewall tool.** `app\Setup Scripts\cmd\Python-Firewall.cmd` is a separate, manual tool; the installer neither includes nor runs it. Run it from a normal Command Prompt and choose Create, Check or Remove. Before requesting elevation, it checks the helper and launcher against the administrator-protected project record from the last install, then passes the verified helper bytes to elevated Windows PowerShell without reopening a project file. Create and Check refuse to claim success if Windows Firewall is off for any Domain, Private or Public profile, or if the rule is narrowed by profile, protocol, address, port or interface. It blocks outbound traffic for the first trusted Python Software Foundation-signed `python.exe` and `py.exe` found on that command prompt's `PATH`; the rules apply to every application using those exact executable paths. They remain after viewer uninstall until removed. Other Python installations and executable paths are not covered.
 - **Check the project folder.** Every `Install.cmd` install records the SHA-256 of every project file (all except `.git\`, `app\dist\` and `app\release\`) in Program Files, next to the program, where only an administrator can change the record. `app\Setup Scripts\cmd\Check-Source.cmd` lists every file changed, added or removed since the last install - also changes made by another program running as you. It runs the project's `app\Setup Scripts\check-source.ps1` only if that is exactly the copy the record lists (read once, SHA-256 checked, run from those bytes), so a changed checker cannot hide changes; it says so instead. `Install.cmd` runs the same check before it builds: if the folder changed since the last install, it lists the changes and builds only after you answer Y. The new record is taken before the build and compared again after it: if the sources change while building, nothing is installed. Run it before installing an update you did not expect: changes you made or pulled yourself show up too, so only unexplained ones are a warning.
 
 **What this does not cover.** Windows' administrator prompt is not a security boundary against programs
@@ -99,7 +100,7 @@ before then. `Install.cmd` warns once less than a year is left.
 - Windows 10 or 11 (64-bit)
 - Microsoft Edge WebView2 Runtime — included with Windows 11
 - .NET Framework 4.x — included with Windows; its C# compiler builds the app, nothing else to install
-- Administrator rights once per install or update (for the copy into Program Files and the firewall rules) and
+- Administrator rights once per install or update (for the copy into Program Files and the viewer firewall rules) and
   once to uninstall; on a standard account, Windows asks for an administrator's password
 
 ## Install
@@ -112,7 +113,7 @@ All double-click `.cmd` launchers are grouped in `app\Setup Scripts\cmd\`; Power
    same steps as on any other PC (see below): one administrator prompt copies it to
    `C:\Program Files\MarkdownViewerWebView2`, where only an administrator can change the program's files (no
    program running as you can replace them or put a DLL or `.config` file next to them), and adds the
-   firewall rules that block its network traffic; then Start menu entries, a Settings › Apps entry, the
+   firewall rules that block the viewer's network traffic; then Start menu entries, a Settings › Apps entry, the
    `.md` / `.markdown` / `.mdown` / `.mkd` file association and Open with for pictures, video, audio, tables and
    other data files (see Features) are made for your own account.
 3. If Windows asks which app to use the next time you open a `.md` file, pick **Markdown Viewer (WebView2)** and click **Always**.
@@ -130,7 +131,7 @@ Every install (and `app\Setup Scripts\build.ps1`) makes `app\release\MarkdownVie
 with the built program inside, for installing on another PC without building - or here, without the console
 window. Double-click it (not "Run as administrator"): a window with the logo shows the version, who signed it
 and whether the viewer is installed, with **Install** / **Update**, **Uninstall**, **Open the viewer** and
-**Close**; progress and questions appear in that window. Setup **installs, registers and adds the firewall
+**Close**; progress and questions appear in that window. Setup **installs, registers and adds the viewer's firewall
 rules**; `Uninstall.exe` does the opposite.
 
 - The files are resources of Setup, listed with their SHA-256 inside it, so Setup's signature covers them all.
@@ -143,11 +144,13 @@ rules**; `Uninstall.exe` does the opposite.
   from an environment variable), writes into a staging folder there that only administrators can change,
   checks every file's SHA-256, that the program, Content DLL and `Uninstall.exe` are signed by Setup's
   certificate and the WebView2 files by Microsoft, swaps the folders (a copy in use is never left half
-  replaced), and adds two Windows Firewall rules that block all traffic in and out of the installed
-  `MarkdownViewerWebView2.exe` (it takes no path from outside). It writes no log file.
+  replaced), and adds Windows Firewall rules that block all traffic in and out of the installed
+  `MarkdownViewerWebView2.exe`. Setup verifies local rule settings and policy state; effective policy can still differ under Windows policy. It writes no log file. Python network rules are not part of installation; use the separate manual `Python-Firewall.cmd` tool if wanted. Those rules apply only to the exact `python.exe` / `py.exe` paths and do not block programs launched by Python.
 - An installed copy signed by another certificate is replaced only after you answer Yes.
-- Afterwards Setup checks, as you, that Program Files holds exactly the files inside it and that both firewall
-  rules are there, then registers the file types, Open with, Start menu and Settings › Apps for your account.
+- Afterwards Setup checks, as you, that Program Files holds exactly the files inside it and verifies
+  both viewer firewall rules' names, path, direction, action, enabled state, profile mask and unrestricted scope,
+  plus Windows Firewall's state across all profiles and whether Windows allows local policy changes to take effect, then registers the
+  file types, Open with, Start menu and Settings › Apps for your account.
 - **No script file is installed.** Program Files holds the program, its Content DLL, the WebView2 files, the
   icon and `Uninstall.exe` - plus the project record `source-manifest.txt` (for `Check-Source.cmd`) when the
   Setup was made by `Install.cmd`, which puts it in Setup. It lists the project's file names and SHA-256 (no
@@ -162,7 +165,7 @@ rules**; `Uninstall.exe` does the opposite.
 ### Uninstall
 
 `Uninstall.exe`, installed next to the program and signed with the same certificate (built from
-`app\source\Setup.cs`), **uninstalls, unregisters and removes the firewall rules**. Start it from Settings › Apps ›
+`app\source\Setup.cs`), **uninstalls, unregisters and removes the viewer's firewall rules**. Start it from Settings › Apps ›
 Markdown Viewer (WebView2) › Uninstall (a window with Uninstall, Open the viewer and Close), with
 `app\Setup Scripts\cmd\Uninstall.cmd`, or with **Uninstall** in Setup (both without the window: `--uninstall`).
 
@@ -231,13 +234,17 @@ that could be swapped.
 & ".\app\Setup Scripts\cmd\Check-Updates.cmd"
 ```
 
-Shows whether a newer stable WebView2 SDK is out on nuget.org, and newer releases of the bundled libraries
-(marked, KaTeX, highlight.js, Mermaid) on the npm registry, next to the versions this project builds with -
-plus the WebView2 Runtime installed on your PC (which Windows keeps up to date). It only reports: nothing is
-downloaded or installed. The viewer itself never goes online; this script does only when you run it - HTTPS
-to `api.nuget.org` and `registry.npmjs.org` only, no redirects, a time and size limit on every answer, and
-only version numbers are read from them. `Install.cmd` reminds you (without going online) when the last check
-found updates, or when it is more than 30 days old.
+Shows whether newer stable WebView2 SDK DLLs are available on nuget.org, whether `app\dist` has picked up the
+SDK DLLs currently pinned in the project, and whether newer bundled libraries (marked, KaTeX, highlight.js,
+Mermaid) are available on the npm registry. It also reports the WebView2 Runtime installed on your PC, which
+Windows keeps up to date separately. An SDK update means review and refresh the three pinned SDK files, then
+rebuild and install; a stale `app\dist` means rebuild to copy the already-pinned DLLs. The checker only reports:
+nothing is downloaded or installed. It uses HTTPS to `api.nuget.org` and `registry.npmjs.org` only, follows no
+redirects, applies time and size limits, and reads only version numbers. The app's green WebView2 badge also
+checks the latest stable SDK automatically at most once per 24 hours, through a signed helper process that
+contacts only `api.nuget.org`; it downloads nothing and sends no document data. The viewer EXE remains
+firewall-blocked, and the WebView2 engine cannot access the internet. `Install.cmd` reminds you (without going
+online) when the last full manual check found updates, or when it is more than 30 days old.
 
 ### Updating the WebView2 SDK and libraries
 
@@ -262,7 +269,7 @@ The SDK files are pinned by SHA-256, so an update is a deliberate step:
    viewer test (below) and says "Do not install this" if it fails. A new major version can change how
    documents look - check a few before installing.
 3. Run `Install.cmd`. It lists the changed files since the last install and asks for Y; then run
-   `Check-Updates.cmd` again.
+`Check-Updates.cmd` again.
 
 ### Testing the viewer page
 
@@ -289,10 +296,12 @@ a new empty Edge profile that cannot look up any host name.
 | `app\source\Content.cs` | Resource-only `MarkdownViewerWebView2.Content.dll` that carries the page and the libraries |
 | `app\Setup Scripts\build.ps1` | Checks, compiles and signs the app into `app\dist\` |
 | `app\Setup Scripts\install.ps1` | `Install.cmd`: checks and records the project folder, builds (`build.ps1`) and installs with the Setup it made |
-| `app\source\Setup.cs` | Built twice by `build.ps1`: Setup (`app\release\MarkdownViewer-Setup-<version>.exe`, the signed program inside one signed file: installs, registers, adds the firewall rules) and `Uninstall.exe` (installed next to the program: the opposite) |
+| `app\source\Setup.cs` | Built twice by `build.ps1`: Setup (`app\release\MarkdownViewer-Setup-<version>.exe`, the signed program inside one signed file: installs, registers, adds and verifies the viewer firewall rules) and `Uninstall.exe` (installed next to the program: the opposite) |
 | `app\Setup Scripts\trust.ps1` | Optional certificate trust for the PC that builds (not installed) |
 | `app\Setup Scripts\check-source.ps1` | Records the project files' SHA-256 at install time (the record goes into Program Files) and compares the folder with it; `Check-Source.cmd` runs it only if it is exactly the recorded copy |
-| `app\Setup Scripts\check-updates.ps1` | Reports newer versions of the WebView2 SDK and the bundled libraries (only when you run it) |
+| `app\Setup Scripts\check-updates.ps1` | Manually reports newer versions of the WebView2 SDK and bundled libraries |
+| `app\Setup Scripts\webview2-update-agent.ps1` | Fixed-host SDK version check, embedded in the signed Content DLL and launched by the viewer at most once a day (never installed as a loose script) |
+| `app\Setup Scripts\python-firewall.ps1` and `cmd\Python-Firewall.cmd` | Optional manual tool to create, check or remove outbound firewall blocks for trusted Python executables found on PATH; checks local rules and ActiveStore; rules do not cover subprocesses; not packaged or run by Setup |
 | `app\Setup Scripts\update-libs.ps1` | Downloads, checks and replaces the bundled libraries in `app\source\` (plan first; asks before downloading; holds back releases under 7 days old) |
 | `app\Setup Scripts\test-viewer.ps1` | Tests the viewer page with the documents in `docs\test\fixtures\` (display, breakdown, nothing that could run code) |
 | `app\Setup Scripts\cmd\*.cmd` | Double-click launchers: `Install`, `Uninstall`, `Check-Source`, `Check-Updates`, `Update-Libraries`, `Test-Viewer`, `Trust-` / `Untrust-Certificate` |

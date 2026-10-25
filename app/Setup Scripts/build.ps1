@@ -141,6 +141,9 @@ if ($cscExit -ne 0) { throw "Compilation failed ($cscExit)." }
 
 # --- Compile the Content DLL: page files and lib\ as resources named by their path ("lib/katex/katex.min.js").
 $resources = @(foreach ($f in $pageFiles) { "/resource:`"$(Join-Path $srcDir $f)`",$f" })
+$updateAgent = Join-Path $PSScriptRoot 'webview2-update-agent.ps1'
+if (-not (Test-Path -LiteralPath $updateAgent -PathType Leaf)) { throw "WebView2 update check resource missing: $updateAgent" }
+$resources += "/resource:`"$updateAgent`",webview2-update-agent.ps1"
 $resources += Get-ChildItem (Join-Path $srcDir 'lib') -Recurse -File | ForEach-Object {
     $name = $_.FullName.Substring($srcDir.Length + 1).Replace('\', '/')
     "/resource:`"$($_.FullName)`",$name"

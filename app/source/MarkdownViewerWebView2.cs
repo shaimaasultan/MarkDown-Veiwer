@@ -57,6 +57,10 @@ static class Program
     const string ContentDll = "MarkdownViewerWebView2.Content.dll";
     static readonly string[] AppFiles = { "viewer.html", "viewer.js", "marked.min.js", "favicon_readme.png" };
     static readonly string[] MicrosoftFiles = { "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll", "WebView2Loader.dll" };
+    static readonly object updateCheckLock = new object();
+    static Process updateCheckWorker;
+    static DateTime updateCheckStartedUtc;
+    static bool updateCheckFailed;
 
     // Documents the viewer shows (listed in the file list): Markdown, tables, JSON, Excel, XML, notebooks, source
     // code, config and text. Every one of them is handed to the page as plain text (or, for .xlsx, as bytes the
@@ -238,6 +242,7 @@ static class Program
             }
         }
 
+        try { StartWebViewUpdateCheckIfDue(); } catch { }
         ViewerApp app = new ViewerApp();
         app.Open(DocScope.For(startFile));
         SingleInstance.Listen(app);
@@ -811,48 +816,97 @@ static class Program
     // Firewall (read-only). Nothing listens on the network, so no rules are needed. The block rules Setup adds
     // (and Uninstall.exe removes) make Windows refuse any traffic in or out of this program as well.
     const string FirewallGroup = "Markdown Viewer (WebView2)";
-    const string FirewallDetail = "Nothing listens on the network. Block rules (added by Setup, removed by Uninstall.exe) make Windows refuse any traffic in or out of MarkdownViewerWebView2.exe itself. They do not cover the WebView2 engine (msedgewebview2.exe), which Windows shares with other apps.";
+    const string FirewallDetail = "The viewer exposes no network port. When verified, its full-scope block rules make Windows refuse traffic in or out of MarkdownViewerWebView2.exe itself. Status checks Windows Firewall on all profiles and whether local policy changes are allowed; Group Policy can still affect effective firewall policy. The rules do not cover the WebView2 engine (msedgewebview2.exe), which Windows shares with other apps.";
 
     class FirewallStatus
     {
-        public bool FirewallOn = true, BlockIn, BlockOut;
+        public bool Readable, FirewallOn, LocalRulesAllowed, BlockIn, BlockOut, HasRules;
         public List<string> Rules = new List<string>();
-        public bool Blocked { get { return BlockIn && BlockOut; } }
-        public string Label { get { return Blocked ? "blocked in & out" : "no network port"; } }
+        public bool Blocked { get { return Readable && FirewallOn && LocalRulesAllowed && BlockIn && BlockOut; } }
+        public string Label
+        {
+            get
+            {
+                if (!Readable) return "status unknown";
+                if (!FirewallOn) return "Windows Firewall off";
+                if (Blocked) return "full-scope rules verified";
+                if (HasRules && !LocalRulesAllowed) return "local firewall rules overridden";
+                return HasRules ? "rules incomplete" : "no network port";
+            }
+        }
         public string Summary
         {
             get
             {
-                if (Blocked) return "Blocked in and out for MarkdownViewerWebView2.exe - and no network port";
+                if (!Readable) return "Windows Firewall status or rules could not be read";
+                if (!FirewallOn) return "Windows Firewall is off for at least one profile";
+                if (Blocked) return "Full-scope local block rules verified for MarkdownViewerWebView2.exe; effective Windows policy may differ - and no network port";
+                if (HasRules && !LocalRulesAllowed) return "Windows policy may prevent local firewall rules from taking effect";
                 if (BlockIn || BlockOut) return "Partly blocked (" + (BlockIn ? "incoming" : "outgoing") + " only) - no network port";
+                if (HasRules) return "Viewer firewall rules exist but do not prove a full block";
                 return "Not needed - no network port (block rules not added)";
             }
         }
     }
 
+    static bool FirewallAnyValue(object value, bool allowEmpty)
+    {
+        string text = Convert.ToString(value);
+        return (allowEmpty && string.IsNullOrWhiteSpace(text)) || text == "*" || string.Equals(text, "Any", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static bool IsFullViewerBlockRule(dynamic rule, string expectedName, string self, int direction)
+    {
+        try
+        {
+            return string.Equals(rule.Name as string, expectedName, StringComparison.OrdinalIgnoreCase) &&
+                   string.Equals(Path.GetFullPath(Environment.ExpandEnvironmentVariables(rule.ApplicationName as string)), self, StringComparison.OrdinalIgnoreCase) &&
+                   Convert.ToInt32(rule.Direction) == direction && Convert.ToInt32(rule.Action) == 0 &&
+                   Convert.ToBoolean(rule.Enabled) && Convert.ToInt32(rule.Profiles) == 0x7FFFFFFF &&
+                   Convert.ToInt32(rule.Protocol) == 256 &&
+                   FirewallAnyValue(rule.LocalAddresses, false) && FirewallAnyValue(rule.RemoteAddresses, false) &&
+                   FirewallAnyValue(rule.LocalPorts, true) && FirewallAnyValue(rule.RemotePorts, true) &&
+                   string.Equals(Convert.ToString(rule.InterfaceTypes), "All", StringComparison.OrdinalIgnoreCase);
+        }
+        catch { return false; }
+    }
+
     static FirewallStatus GetFirewallStatus()
     {
         FirewallStatus st = new FirewallStatus();
+        object fwPolicy = null;
         try
         {
-            dynamic fwPolicy = Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FwPolicy2"));
-            int prof = fwPolicy.CurrentProfileTypes;
+            fwPolicy = Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FwPolicy2"));
+            dynamic policy = fwPolicy;
+            int activeProfiles = Convert.ToInt32(policy.CurrentProfileTypes);
+            if (activeProfiles == 0) throw new InvalidOperationException("No active firewall profile could be read.");
+            // NET_FW_MODIFY_STATE_OK (0) means local rule changes can take effect.
+            st.LocalRulesAllowed = Convert.ToInt32(policy.LocalPolicyModifyState) == 0;
+            st.FirewallOn = true;
             foreach (int bit in new[] { 1, 2, 4 })
-                if ((prof & bit) != 0 && !(bool)fwPolicy.FirewallEnabled[bit]) st.FirewallOn = false;
-            // Only enabled block rules in this app's group that point at this very program count.
+                if (!Convert.ToBoolean(policy.FirewallEnabled[bit])) st.FirewallOn = false;
             string self = Path.GetFullPath(Application.ExecutablePath);
-            foreach (dynamic r in fwPolicy.Rules)
+            foreach (object item in (System.Collections.IEnumerable)policy.Rules)
             {
-                string group = r.Grouping as string, app = r.ApplicationName as string;
-                if (group != FirewallGroup || string.IsNullOrEmpty(app)) continue;
-                if (!string.Equals(Path.GetFullPath(Environment.ExpandEnvironmentVariables(app)), self, StringComparison.OrdinalIgnoreCase)) continue;
-                if (!(bool)r.Enabled || (int)r.Action != 0) continue;          // 0 = block
-                if ((int)r.Direction == 1) st.BlockIn = true;                   // 1 = incoming
-                else if ((int)r.Direction == 2) st.BlockOut = true;             // 2 = outgoing
-                st.Rules.Add((string)r.Name);
+                try
+                {
+                    dynamic rule = item;
+                    string group = rule.Grouping as string;
+                    if (group != FirewallGroup) continue;
+                    string name = rule.Name as string;
+                    if (name != FirewallGroup + " - block incoming" && name != FirewallGroup + " - block outgoing") continue;
+                    st.HasRules = true;
+                    if (!string.IsNullOrEmpty(name)) st.Rules.Add(name);
+                    if (IsFullViewerBlockRule(rule, FirewallGroup + " - block incoming", self, 1)) st.BlockIn = true;
+                    if (IsFullViewerBlockRule(rule, FirewallGroup + " - block outgoing", self, 2)) st.BlockOut = true;
+                }
+                finally { if (System.Runtime.InteropServices.Marshal.IsComObject(item)) System.Runtime.InteropServices.Marshal.ReleaseComObject(item); }
             }
+            st.Readable = true;
         }
-        catch { }
+        catch { st.Readable = false; }
+        finally { if (fwPolicy != null && System.Runtime.InteropServices.Marshal.IsComObject(fwPolicy)) System.Runtime.InteropServices.Marshal.ReleaseComObject(fwPolicy); }
         return st;
     }
 
@@ -861,10 +915,159 @@ static class Program
         FirewallStatus st = GetFirewallStatus();
         StringBuilder rules = new StringBuilder();
         foreach (string r in st.Rules) { if (rules.Length > 0) rules.Append(','); rules.Append(Json(r)); }
-        return "{\"readable\":true,\"firewallOn\":" + (st.FirewallOn ? "true" : "false") +
-               ",\"state\":" + Json(st.Blocked ? "blocked" : "nonetwork") +
+        string state = !st.Readable ? "unknown" : !st.FirewallOn ? "disabled" : st.Blocked ? "blocked" : st.HasRules ? "partial" : "nonetwork";
+        return "{\"readable\":" + (st.Readable ? "true" : "false") + ",\"firewallOn\":" + (st.FirewallOn ? "true" : "false") + ",\"localRulesAllowed\":" + (st.LocalRulesAllowed ? "true" : "false") +
+               ",\"state\":" + Json(state) +
                ",\"label\":" + Json(st.Label) + ",\"summary\":" + Json(st.Summary) +
                ",\"detail\":" + Json(FirewallDetail) + ",\"rules\":[" + rules + "]}";
+    }
+
+    // The viewer EXE remains network-blocked. Once a day, a signed Content DLL resource runs in the
+    // Microsoft-signed Windows PowerShell process and checks only the fixed NuGet WebView2 SDK endpoint.
+    static string WebViewUpdateStatusPath()
+    {
+        return Path.Combine(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), DataFolder), "webview2-update-status.txt");
+    }
+
+    static string WebViewSdkVersion()
+    {
+        try { return FileVersionInfo.GetVersionInfo(Path.Combine(appDir, MicrosoftFiles[0])).FileVersion; }
+        catch { return null; }
+    }
+
+    static Dictionary<string, string> ReadWebViewUpdateStatus()
+    {
+        Dictionary<string, string> values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            string path = WebViewUpdateStatusPath();
+            if (!File.Exists(path) || new FileInfo(path).Length > 4096) return values;
+            foreach (string line in File.ReadAllLines(path, Encoding.UTF8))
+            {
+                int eq = line.IndexOf('=');
+                if (eq <= 0) continue;
+                string key = line.Substring(0, eq), value = line.Substring(eq + 1);
+                if (key == "checked" || key == "state" || key == "current" || key == "latest") values[key] = value;
+            }
+        }
+        catch { }
+        return values;
+    }
+
+    static void StartWebViewUpdateCheckIfDue()
+    {
+        lock (updateCheckLock)
+        {
+            if (updateCheckWorker != null) return;
+            string current = WebViewSdkVersion();
+            Dictionary<string, string> old = ReadWebViewUpdateStatus();
+            string savedCurrent, savedState, savedChecked;
+            DateTime checkedAt = DateTime.MinValue;
+            bool sameBuild = old.TryGetValue("current", out savedCurrent) && string.Equals(current, savedCurrent, StringComparison.OrdinalIgnoreCase);
+            bool validTime = old.TryGetValue("checked", out savedChecked) && DateTime.TryParse(savedChecked, null,
+                System.Globalization.DateTimeStyles.RoundtripKind, out checkedAt) && checkedAt <= DateTime.UtcNow.AddMinutes(5);
+            old.TryGetValue("state", out savedState);
+            TimeSpan age = validTime ? DateTime.UtcNow - checkedAt : TimeSpan.MaxValue;
+            bool recentlyChecked = sameBuild && ((savedState == "current" || savedState == "available")
+                ? age < TimeSpan.FromHours(24)
+                : savedState == "unknown" && age < TimeSpan.FromHours(1));
+            if (recentlyChecked) return;
+
+            try
+            {
+                byte[] source = ContentFile("webview2-update-agent.ps1");
+                if (source == null || string.IsNullOrEmpty(current)) { updateCheckFailed = true; return; }
+                string powershell = Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe");
+                SignatureInfo psSignature = Signature(powershell);
+                if (!psSignature.Trusted || psSignature.Subject == null || psSignature.Subject.IndexOf("O=Microsoft Corporation,", StringComparison.Ordinal) < 0)
+                { updateCheckFailed = true; return; }
+                string script = Encoding.UTF8.GetString(source).TrimStart('\uFEFF');
+                string encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+                string statusPath = WebViewUpdateStatusPath();
+                Directory.CreateDirectory(Path.GetDirectoryName(statusPath));
+                ProcessStartInfo psi = new ProcessStartInfo(powershell,
+                    "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " + encoded);
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                psi.WindowStyle = ProcessWindowStyle.Hidden;
+                psi.WorkingDirectory = Environment.SystemDirectory;
+                psi.EnvironmentVariables["MDV_WEBVIEW2_STATUS"] = statusPath;
+                psi.EnvironmentVariables["MDV_WEBVIEW2_CURRENT"] = current;
+                updateCheckStartedUtc = DateTime.UtcNow;
+                updateCheckFailed = false;
+                updateCheckWorker = Process.Start(psi);
+                if (updateCheckWorker == null) updateCheckFailed = true;
+                else
+                {
+                    Process worker = updateCheckWorker;
+                    System.Threading.ThreadPool.QueueUserWorkItem(delegate(object ignored)
+                    {
+                        bool exited = false;
+                        try { exited = worker.WaitForExit(30000); } catch { }
+                        if (exited) return;
+                        lock (updateCheckLock)
+                        {
+                            if (!object.ReferenceEquals(updateCheckWorker, worker)) return;
+                            try { if (!worker.HasExited) worker.Kill(); worker.WaitForExit(2000); } catch { }
+                            try { worker.Dispose(); } catch { }
+                            updateCheckWorker = null;
+                            updateCheckFailed = true;
+                        }
+                    });
+                }
+            }
+            catch { updateCheckFailed = true; }
+        }
+    }
+
+    static string WebViewUpdateJson()
+    {
+        Dictionary<string, string> status = ReadWebViewUpdateStatus();
+        string state = "unknown", savedCurrent, savedLatest, savedChecked;
+        string current = WebViewSdkVersion();
+        status.TryGetValue("current", out savedCurrent);
+        status.TryGetValue("latest", out savedLatest);
+        status.TryGetValue("checked", out savedChecked);
+        lock (updateCheckLock)
+        {
+            if (updateCheckWorker != null)
+            {
+                try
+                {
+                    if (!updateCheckWorker.HasExited && DateTime.UtcNow - updateCheckStartedUtc > TimeSpan.FromSeconds(30))
+                    {
+                        updateCheckWorker.Kill();
+                        updateCheckWorker.WaitForExit(2000);
+                        updateCheckWorker.Dispose();
+                        updateCheckWorker = null;
+                        updateCheckFailed = true;
+                    }
+                    else if (!updateCheckWorker.HasExited) state = "checking";
+                    else
+                    {
+                        int exitCode = updateCheckWorker.ExitCode;
+                        updateCheckWorker.Dispose();
+                        updateCheckWorker = null;
+                        DateTime wroteAt;
+                        bool wroteThisRun = status.TryGetValue("checked", out savedChecked) && DateTime.TryParse(savedChecked, null,
+                            System.Globalization.DateTimeStyles.RoundtripKind, out wroteAt) && wroteAt >= updateCheckStartedUtc.AddSeconds(-2);
+                        if (exitCode != 0 || !wroteThisRun) updateCheckFailed = true;
+                    }
+                }
+                catch { updateCheckFailed = true; updateCheckWorker = null; }
+            }
+            if (state != "checking" && !updateCheckFailed && string.Equals(current, savedCurrent, StringComparison.OrdinalIgnoreCase))
+            {
+                if (savedStateIs(status, "current") || savedStateIs(status, "available")) state = status["state"];
+            }
+        }
+        return "{\"state\":" + Json(state) + ",\"current\":" + Json(current) + ",\"latest\":" + Json(savedLatest) + ",\"checked\":" + Json(savedChecked) + "}";
+    }
+
+    static bool savedStateIs(Dictionary<string, string> status, string value)
+    {
+        string state;
+        return status.TryGetValue("state", out state) && string.Equals(state, value, StringComparison.OrdinalIgnoreCase);
     }
 
     // ------------------------------------------------------------------ about
@@ -914,8 +1117,9 @@ static class Program
         sb.AppendLine("request is answered by the program itself. Developer tools are off, and the app will not");
         sb.AppendLine("show documents if WebView2 debugging has been switched on.");
         sb.AppendLine();
-        sb.AppendLine("NEVER GOES ONLINE: the WebView2 engine cannot look up internet addresses, and the window");
-        sb.AppendLine("loads nothing from the web - pictures or media a document links to online are not shown.");
+        sb.AppendLine("NO DOCUMENT NETWORK ACCESS: the WebView2 engine cannot look up internet addresses, and the window");
+        sb.AppendLine("loads no linked web pictures or media. A signed helper checks only the WebView2 SDK version");
+        sb.AppendLine("at api.nuget.org at most once a day; it sends no document data and downloads nothing.");
         sb.AppendLine("Web and mail links open outside this window only after you have seen the real address.");
         sb.AppendLine();
         sb.AppendLine("PRIVATE: the window runs InPrivate - no history of the documents you view is kept. No camera,");
@@ -937,7 +1141,7 @@ static class Program
                           : "made on this PC, not in Windows' trusted list (Trust-Certificate.cmd adds it)"));
             sb.AppendLine();
         }
-        sb.AppendLine("LIBRARIES (all bundled - this app never needs the internet):");
+        sb.AppendLine("LIBRARIES (all bundled - document rendering needs no internet):");
         foreach (Library lib in Libraries())
         {
             sb.AppendLine();
@@ -958,7 +1162,7 @@ static class Program
         sb.AppendLine("- Made using: GPT-5 (original viewer); extended and tested with Claude Code (Anthropic)");
         sb.AppendLine();
         FirewallStatus fw = GetFirewallStatus();
-        sb.AppendLine("FIREWALL: " + fw.Summary + (fw.FirewallOn ? " (Windows Firewall is on)" : " (Windows Firewall is OFF)"));
+        sb.AppendLine("FIREWALL: " + fw.Summary + (fw.Readable ? (fw.FirewallOn ? " (Windows Firewall is on)" : " (Windows Firewall is OFF)") : " (status could not be read)"));
         foreach (string r in fw.Rules) sb.AppendLine("     rule: " + r);
         sb.AppendLine("     " + FirewallDetail);
         sb.AppendLine();
@@ -1011,12 +1215,13 @@ static class Program
         marker.Padding = new Padding(10, 0, 10, 0);
         marker.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
         marker.Font = new System.Drawing.Font("Segoe UI Semibold", 10.5f);
-        marker.ForeColor = System.Drawing.Color.FromArgb(0x1A, 0x7F, 0x37);
-        marker.BackColor = System.Drawing.Color.FromArgb(0xDA, 0xFB, 0xE1);
+        bool fwOkay = fw.Readable && fw.FirewallOn && (!fw.HasRules || fw.Blocked);
+        marker.ForeColor = fwOkay ? System.Drawing.Color.FromArgb(0x1A, 0x7F, 0x37) : System.Drawing.Color.FromArgb(0xCF, 0x22, 0x2E);
+        marker.BackColor = fwOkay ? System.Drawing.Color.FromArgb(0xDA, 0xFB, 0xE1) : System.Drawing.Color.FromArgb(0xFF, 0xEB, 0xE9);
         marker.BorderStyle = BorderStyle.FixedSingle;
         marker.UseMnemonic = false;                     // show "&" as text (not a keyboard-shortcut marker)
         marker.Text = "\u25CF  Firewall: " + fw.Label + "   \u2014   " + fw.Summary +
-                      (fw.FirewallOn ? " \u00B7 Windows Firewall on" : " \u00B7 Windows Firewall OFF");
+                      (fw.Readable ? (fw.FirewallOn ? " \u00B7 Windows Firewall on" : " \u00B7 Windows Firewall OFF") : " \u00B7 status unknown");
         ToolTip tip = new ToolTip();
         tip.SetToolTip(marker, FirewallDetail);
         marker.AccessibleName = "Firewall: " + fw.Label;
@@ -1433,6 +1638,8 @@ static class Program
 
         if (rest == "firewall")
             Send(stream, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(FirewallJson()), null, headOnly);
+        else if (rest == "webview2-update")
+            Send(stream, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(WebViewUpdateJson()), null, headOnly);
         else if (rest == "pref")
         {
             foreach (Match m in Regex.Matches(q >= 0 ? target.Substring(q + 1) : "", @"(?:^|&)(\w+)=(\w+)"))

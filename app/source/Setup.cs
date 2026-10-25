@@ -6,7 +6,7 @@
 //     into Program Files), registers (file types, Open with, Start menu, Settings > Apps) and adds the firewall
 //     rules that block the installed program's network traffic. Install.cmd installs through it too (--install).
 //   - Uninstall.exe (no files inside): installed next to the program, the opposite - it uninstalls,
-//     unregisters and removes the firewall rules. Only the copy in Program Files (only an administrator can
+//     unregisters and removes the viewer firewall rules. Only the copy in Program Files (only an administrator can
 //     change it) runs. So no .ps1 file is installed.
 //
 // Install with Setup (run as the user):
@@ -18,9 +18,9 @@
 //     where a planted DLL could be loaded with it, and a file swapped after the check never runs (exit 8);
 //   - Place writes the files into a staging folder inside Program Files (only administrators can change it),
 //     checks each one's SHA-256, that the program, Content DLL and Uninstall.exe are signed by this file's
-//     certificate and the WebView2 files by Microsoft, swaps the folders and adds the firewall rules for the
+//     certificate and the WebView2 files by Microsoft, swaps the folders and adds the viewer firewall rules for the
 //     installed program (exit codes below);
-//   - Setup then makes the user's entries (Register) and checks that the rules are in place.
+//   - Setup then makes the user's entries (Register) and verifies the viewer firewall rules' actual settings.
 //
 // Build: build.ps1 (after the program).
 
@@ -270,8 +270,13 @@ public static class Setup
                 string line;
                 while ((line = r.ReadLine()) != null)
                 {
-                    Match m = Regex.Match(line, @"^([A-Za-z0-9_.\-]+)=([0-9A-F]{64})$");
-                    if (m.Success) want[m.Groups[1].Value] = m.Groups[2].Value;
+                    Match m = Regex.Match(line, @"^([A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)*)=([0-9A-F]{64})$");
+                    if (m.Success && m.Groups[1].Value.Split('/').All(part => part != "." && part != ".."))
+                    {
+                        string key = m.Groups[1].Value.Replace('/', '\\');
+                        if (want.ContainsKey(key)) return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                        want[key] = m.Groups[2].Value;
+                    }
                 }
             }
         }
@@ -319,16 +324,22 @@ public static class Setup
             if (want.Count == 0) return 7;
             foreach (KeyValuePair<string, string> f in want)
             {
-                byte[] b = Payload(f.Key);
+                byte[] b = Payload(f.Key.Replace('\\', '/'));
                 if (b == null || Sha256(b) != f.Value) return Fail(stage, 7);
-                File.WriteAllBytes(Path.Combine(stage, f.Key), b);
+                string target = Path.GetFullPath(Path.Combine(stage, f.Key));
+                if (!target.StartsWith(stage.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase)) return Fail(stage, 7);
+                Directory.CreateDirectory(Path.GetDirectoryName(target));
+                File.WriteAllBytes(target, b);
             }
             // Checked again where they now are, a folder only administrators can change.
-            string[] staged = Directory.GetFileSystemEntries(stage);
+            foreach (string dir in Directory.GetDirectories(stage, "*", SearchOption.AllDirectories))
+                if ((File.GetAttributes(dir) & FileAttributes.ReparsePoint) != 0) return Fail(stage, 7);
+            string[] staged = Directory.GetFiles(stage, "*", SearchOption.AllDirectories);
             if (staged.Length != want.Count) return Fail(stage, 7);
             foreach (string f in staged)
             {
-                string n = Path.GetFileName(f);
+                if ((File.GetAttributes(f) & FileAttributes.ReparsePoint) != 0) return Fail(stage, 7);
+                string n = f.Substring(stage.TrimEnd('\\').Length + 1);
                 if (!want.ContainsKey(n) || !File.Exists(f) || Sha256(f) != want[n]) return Fail(stage, 7);
             }
             foreach (string f in new[] { ExeName, ContentDll, UninstallerName })
@@ -416,9 +427,9 @@ public static class Setup
             }
         }
 
-        ui.Log("Copying the program to " + dest + " and adding its firewall rules ...");
+        ui.Log("Copying the program to " + dest + " and adding the viewer firewall rules ...");
         ui.Log("Windows asks for administrator rights for Windows PowerShell: it runs only this Setup's own copy step (files and\r\n" +
-               "firewall rules), from this file's checked bytes (\"Show more details\" shows the command, this file's path and SHA-256).");
+               "viewer firewall rules), from this file's checked bytes (\"Show more details\" shows the command, this file's path and SHA-256).");
         string bootstrap = string.Join("; ", new[]
         {
             "$env:PSModulePath = $PSHOME + '\\Modules'",
@@ -455,8 +466,28 @@ public static class Setup
             string p = Path.Combine(dest, f.Key);
             if (!File.Exists(p) || Sha256(p) != f.Value) differs.Add(f.Key);
         }
-        foreach (string e in Directory.GetFileSystemEntries(dest))
-            if (!want.ContainsKey(Path.GetFileName(e)) && Path.GetFileName(e) != RecordName) differs.Add(Path.GetFileName(e));
+        HashSet<string> expectedDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string name in want.Keys)
+        {
+            string parent = Path.GetDirectoryName(name);
+            while (!string.IsNullOrEmpty(parent)) { expectedDirs.Add(parent); parent = Path.GetDirectoryName(parent); }
+        }
+        try
+        {
+            foreach (string dir in Directory.GetDirectories(dest, "*", SearchOption.AllDirectories))
+            {
+                if ((File.GetAttributes(dir) & FileAttributes.ReparsePoint) != 0) { differs.Add(dir); continue; }
+                string rel = dir.Substring(dest.TrimEnd('\\').Length + 1);
+                if (!expectedDirs.Contains(rel)) differs.Add(rel);
+            }
+            foreach (string file in Directory.GetFiles(dest, "*", SearchOption.AllDirectories))
+            {
+                string rel = file.Substring(dest.TrimEnd('\\').Length + 1);
+                if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0 ||
+                    (!want.ContainsKey(rel) && !(string.Equals(rel, RecordName, StringComparison.OrdinalIgnoreCase) && !want.ContainsKey(RecordName)))) differs.Add(rel);
+            }
+        }
+        catch (Exception ex) { differs.Add("could not verify installed file tree: " + ex.GetType().Name); }
         if (!want.ContainsKey(RecordName) && File.Exists(Path.Combine(dest, RecordName)))
             ui.Log("Kept the project record of the last Install.cmd (" + RecordName + ", for Check-Source.cmd).");
         if (differs.Count > 0) ui.Log("WARNING: in " + dest + " these do not match this Setup: " + string.Join(", ", differs));
@@ -464,9 +495,9 @@ public static class Setup
 
         // Firewall rules (made by the administrator step) and the user's entries (file types, Open with,
         // Start menu, Settings > Apps).
-        List<string> rules = FirewallRules();
-        if (rules.Count == 2) ui.Log("Firewall: all network traffic in and out of " + installedExe + " is blocked (2 rules).");
-        else ui.Log("WARNING: the firewall rules for " + installedExe + " could not be checked or added (" + rules.Count + " found).");
+        List<string> firewallProblems = VerifyViewerFirewallRules(installedExe);
+        if (firewallProblems.Count == 0) ui.Log("Firewall: verified inbound and outbound block rules for " + installedExe + " on Domain, Private and Public profiles (metered networks use their assigned profile).");
+        else ui.Log("WARNING: viewer firewall rules could not be verified: " + string.Join("; ", firewallProblems));
         int registered = Register(ui.Log);
         if (registered != 0) ui.Log("Some Windows entries could not be set (see above).");
 
@@ -731,6 +762,7 @@ public static class Setup
 
     static object Invoke(object o, string method, params object[] a) { return o.GetType().InvokeMember(method, BindingFlags.InvokeMethod, null, o, a); }
     static object Get(object o, string name) { return o.GetType().InvokeMember(name, BindingFlags.GetProperty, null, o, null); }
+    static object GetIndexed(object o, string name, params object[] indices) { return o.GetType().InvokeMember(name, BindingFlags.GetProperty, null, o, indices); }
     static void Set(object o, string name, object value) { o.GetType().InvokeMember(name, BindingFlags.SetProperty, null, o, new[] { value }); }
 
     // ------------------------------------------------------------------ uninstall (Uninstall.exe)
@@ -928,10 +960,76 @@ public static class Setup
             Set(rule, "Direction", dir);
             Set(rule, "Action", 0);                 // NET_FW_ACTION_BLOCK
             Set(rule, "Grouping", FirewallGroup);
-            Set(rule, "Profiles", 0x7FFFFFFF);      // all profiles
+            Set(rule, "Profiles", 0x7FFFFFFF);      // all profiles: Domain, Private and Public (including metered networks)
+            Set(rule, "Protocol", 256);              // NET_FW_IP_PROTOCOL_ANY
+            Set(rule, "LocalAddresses", "*");
+            Set(rule, "RemoteAddresses", "*");
+            Set(rule, "InterfaceTypes", "All");
             Set(rule, "Enabled", true);
             Invoke(rules, "Add", rule);
         }
+    }
+
+    // Verify the actual rule properties rather than treating the number of rules in a group as proof.
+    static List<string> VerifyViewerFirewallRules(string program)
+    {
+        List<string> problems = new List<string>();
+        string[] names = { FirewallGroup + " - block incoming", FirewallGroup + " - block outgoing" };
+        Dictionary<string, int> found = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (string name in names) found[name] = 0;
+        object policy = null, rules = null;
+        try
+        {
+            policy = Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FwPolicy2"));
+            int activeProfiles = Convert.ToInt32(Get(policy, "CurrentProfileTypes"));
+            if (activeProfiles == 0) problems.Add("the active Windows Firewall profile could not be read");
+            // NET_FW_MODIFY_STATE_OK (0) means local firewall rules can take effect.
+            if (Convert.ToInt32(Get(policy, "LocalPolicyModifyState")) != 0)
+                problems.Add("Windows policy may prevent local firewall rules from taking effect");
+            foreach (int bit in new[] { 1, 2, 4 })
+                if (!Convert.ToBoolean(GetIndexed(policy, "FirewallEnabled", bit))) problems.Add("Windows Firewall is off for profile " + bit);
+            rules = Get(policy, "Rules");
+            foreach (object rule in (System.Collections.IEnumerable)rules)
+            {
+                try
+                {
+                    string name = Get(rule, "Name") as string;
+                    if (name == null || !found.ContainsKey(name) || !string.Equals(Get(rule, "Grouping") as string, FirewallGroup, StringComparison.Ordinal)) continue;
+                    found[name]++;
+                    int direction = Convert.ToInt32(Get(rule, "Direction"));
+                    bool expectedIncoming = string.Equals(name, names[0], StringComparison.OrdinalIgnoreCase);
+                    if (!SamePath(Get(rule, "ApplicationName") as string, program)) problems.Add(name + " has the wrong executable path");
+                    if (direction != (expectedIncoming ? 1 : 2)) problems.Add(name + " has the wrong direction");
+                    if (Convert.ToInt32(Get(rule, "Action")) != 0) problems.Add(name + " is not a block rule");
+                    if (Convert.ToInt32(Get(rule, "Profiles")) != 0x7FFFFFFF) problems.Add(name + " does not cover all network profiles");
+                    if (!Convert.ToBoolean(Get(rule, "Enabled"))) problems.Add(name + " is disabled");
+                    if (Convert.ToInt32(Get(rule, "Protocol")) != 256) problems.Add(name + " is limited to a protocol");
+                    if (!FirewallAnyValue(Get(rule, "LocalAddresses"), false) || !FirewallAnyValue(Get(rule, "RemoteAddresses"), false)) problems.Add(name + " is limited to an address scope");
+                    if (!FirewallAnyValue(Get(rule, "LocalPorts"), true) || !FirewallAnyValue(Get(rule, "RemotePorts"), true)) problems.Add(name + " is limited to a port scope");
+                    if (!string.Equals(Convert.ToString(Get(rule, "InterfaceTypes")), "All", StringComparison.OrdinalIgnoreCase)) problems.Add(name + " is limited to an interface type");
+                }
+                catch (Exception ex) { problems.Add("a viewer rule could not be read (" + ex.GetType().Name + ")"); }
+                finally { if (Marshal.IsComObject(rule)) Marshal.ReleaseComObject(rule); }
+            }
+        }
+        catch (Exception ex) { problems.Add("Windows Firewall rules could not be read (" + ex.GetType().Name + ")"); }
+        finally
+        {
+            if (rules != null && Marshal.IsComObject(rules)) Marshal.ReleaseComObject(rules);
+            if (policy != null && Marshal.IsComObject(policy)) Marshal.ReleaseComObject(policy);
+        }
+        foreach (string name in names)
+        {
+            if (found[name] == 0) problems.Add(name + " is missing");
+            else if (found[name] > 1) problems.Add(name + " is duplicated");
+        }
+        return problems.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    static bool FirewallAnyValue(object value, bool allowEmpty)
+    {
+        string text = Convert.ToString(value);
+        return (allowEmpty && string.IsNullOrWhiteSpace(text)) || text == "*" || string.Equals(text, "Any", StringComparison.OrdinalIgnoreCase);
     }
 
     // This app's firewall rules (read-only; works without administrator rights).
