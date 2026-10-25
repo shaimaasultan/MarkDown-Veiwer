@@ -1,4 +1,4 @@
-// Markdown Folder Viewer — page logic (kept out of viewer.html so the page can forbid inline scripts).
+// ReadSafe Viewer — page logic (kept out of viewer.html so the page can forbid inline scripts).
 "use strict";
 
 document.getElementById('year').textContent = new Date().getFullYear();
@@ -24,7 +24,7 @@ let folderSearchOnly = false;
 let folderSearchComplete = false;
 let folderSearchQueryKey = null;
 
-// App mode: shown by MarkdownViewerWebView2.exe at its private address, which hands out files from disk
+// App mode: shown by ReadSafeViewer.exe at its private address, which hands out files from disk
 // at <token>/fs/<path>.
 const APP = location.hostname === 'mdviewer.example' && /\/app\/[^/]*$/.test(location.pathname);
 const apiBase = APP ? location.pathname.replace(/app\/[^/]*$/, '') : '';
@@ -740,7 +740,7 @@ function renderDoc({ anchor = null, keepScroll = false } = {}) {
     buildImageList();
     buildLinkList();
     document.getElementById('docPath').textContent = currentPath + (isEdited() ? '  •  edited (unsaved)' : '');
-    document.title = `${isEdited() ? '• ' : ''}${currentPath.split('/').pop()} — Markdown Folder Viewer`;
+    document.title = `${isEdited() ? '• ' : ''}${currentPath.split('/').pop()} — ReadSafe Viewer`;
     pdfBtn.disabled = false;
     pdfBtn.title = 'Print or save the rows drawn on the page as a PDF';
     findBtn.disabled = false;
@@ -786,7 +786,7 @@ function renderDoc({ anchor = null, keepScroll = false } = {}) {
   });
   if (!findBar.hidden) runFind(keepScroll);
 
-  document.title = `${isEdited() ? '• ' : ''}${currentPath.split('/').pop()} — Markdown Folder Viewer`;
+  document.title = `${isEdited() ? '• ' : ''}${currentPath.split('/').pop()} — ReadSafe Viewer`;
   pdfBtn.disabled = false;
   pdfBtn.title = 'Print or save this document as a PDF';
   copyBtn.disabled = false;
@@ -7761,7 +7761,7 @@ async function exportHtml() {
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="generator" content="Markdown Viewer (WebView2)">
+<meta name="generator" content="ReadSafe Viewer">
 <title>${esc(base)}</title>
 <style>${katexCss}</style>
 <style>${hlCss}</style>
@@ -7912,7 +7912,7 @@ const LIBRARIES = [
     loaded: () => typeof window.mermaid?.render === 'function' }
 ];
 
-const APP_EXE = 'MarkdownViewerWebView2.exe';
+const APP_EXE = 'ReadSafeViewer.exe';
 let appInfo = null;   // set by initApp() inside the app
 
 // The browser showing the page when it was opened directly (inside the app, the WebView2 Runtime version is used).
@@ -7939,7 +7939,7 @@ function builtWith() {
       items: appInfo && appInfo.webview2Sdk ? [`WebView2 SDK ${appInfo.webview2Sdk} (Microsoft.Web.WebView2) — built into ${APP_EXE}`] : [] },
     { name: 'Installer', detail: 'PowerShell 5.1 scripts',
       use: 'Build, install and uninstall for the current user — no admin rights',
-      items: ['build.ps1 — compiles the app, packs the page and libraries into MarkdownViewerWebView2.Content.dll, signs both (Authenticode) and makes the icon (System.Drawing)',
+      items: ['build.ps1 — compiles the app, packs the page and libraries into ReadSafeViewer.Content.dll, signs both (Authenticode) and makes the icon (System.Drawing)',
               'install.ps1 / Uninstall.exe — per-user .md file association (HKCU registry), Start menu shortcuts, Settings › Apps entry'] },
     { name: 'Viewer', detail: 'HTML, CSS and JavaScript (viewer.html + viewer.js), no frameworks',
       use: 'Renders, counts, inspects, finds and exports',

@@ -66,7 +66,7 @@ function Invoke-Registry([string]$url, [int]$maxBytes) {
         $req.Method = 'GET'
         $req.AllowAutoRedirect = $false
         $req.Timeout = 30000; $req.ReadWriteTimeout = 30000
-        $req.UserAgent = 'MarkdownViewerWebView2-update-libs'
+        $req.UserAgent = 'ReadSafeViewer-update-libs'
         $resp = $req.GetResponse()
         try {
             if ([int]$resp.StatusCode -ne 200 -or $resp.ResponseUri.Host -ne $registry) { return $null }

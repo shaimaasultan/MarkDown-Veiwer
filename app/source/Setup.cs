@@ -1,7 +1,7 @@
-// Markdown Viewer (WebView2) - Setup and Uninstall.exe.
+// ReadSafe Viewer - Setup and Uninstall.exe.
 //
 // build.ps1 compiles this file twice, both signed with the program's certificate:
-//   - Setup (app\release\MarkdownViewer-Setup-<version>.exe): carries the built, signed program and its files as
+//   - Setup (app\release\ReadSafeViewer-Setup-<version>.exe): carries the built, signed program and its files as
 //     resources, listed with their SHA-256 (payload.sha256), so its signature covers them. It installs (copy
 //     into Program Files), registers (file types, Open with, Start menu, Settings > Apps) and adds the firewall
 //     rules that block the installed program's network traffic. Install.cmd installs through it too (--install).
@@ -41,7 +41,7 @@ using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
-[assembly: AssemblyProduct("Markdown Viewer (WebView2)")]
+[assembly: AssemblyProduct("ReadSafe Viewer")]
 [assembly: AssemblyCompany("Markdown Viewer")]
 [assembly: AssemblyCopyright("Markdown Viewer")]
 // Windows DLLs this file calls (kernel32, advapi32, wintrust, shell32) come from System32 only.
@@ -49,8 +49,8 @@ using Microsoft.Win32;
 
 public static class Setup
 {
-    const string AppName = "Markdown Viewer (WebView2)";
-    const string Key = "MarkdownViewerWebView2";
+    const string AppName = "ReadSafe Viewer";
+    const string Key = "ReadSafeViewer";
     const string ExeName = Key + ".exe";
     const string ContentDll = Key + ".Content.dll";
     const string UninstallerName = "Uninstall.exe";
@@ -59,6 +59,11 @@ public static class Setup
     const string RecordName = "source-manifest.txt";
     const string ProgId = Key + ".md", MediaProgId = Key + ".media";
     const string FirewallGroup = AppName;
+    // The name versions before 1.16 were installed under. Setup moves such an install over - its Program Files
+    // folder, firewall rules, Windows entries and data - so no second copy, and no entry pointing to a deleted
+    // program, is left behind (see MoveOldInstall and Place).
+    const string OldKey = "MarkdownViewerWebView2", OldAppName = "Markdown Viewer (WebView2)";
+    const string OldExeName = OldKey + ".exe", OldProgId = OldKey + ".md", OldMediaProgId = OldKey + ".media";
     static readonly string[] MicrosoftFiles = { "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll", "WebView2Loader.dll" };
     static readonly string[] MdExts = { ".md", ".markdown", ".mdown", ".mkd" };
     // Pictures, video and audio: in each type's "Open with" list (never their default app).
@@ -90,7 +95,8 @@ public static class Setup
     static string PowerShellExe { get { return Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe"); } }
     static string InstalledExe { get { return Path.Combine(ProgramFolder, ExeName); } }
     static string InstalledUninstaller { get { return Path.Combine(ProgramFolder, UninstallerName); } }
-    static string LegacyFolder { get { return Path.Combine(Path.Combine(LocalFolder, "Programs"), Key); } }    // earlier versions
+    static string LegacyFolder { get { return Path.Combine(Path.Combine(LocalFolder, "Programs"), OldKey); } } // versions before 1.8
+    static string OldProgramFolder { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), OldKey); } }
 
     internal static bool IsSetup { get { return Assembly.GetExecutingAssembly().GetManifestResourceInfo("payload.sha256") != null; } }
     internal static string Title { get { return AppName + (IsSetup ? " Setup" : " - Uninstall"); } }
@@ -347,7 +353,9 @@ public static class Setup
                 SignatureInfo s = Signature(Path.Combine(stage, f));
                 if (!s.Intact || s.Thumbprint != signer) return Fail(stage, 2);
             }
+            // The copy this replaces: under the current name, or else under the old name (its folder goes below).
             string installed = Path.Combine(dest, ExeName);
+            if (!File.Exists(installed)) installed = Path.Combine(OldProgramFolder, OldExeName);
             if (File.Exists(installed))
             {
                 string was = Signature(installed).Thumbprint;
@@ -360,7 +368,9 @@ public static class Setup
             }
             // The project record of the last Install.cmd: kept from the installed copy when this Setup has none (a
             // plain text file, never loaded; copied between two folders only administrators can change).
+            // On the first install under the new name, the record comes from the old folder (also administrators only).
             string keptRecord = Path.Combine(dest, RecordName);
+            if (!File.Exists(keptRecord)) keptRecord = Path.Combine(OldProgramFolder, RecordName);
             if (!want.ContainsKey(RecordName) && File.Exists(keptRecord) && (File.GetAttributes(keptRecord) & FileAttributes.ReparsePoint) == 0 &&
                 new FileInfo(keptRecord).Length <= 8L << 20)
                 File.Copy(keptRecord, Path.Combine(stage, RecordName));
@@ -371,7 +381,10 @@ public static class Setup
             catch { if (Directory.Exists(old) && !Directory.Exists(dest)) Directory.Move(old, dest); throw; }
             try { ClearDir(old); } catch { }
             // Block rules for the installed program; Setup checks afterwards (as the user) that they are there.
+            // The old name's rules go with them (AddFirewallRules), and so does the old name's Program Files folder:
+            // the program there is replaced by this one (a fixed path, worked out here, never taken from outside).
             try { AddFirewallRules(Path.Combine(dest, ExeName)); } catch { }
+            try { if (!SamePath(OldProgramFolder, dest)) ClearDir(OldProgramFolder); } catch { }
             return 0;
         }
         catch
@@ -412,10 +425,14 @@ public static class Setup
     {
         if (!CloseViewers(ui)) { ui.Log("Nothing was changed."); return false; }
         string dest = ProgramFolder, installedExe = InstalledExe;
+        // A copy installed under the old name is replaced too, so its certificate is checked the same way.
+        string replacedExe = File.Exists(installedExe) ? installedExe : Path.Combine(OldProgramFolder, OldExeName);
+        if (replacedExe != installedExe && File.Exists(replacedExe))
+            ui.Log("Found " + OldAppName + " in " + OldProgramFolder + ": it is replaced by " + AppName + " (same program, new name).");
         string accept = "";
-        if (File.Exists(installedExe))
+        if (File.Exists(replacedExe))
         {
-            string was = Signature(installedExe).Thumbprint;
+            string was = Signature(replacedExe).Thumbprint;
             if (was != null && was != sig.Thumbprint)
             {
                 ui.Log("The installed copy is signed by a different certificate:\r\n  installed: " + was + "\r\n  this Setup: " + sig.Thumbprint);
@@ -493,6 +510,9 @@ public static class Setup
         if (differs.Count > 0) ui.Log("WARNING: in " + dest + " these do not match this Setup: " + string.Join(", ", differs));
         else ui.Log("Copied to " + dest + " and checked: exactly the files inside this Setup.");
 
+        // The old name's entries and data first, so registering below sees the real previous .md default.
+        MoveOldInstall(ui.Log);
+
         // Firewall rules (made by the administrator step) and the user's entries (file types, Open with,
         // Start menu, Settings > Apps).
         List<string> firewallProblems = VerifyViewerFirewallRules(installedExe);
@@ -533,7 +553,7 @@ public static class Setup
     // Windows can't replace or remove a running program.
     static bool CloseViewers(Step ui)
     {
-        Process[] running = Process.GetProcessesByName(Key);
+        Process[] running = Process.GetProcessesByName(Key).Concat(Process.GetProcessesByName(OldKey)).ToArray();
         if (running.Length == 0) return true;
         if (!ui.Ask(running.Length + " " + AppName + " window(s) are open. Close them to continue? (Reopen your documents afterwards.)")) return false;
         foreach (Process p in running)
@@ -708,6 +728,98 @@ public static class Setup
         return stale.Count > 0 ? 1 : 0;
     }
 
+    // ------------------------------------------------------------------ moving an install of the old name over
+
+    // As the user, after the administrator step has replaced the old name's Program Files folder. The old name's
+    // file types, "Open with", Start menu shortcuts and Settings > Apps entry are removed - only those that start
+    // the old copy or a program that no longer exists; another program's entries are kept. Where the old name was
+    // the .md default, the default from before it is put back first, so registering keeps the real previous
+    // default for uninstalling. Saved view settings and the Check-Updates record move to the new data folders;
+    // the old browser data and error log go. Anything else in the old data folders is left where it is.
+    static void MoveOldInstall(Action<string> log)
+    {
+        string oldExe = Path.Combine(OldProgramFolder, OldExeName), legacyExe = Path.Combine(LegacyFolder, OldExeName);
+        Func<string, bool> oldOurs = program =>
+        {
+            if (string.IsNullOrWhiteSpace(program)) return true;
+            program = program.Trim().Trim('"');
+            return SamePath(program, oldExe) || SamePath(program, legacyExe) || !File.Exists(program);
+        };
+        List<string> done = new List<string>();
+
+        using (RegistryKey classes = UserRoot.CreateSubKey(@"Software\Classes"))
+        {
+            using (RegistryKey backup = UserRoot.OpenSubKey(@"Software\" + OldKey))
+                foreach (string ext in MdExts)
+                    using (RegistryKey ek = classes.OpenSubKey(ext, true))
+                    {
+                        if (ek == null) continue;
+                        using (RegistryKey ow = ek.OpenSubKey("OpenWithProgids", true)) if (ow != null) ow.DeleteValue(OldProgId, false);
+                        if ((ek.GetValue("") as string) != OldProgId) continue;
+                        string prev = backup == null ? null : backup.GetValue("Prev" + ext) as string;
+                        if (!string.IsNullOrEmpty(prev) && prev != ProgId) ek.SetValue("", prev); else ek.DeleteValue("", false);
+                    }
+            foreach (string k in new[] { OldProgId, OldMediaProgId, @"Applications\" + OldExeName })
+            {
+                bool exists;
+                using (RegistryKey e = classes.OpenSubKey(k)) exists = e != null;
+                if (!exists) continue;
+                string program = null;
+                using (RegistryKey c = classes.OpenSubKey(k + @"\shell\open\command")) if (c != null) program = CommandExe(c.GetValue("") as string);
+                if (oldOurs(program)) { classes.DeleteSubKeyTree(k, false); done.Add("removed " + k); }
+                else log("Kept " + k + ": it starts " + program + ", not the old copy.");
+            }
+            bool mediaGone;
+            using (RegistryKey m = classes.OpenSubKey(OldMediaProgId)) mediaGone = m == null;
+            if (mediaGone) foreach (string ext in MediaExts.Concat(EarlierExts)) RemoveOpenWith(classes, ext, OldMediaProgId);
+            bool mdGone;
+            using (RegistryKey m = classes.OpenSubKey(OldProgId)) mdGone = m == null;
+            if (mdGone) UserRoot.DeleteSubKeyTree(@"Software\" + OldKey, false);
+        }
+
+        foreach (string link in new[] { Path.Combine(StartMenuFolder, OldAppName + ".lnk"), Path.Combine(StartMenuFolder, "About " + OldAppName + ".lnk") })
+        {
+            try { if (File.Exists(link) && oldOurs(ShortcutTarget(link))) { File.Delete(link); done.Add("removed shortcut " + Path.GetFileName(link)); } } catch { }
+        }
+        string unKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\" + OldKey;
+        bool removeEntry = false;
+        using (RegistryKey un = UserRoot.OpenSubKey(unKey))
+            if (un != null)
+            {
+                string loc = un.GetValue("InstallLocation") as string;
+                removeEntry = string.IsNullOrEmpty(loc) || SamePath(loc, OldProgramFolder) || !Directory.Exists(loc);
+            }
+        if (removeEntry) { UserRoot.DeleteSubKeyTree(unKey, false); done.Add("removed the old Settings > Apps entry"); }
+
+        // Data: settings.ini (roaming) and update-check.txt (local) move unless the new folder already has them.
+        foreach (string[] item in new[] { new[] { RoamingFolder, "settings.ini" }, new[] { LocalFolder, "update-check.txt" } })
+        {
+            string from = Path.Combine(Path.Combine(item[0], OldKey), item[1]), to = Path.Combine(Path.Combine(item[0], Key), item[1]);
+            try
+            {
+                if (!File.Exists(from) || (File.GetAttributes(from) & FileAttributes.ReparsePoint) != 0) continue;
+                if (!File.Exists(to)) { Directory.CreateDirectory(Path.GetDirectoryName(to)); File.Copy(from, to); done.Add("kept your " + item[1]); }
+                File.Delete(from);
+            }
+            catch { log("Could not move " + from + "."); }
+        }
+        string oldLocal = Path.Combine(LocalFolder, OldKey);
+        try { ClearDir(Path.Combine(oldLocal, "WebView2")); } catch { log("Could not remove the old browser data in " + oldLocal + " (in use?)."); }
+        foreach (string f in new[] { "errors.log", "webview2-update-status.txt" })
+            try { File.Delete(Path.Combine(oldLocal, f)); } catch { }
+        foreach (string d in new[] { Path.Combine(RoamingFolder, OldKey), oldLocal })
+        {
+            try
+            {
+                if (!Directory.Exists(d)) continue;
+                if (Directory.EnumerateFileSystemEntries(d).Any()) log("Left " + d + ": it holds files " + AppName + " does not use.");
+                else Directory.Delete(d, false);
+            }
+            catch { }
+        }
+        if (done.Count > 0) log("Moved " + OldAppName + " over to " + AppName + " (" + string.Join(", ", done.ToArray()) + ").");
+    }
+
     // Takes the ProgId out of a type's "Open with" list; an OpenWithProgids key or a type key left with nothing
     // in it at all (no values, no subkeys) is removed too - one that holds anything else is kept as it is.
     static void RemoveOpenWith(RegistryKey classes, string ext, string progId)
@@ -875,13 +987,15 @@ public static class Setup
         SHChangeNotify(0x08000000, 0, IntPtr.Zero, IntPtr.Zero);
 
         // One administrator step for the firewall rules and the Program Files folder. It works the folder out itself.
-        bool hasRules = FirewallRules().Count > 0, hasFolder = Directory.Exists(machineDest);
+        bool hasOldRules = FirewallRules(OldAppName).Count > 0;
+        bool hasRules = FirewallRules().Count > 0 || hasOldRules, hasFolder = Directory.Exists(machineDest);
         string self = Assembly.GetExecutingAssembly().Location;
         bool inside = SamePath(Path.GetDirectoryName(self), machineDest);
         if (hasRules || hasFolder)
         {
             List<string> steps = new List<string> { "$env:PSModulePath = $PSHOME + '\\Modules'", "$ErrorActionPreference = 'Stop'" };
             if (hasRules) steps.Add("Remove-NetFirewallRule -Group " + Quote(FirewallGroup) + " -ErrorAction SilentlyContinue");
+            if (hasOldRules) steps.Add("Remove-NetFirewallRule -Group " + Quote(OldAppName) + " -ErrorAction SilentlyContinue");
             if (hasFolder)
             {
                 steps.Add("Set-Location -LiteralPath " + Quote(Environment.SystemDirectory));
@@ -944,13 +1058,15 @@ public static class Setup
     {
         object policy = Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FwPolicy2"));
         object rules = Get(policy, "Rules");
-        // This app's earlier rules first (a name can belong to several rules: until none is left).
-        for (int i = 0; i < 20; i++)
-        {
-            List<string> names = FirewallRules();
-            if (names.Count == 0) break;
-            foreach (string n in names) Invoke(rules, "Remove", n);
-        }
+        // This app's earlier rules first, under its current and its old name (a name can belong to several rules:
+        // until none is left).
+        foreach (string group in new[] { FirewallGroup, OldAppName })
+            for (int i = 0; i < 20; i++)
+            {
+                List<string> names = FirewallRules(group);
+                if (names.Count == 0) break;
+                foreach (string n in names) Invoke(rules, "Remove", n);
+            }
         foreach (int dir in new[] { 1, 2 })        // NET_FW_RULE_DIR_IN, _OUT
         {
             object rule = Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FWRule"));
@@ -1033,15 +1149,16 @@ public static class Setup
     }
 
     // This app's firewall rules (read-only; works without administrator rights).
-    internal static List<string> FirewallRules()
+    internal static List<string> FirewallRules(string group = null)
     {
+        group = group ?? FirewallGroup;
         List<string> names = new List<string>();
         try
         {
             object policy = Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FwPolicy2"));
             foreach (object r in (System.Collections.IEnumerable)Get(policy, "Rules"))
             {
-                if ((Get(r, "Grouping") as string) == FirewallGroup) names.Add(Get(r, "Name") as string);
+                if ((Get(r, "Grouping") as string) == group) names.Add(Get(r, "Name") as string);
                 Marshal.ReleaseComObject(r);
             }
         }
@@ -1190,7 +1307,7 @@ sealed class SetupForm : Form
 
         Panel header = new Panel { Dock = DockStyle.Top, Height = 104, BackColor = Color.FromArgb(0x1F, 0x3A, 0x5F) };
         PictureBox logo = new PictureBox { Image = Setup.Logo(), SizeMode = PictureBoxSizeMode.Zoom, Bounds = new Rectangle(24, 16, 72, 72), BackColor = Color.Transparent };
-        Label title = new Label { Text = "Markdown Viewer (WebView2)", ForeColor = Color.White, Font = new Font("Segoe UI Semibold", 17f), AutoSize = true, Location = new Point(112, 22), BackColor = Color.Transparent };
+        Label title = new Label { Text = "ReadSafe Viewer", ForeColor = Color.White, Font = new Font("Segoe UI Semibold", 17f), AutoSize = true, Location = new Point(112, 22), BackColor = Color.Transparent };
         Label sub = new Label { Text = (setup ? "Setup" : "Uninstall") + "  ·  version " + SetupBuild.Version, ForeColor = Color.FromArgb(0xC8, 0xD6, 0xE8), Font = new Font("Segoe UI", 10.5f), AutoSize = true, Location = new Point(115, 60), BackColor = Color.Transparent };
         header.Controls.AddRange(new Control[] { logo, title, sub });
 
@@ -1240,7 +1357,7 @@ sealed class SetupForm : Form
     void Run(bool doInstall)
     {
         if (busy) return;
-        if (!doInstall && MessageBox.Show(this, "Uninstall Markdown Viewer (WebView2)?\n\nThis removes the program from Program Files (Windows asks for administrator rights), its Windows entries, settings and browser data.",
+        if (!doInstall && MessageBox.Show(this, "Uninstall ReadSafe Viewer?\n\nThis removes the program from Program Files (Windows asks for administrator rights), its Windows entries, settings and browser data.",
                                           Text, MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
         busy = true;
         log.Visible = true; log.Clear();

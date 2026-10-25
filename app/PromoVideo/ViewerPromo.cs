@@ -121,7 +121,7 @@ internal static class ViewerPromo
 
     private static UIElement TitleBar(int view)
     {
-        var title = view == 4 ? "page.html — Markdown Folder Viewer" : view == 3 ? "README.md — Markdown Folder Viewer" : "Markdown Viewer — Markdown Folder Viewer";
+        var title = view == 4 ? "page.html — ReadSafe Viewer" : view == 3 ? "README.md — ReadSafe Viewer" : "Markdown Viewer — ReadSafe Viewer";
         var grid = new Grid { Background = Solid(0xf4, 0xf5, 0xf7) };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -236,7 +236,7 @@ internal static class ViewerPromo
     private static UIElement MarkdownText()
     {
         var stack = new StackPanel { MaxWidth = 1120, HorizontalAlignment = HorizontalAlignment.Left };
-        stack.Children.Add(T("# Markdown Viewer (WebView2)", 36, Ink, FontWeights.Bold));
+        stack.Children.Add(T("# ReadSafe Viewer", 36, Ink, FontWeights.Bold));
         stack.Children.Add(T("A focused place to read your project files.", 20, Muted));
         stack.Children.Add(T("## Markdown that feels at home", 26, Ink, FontWeights.SemiBold));
         stack.Children.Add(T("Read headings, lists, tables, math, diagrams, pictures, and code in one clean view.", 17, Ink));

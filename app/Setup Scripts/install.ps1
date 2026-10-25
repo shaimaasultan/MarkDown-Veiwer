@@ -1,7 +1,7 @@
-# Installs Markdown Viewer (WebView2) on this PC:
+# Installs ReadSafe Viewer on this PC:
 #   checks the project folder against the record of the last install, records it again, builds and signs the
 #   program as you (build.ps1), then installs it with the Setup that build made - the same steps as on any
-#   other PC: one administrator prompt copies it to C:\Program Files\MarkdownViewerWebView2 (where no program
+#   other PC: one administrator prompt copies it to C:\Program Files\ReadSafeViewer (where no program
 #   running as you can change its files or put a DLL next to them) and adds the viewer firewall rules that block its
 #   network traffic; then the .md / .markdown / .mdown / .mkd file association, Open with, Start menu entries
 #   and the Settings > Apps entry are made for your own account. No script file is installed: Program Files
@@ -12,8 +12,8 @@ $env:PSModulePath = "$PSHOME\Modules"
 $ErrorActionPreference = 'Stop'
 $scriptDir = $PSScriptRoot
 $here = Split-Path $scriptDir -Parent
-$name = 'Markdown Viewer (WebView2)'
-$key = 'MarkdownViewerWebView2'
+$name = 'ReadSafe Viewer'
+$key = 'ReadSafeViewer'
 $exeName = "$key.exe"
 $dist = Join-Path $here 'dist'
 # Program Files as Windows records it (not the ProgramFiles environment variable, which can be set per user).
@@ -40,7 +40,8 @@ if ($elevated -and $uac) {
 }
 
 # Windows can't replace a running program: close open viewer windows first.
-$running = @(Get-Process $key -ErrorAction SilentlyContinue)
+# (Also windows of the app under its name before 1.16, Markdown Viewer (WebView2): Setup replaces that install.)
+$running = @(Get-Process $key, 'MarkdownViewerWebView2' -ErrorAction SilentlyContinue)
 if ($running.Count) {
     Write-Host "Closing $($running.Count) open $name window(s) to update the program; reopen your documents afterwards."
     $running | Stop-Process -Force
@@ -56,7 +57,8 @@ $projectRoot = Split-Path $here -Parent
 $psExe = Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
 $checkRecorded = @(
     '$env:PSModulePath = $PSHOME + ''\Modules'''
-    '$r = Join-Path ([Environment]::GetFolderPath(''ProgramFiles'')) ''MarkdownViewerWebView2\source-manifest.txt'''
+    '$r = Join-Path ([Environment]::GetFolderPath(''ProgramFiles'')) ''ReadSafeViewer\source-manifest.txt'''
+    'if (-not (Test-Path -LiteralPath $r)) { $r = Join-Path ([Environment]::GetFolderPath(''ProgramFiles'')) ''MarkdownViewerWebView2\source-manifest.txt'' }'
     'if (-not (Test-Path -LiteralPath $r)) { exit 2 }'
     '$want = Get-Content -LiteralPath $r -Encoding UTF8 | Where-Object { $_.EndsWith([string][char]9 + ''app\Setup Scripts\check-source.ps1'') } | Select-Object -First 1'
     '$b = [IO.File]::ReadAllBytes((Join-Path $env:MDV_PROJECT ''app\Setup Scripts\check-source.ps1''))'
@@ -105,7 +107,7 @@ if ($LASTEXITCODE -ne 0) {
 # Files and adds the viewer firewall rules; then Setup registers the file types, Open with, Start menu and Settings >
 # Apps for you. A new signing certificate, or open viewer windows, are asked about in a Yes/No box.
 $version = (Get-Item (Join-Path $dist $exeName)).VersionInfo.ProductVersion
-$setupFile = Join-Path $here "release\MarkdownViewer-Setup-$version.exe"
+$setupFile = Join-Path $here "release\ReadSafeViewer-Setup-$version.exe"
 Write-Host "Installing with $(Split-Path $setupFile -Leaf) (Windows asks for administrator rights for Windows PowerShell; 'Show more details' shows the command and Setup's SHA-256)..."
 & $setupFile --install | ForEach-Object { Write-Host $_ }
 if ($LASTEXITCODE -ne 0) { Write-Host 'Not installed (see above). The installed copy was left as it was.' -ForegroundColor Yellow; exit 1 }

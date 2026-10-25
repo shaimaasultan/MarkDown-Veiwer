@@ -14,9 +14,13 @@ param([string]$Write, [string]$Record, [string]$Root, [switch]$Quiet)
 # Only Windows PowerShell's own modules (a look-alike Get-FileHash could otherwise report what it likes).
 $env:PSModulePath = "$PSHOME\Modules"
 $ErrorActionPreference = 'Stop'
-$key = 'MarkdownViewerWebView2'
+$key = 'ReadSafeViewer'
 $installDir = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) $key
-if (-not $Record) { $Record = Join-Path $installDir 'source-manifest.txt' }
+# Until the first install under the new name, the record of the last install is in the old name's folder.
+if (-not $Record) {
+    $Record = Join-Path $installDir 'source-manifest.txt'
+    if (-not (Test-Path -LiteralPath $Record)) { $Record = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'MarkdownViewerWebView2\source-manifest.txt' }
+}
 function Say($text, $color) { if (-not $Quiet) { if ($color) { Write-Host $text -ForegroundColor $color } else { Write-Host $text } } }
 
 # Every file under the project folder, by path relative to it.
@@ -62,7 +66,7 @@ if ($Write) {
     $root = if ($Root) { (Resolve-Path -LiteralPath $Root).Path } else { Split-Path (Split-Path $PSScriptRoot -Parent) -Parent }
     $m = [regex]::Match([IO.File]::ReadAllText((Join-Path $root "app\source\$key.cs")), 'AppVersion = "([^"]+)"')
     $version = if ($m.Success) { $m.Groups[1].Value } else { '?' }
-    $lines = @("# Markdown Viewer (WebView2) - project files at install time",
+    $lines = @("# ReadSafe Viewer - project files at install time",
                "# installed $(Get-Date -Format s)  version $version  commit $(Get-Commit $root)",
                "# folder $root")
     $hashes = Get-Hashes $root

@@ -60,7 +60,7 @@ function Invoke-NuGet([string]$url, [int]$maxBytes) {
         $req.Method = 'GET'
         $req.AllowAutoRedirect = $false
         $req.Timeout = 30000; $req.ReadWriteTimeout = 60000
-        $req.UserAgent = 'MarkdownViewerWebView2-update-sdk'
+        $req.UserAgent = 'ReadSafeViewer-update-sdk'
         $resp = $req.GetResponse()
         try {
             if ([int]$resp.StatusCode -ne 200 -or $resp.ResponseUri.Host -ne $nuget) { return $null }

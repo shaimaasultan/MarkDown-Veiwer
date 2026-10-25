@@ -1,4 +1,4 @@
-# Markdown Viewer (WebView2)
+# ReadSafe Viewer
 
 A Markdown and file viewer for Windows. Double-click a `.md` file and it opens in the app's own
 window with figures, math, code colouring and diagrams. The viewer never runs code from a document.
@@ -36,7 +36,7 @@ and logs as data and text, never run.
 - **Save as web page**: one self-contained .html file with pictures, math fonts and diagrams embedded, and no scripts
 - **Save as PDF** with a contents page, the file name at the top and page numbers ("2 / 5") at the bottom of every page
 - **Video and audio**: `![clip](clip.mp4)` (as on GitHub) or `<video src="clip.mp4" controls>` plays in the page; .mp4, .webm, .mp3, .wav, .ogg. Videos are read a few MB at a time as they play, so any size works and seeking is instant
-- **Open pictures, video and audio directly**: right-click a file › Open with › Markdown Viewer (WebView2) shows it on its own page (the installer adds it to Open with only, never as the default app)
+- **Open pictures, video and audio directly**: right-click a file › Open with › ReadSafe Viewer shows it on its own page (the installer adds it to Open with only, never as the default app)
 - **Open other files with the viewer**: tables, JSON, Excel, XML, notebooks, text, logs and config files are offered under right-click › Open with › Choose another app. They are not added to those types' own Open with lists, so Windows never starts asking how to open them. Files that Windows or other programs run (`.cmd`, `.bat`, `.ps1`, `.js`, `.py`, `.html`…) are not registered at all, so a double-click still runs or opens them as before; the viewer can show them from its file list, Open Files, or a drop. Opening a file whose kind is hidden in **View File types** shows that kind again.
 - **CSV and TSV tables**: a `.csv` or `.tsv` file (opened with right-click › Open with › Choose another app, from a link in a document, from the file list or by dropping it) is shown as a table: click a column to sort it (numbers as numbers), filter all columns at once (hidden ones too: a hidden column where the text is found is shown again) or each column on its own (text anywhere in the cell, or `>100`, `<=5`, `=Toronto`, `!=0`…), choose which columns to show (☰ Columns: tick or untick each, find a column by name, Show all / Hide all; the count shows how many of all columns are shown), and copy or save the rows the filters keep - only the shown columns - in the shown order. The separator (comma, semicolon, tab, `|`) is detected; quoted cells may hold commas and line breaks. Every cell is plain text - nothing in a table can become a link, a picture or code. Large files stay quick: 500 rows are drawn at a time.
 - **JSON files**: `.json`, and `.jsonl` / `.ndjson` (one JSON value per line), open the same ways as tables and can be shown three ways: **{ } Text** - indented and coloured with line numbers, re-indented from the file's own characters so every number and string stays exactly as written (a 20-digit id is not rounded); **🌳 Tree** - objects and arrays you open and close, with item counts, Expand all / Collapse all, 500 items drawn at a time; **▦ Table** - one of its arrays (chosen from a list such as `$.items (120 items)`, or the top object's keys and values), each element a row and nested fields as columns like `stock.store`, with the same sorting, filters, ☰ Columns, Copy and Save CSV as CSV files. Text that is not valid JSON is shown as it is, with the line and column where it breaks. Every key and value is plain text - nothing in a JSON file can become a link, a picture or code.
@@ -69,11 +69,11 @@ Every point below, with where it is implemented and how it was tested, is listed
 - **Where a file came from, and Microsoft Defender.** Each file the app opens is checked on this computer: its Mark of the Web (Windows' "downloaded from the internet" tag) shows as "⚠ From the internet: site" in the status line and in the safety report, and Microsoft Defender - asked through AMSI, as Windows does for scripts - is asked about its contents; a file it knows as malware raises a red popup, "✗ Microsoft Defender: malware" and a "Not safe" report. Nothing goes online and the file is only read.
 - **Blocked-code alert.** When a file contains code (scripts, event handlers, code links), a popup says so when it opens: nothing ran, and it is a file to be careful with elsewhere. If the window's security policy ever has to stop code itself, that is shown too.
 - **No copy-paste traps.** Text inside code examples cannot be hidden or restyled, so what you copy is what you see.
-- **Signed, no loose script files.** The page and every library are packed into `MarkdownViewerWebView2.Content.dll`. It and the program are signed with the same Authenticode certificate. At every start the program checks both signatures, plus Microsoft's signature on the WebView2 files, without going online, before any of them is loaded. The WebView2 files must also be exactly the ones the program was built with (their SHA-256 is part of the signed program), so an older or different Microsoft file is refused as well. If any of these files is changed, swapped or missing, the app does not start. See [Signing](#signing).
+- **Signed, no loose script files.** The page and every library are packed into `ReadSafeViewer.Content.dll`. It and the program are signed with the same Authenticode certificate. At every start the program checks both signatures, plus Microsoft's signature on the WebView2 files, without going online, before any of them is loaded. The WebView2 files must also be exactly the ones the program was built with (their SHA-256 is part of the signed program), so an older or different Microsoft file is refused as well. If any of these files is changed, swapped or missing, the app does not start. See [Signing](#signing).
 - **Nothing extra in the program's folder.** Windows looks in a program's folder first for many DLLs, and .NET for its configuration. Anything there that isn't part of the app (a planted DLL, a `.config`, `.manifest` or `.local` file or folder) stops the start; reinstalling removes it. The app is installed in Program Files, so the folder cannot be changed without administrator rights at all - the only full protection, because .NET itself loads a few Windows DLLs (`cryptbase`, `cryptsp`, `profapi`) from a program's folder before the program's first line runs.
 - **Checked files stay locked.** From the check until the app closes, the program, the Content DLL and the WebView2 files cannot be changed, replaced, renamed or deleted, and neither can their folder, so what was checked is what gets loaded.
 - **Safe DLL loading.** The app turns on Windows' image-load protections at start: system DLLs come from System32 before any copy elsewhere, and never from a network share, a file written by a sandboxed process, the current folder or PATH. The program's own calls into Windows DLLs load them from System32 only. The legacy ways other programs push a DLL into every process - AppInit_DLLs, global window hooks, legacy (non-TSF) input methods and Winsock layered providers - are switched off as well.
-- **No crash dumps.** An unexpected error is logged (`%LOCALAPPDATA%\MarkdownViewerWebView2\errors.log`: its type and stack only, never its message, which could quote document text) and the window keeps running; an error on a background thread, which cannot be survived, ends the app right after logging. Either way Windows Error Reporting never receives a memory dump that could hold the open document. Settings are saved through a new temporary file with a random name (which must not exist yet) and an atomic replace, so a crash cannot leave them half written and nothing can place a file there beforehand to redirect the write.
+- **No crash dumps.** An unexpected error is logged (`%LOCALAPPDATA%\ReadSafeViewer\errors.log`: its type and stack only, never its message, which could quote document text) and the window keeps running; an error on a background thread, which cannot be survived, ends the app right after logging. Either way Windows Error Reporting never receives a memory dump that could hold the open document. Settings are saved through a new temporary file with a random name (which must not exist yet) and an atomic replace, so a crash cannot leave them half written and nothing can place a file there beforehand to redirect the write.
 - **One viewer at a time.** Only one copy runs per user and Windows session. Opening another document (a double-click, the Start menu) hands it to the running viewer, which shows it in a window of its own - and each window can read only its own document's folder. The hand-over is a named pipe that only your account can open and never the network can; the viewer accepts a request only from this same program file (after its start-up checks), and the second copy hands its document over only after checking that the other end is this same program, so a look-alike learns nothing. A request is one path to an existing file of a type the viewer shows; requests are rate-limited and windows are capped at 20. If the running viewer cannot be verified, the second copy simply runs on its own.
 - **Fresh browser data.** The WebView2 engine starts with a new, empty data folder at every start; folders of ended runs are deleted. Nothing left in that folder by an earlier run or another program is read.
 - **No startup hooks.** If environment variables would make .NET load a profiler or an AppDomain manager into the app (`COR_ENABLE_PROFILING`, `COR_PROFILER*`, `APPDOMAIN_MANAGER_*`), it refuses to start. `DOTNET_STARTUP_HOOKS` belongs to .NET Core and is never read by this .NET Framework app.
@@ -82,7 +82,7 @@ Every point below, with where it is implemented and how it was tested, is listed
 - **Genuine engine.** After the WebView2 engine starts, the app checks that it is Microsoft's `msedgewebview2.exe`, signed and under Program Files (which only an administrator can change); otherwise no document is shown.
 - **No developer access.** Developer tools are off; the app refuses to show documents if WebView2 remote debugging has been switched on, or if it cannot check.
 - **Safe install.** The app is installed in Program Files, where only an administrator can change it, by Setup (also what `Install.cmd` runs). Only the copy step runs with administrator rights: Windows PowerShell from System32 with a short readable command - what the administrator prompt's "Show more details" shows - that runs only the copy step from Setup's bytes after checking their SHA-256, so a swapped Setup never runs and nothing is started elevated from the Downloads folder. It trusts nothing it is handed: it works out the folder itself, checks every file's SHA-256 and signature in a staging folder only administrators can change, and writes nothing into your folders. No script file is installed. All scripts use only Windows PowerShell's own modules (limited with plain text before any command runs) and start PowerShell by full path; neither the build nor the installer runs from an administrator window. See [Install](#install).
-- **Viewer firewall rules.** Setup blocks inbound and outbound traffic for the installed `MarkdownViewerWebView2.exe` on Domain, Private and Public profiles; metered connections use their assigned profile. After installation it checks the exact rule names, executable path, direction, block action, enabled state, all-profile mask, unrestricted protocol/address/port/interface scope and that Windows Firewall is enabled for all three profiles. The runtime status badge only reports a full block when it can verify those settings; otherwise it reports the rules as incomplete, firewall off, or status unknown. `Uninstall.exe` removes only the viewer's rules. They do not cover the shared WebView2 engine (`msedgewebview2.exe`). The viewer has no Python editor or runner; Python files are displayed as text and never executed.
+- **Viewer firewall rules.** Setup blocks inbound and outbound traffic for the installed `ReadSafeViewer.exe` on Domain, Private and Public profiles; metered connections use their assigned profile. After installation it checks the exact rule names, executable path, direction, block action, enabled state, all-profile mask, unrestricted protocol/address/port/interface scope and that Windows Firewall is enabled for all three profiles. The runtime status badge only reports a full block when it can verify those settings; otherwise it reports the rules as incomplete, firewall off, or status unknown. `Uninstall.exe` removes only the viewer's rules. They do not cover the shared WebView2 engine (`msedgewebview2.exe`). The viewer has no Python editor or runner; Python files are displayed as text and never executed.
 - **Optional Python firewall tool.** `app\Setup Scripts\cmd\Python-Firewall.cmd` is a separate, manual tool; the installer neither includes nor runs it. Run it from a normal Command Prompt and choose Create, Check or Remove. Before requesting elevation, it checks the helper and launcher against the administrator-protected project record from the last install, then passes the verified helper bytes to elevated Windows PowerShell without reopening a project file. Create and Check refuse to claim success if Windows Firewall is off for any Domain, Private or Public profile, or if the rule is narrowed by profile, protocol, address, port or interface. It blocks outbound traffic for the first trusted Python Software Foundation-signed `python.exe` and `py.exe` found on that command prompt's `PATH`; the rules apply to every application using those exact executable paths. They remain after viewer uninstall until removed. Other Python installations and executable paths are not covered.
 - **Check the project folder.** Every `Install.cmd` install records the SHA-256 of every project file (all except `.git\`, `app\dist\` and `app\release\`) in Program Files, next to the program, where only an administrator can change the record. `app\Setup Scripts\cmd\Check-Source.cmd` lists every file changed, added or removed since the last install - also changes made by another program running as you. It runs the project's `app\Setup Scripts\check-source.ps1` only if that is exactly the copy the record lists (read once, SHA-256 checked, run from those bytes), so a changed checker cannot hide changes; it says so instead. `Install.cmd` runs the same check before it builds: if the folder changed since the last install, it lists the changes and builds only after you answer Y. The new record is taken before the build and compared again after it: if the sources change while building, nothing is installed. Run it before installing an update you did not expect: changes you made or pulled yourself show up too, so only unexplained ones are a warning.
 
@@ -111,15 +111,23 @@ All double-click `.cmd` launchers are grouped in `app\Setup Scripts\cmd\`; Power
 2. Run `app\Setup Scripts\cmd\Install.cmd` (double-click it; not "Run as administrator"). It checks the project folder against
    the last install, builds and signs the app as you, and installs it with the Setup that build made - the
    same steps as on any other PC (see below): one administrator prompt copies it to
-   `C:\Program Files\MarkdownViewerWebView2`, where only an administrator can change the program's files (no
+   `C:\Program Files\ReadSafeViewer`, where only an administrator can change the program's files (no
    program running as you can replace them or put a DLL or `.config` file next to them), and adds the
    firewall rules that block the viewer's network traffic; then Start menu entries, a Settings › Apps entry, the
    `.md` / `.markdown` / `.mdown` / `.mkd` file association and Open with for pictures, video, audio, tables and
    other data files (see Features) are made for your own account.
-3. If Windows asks which app to use the next time you open a `.md` file, pick **Markdown Viewer (WebView2)** and click **Always**.
+3. If Windows asks which app to use the next time you open a `.md` file, pick **ReadSafe Viewer** and click **Always**.
 
 Run `Install.cmd` again to update (one administrator prompt each time). A copy that earlier versions installed
-in `%LOCALAPPDATA%\Programs\MarkdownViewerWebView2` is removed. The scripts use only Windows PowerShell's own
+in `%LOCALAPPDATA%\Programs\MarkdownViewerWebView2` is removed.
+
+**Renamed in 1.16.0:** until 1.15 the app was called *Markdown Viewer (WebView2)* (`MarkdownViewerWebView2.exe` in
+`C:\Program Files\MarkdownViewerWebView2`). Installing 1.16 or later - with `Install.cmd` or Setup - moves such an
+install over in the same administrator prompt: the old Program Files folder and its firewall rules are removed, the
+old file types, Open with entries, Start menu shortcuts and Settings › Apps entry are removed (only those that start
+the old copy), your previous `.md` default is kept for uninstalling, and your view settings and the Check-Updates
+record carry over. Windows' own "Always use this app" choice cannot be moved by a program: if `.md` files still ask,
+pick **ReadSafe Viewer** › **Always** once. The signing certificate and its publisher name ("Markdown Viewer") stay. The scripts use only Windows PowerShell's own
 modules (never look-alikes from your Documents module folder) and start PowerShell by its full path, so
 nothing planted in your account runs with the administrator rights you grant. `Install.cmd` does not run from
 an administrator window, and stops with a message if it cannot ask you a question (e.g. in PowerShell ISE).
@@ -127,7 +135,7 @@ A new signing certificate or open viewer windows are asked about in a Yes/No box
 
 ### Setup
 
-Every install (and `app\Setup Scripts\build.ps1`) makes `app\release\MarkdownViewer-Setup-<version>.exe`: one signed file
+Every install (and `app\Setup Scripts\build.ps1`) makes `app\release\ReadSafeViewer-Setup-<version>.exe`: one signed file
 with the built program inside, for installing on another PC without building - or here, without the console
 window. Double-click it (not "Run as administrator"): a window with the logo shows the version, who signed it
 and whether the viewer is installed, with **Install** / **Update**, **Uninstall**, **Open the viewer** and
@@ -145,7 +153,7 @@ rules**; `Uninstall.exe` does the opposite.
   checks every file's SHA-256, that the program, Content DLL and `Uninstall.exe` are signed by Setup's
   certificate and the WebView2 files by Microsoft, swaps the folders (a copy in use is never left half
   replaced), and adds Windows Firewall rules that block all traffic in and out of the installed
-  `MarkdownViewerWebView2.exe`. Setup verifies local rule settings and policy state; effective policy can still differ under Windows policy. It writes no log file. Python network rules are not part of installation; use the separate manual `Python-Firewall.cmd` tool if wanted. Those rules apply only to the exact `python.exe` / `py.exe` paths and do not block programs launched by Python.
+  `ReadSafeViewer.exe`. Setup verifies local rule settings and policy state; effective policy can still differ under Windows policy. It writes no log file. Python network rules are not part of installation; use the separate manual `Python-Firewall.cmd` tool if wanted. Those rules apply only to the exact `python.exe` / `py.exe` paths and do not block programs launched by Python.
 - An installed copy signed by another certificate is replaced only after you answer Yes.
 - Afterwards Setup checks, as you, that Program Files holds exactly the files inside it and verifies
   both viewer firewall rules' names, path, direction, action, enabled state, profile mask and unrestricted scope,
@@ -166,7 +174,7 @@ rules**; `Uninstall.exe` does the opposite.
 
 `Uninstall.exe`, installed next to the program and signed with the same certificate (built from
 `app\source\Setup.cs`), **uninstalls, unregisters and removes the viewer's firewall rules**. Start it from Settings › Apps ›
-Markdown Viewer (WebView2) › Uninstall (a window with Uninstall, Open the viewer and Close), with
+ReadSafe Viewer › Uninstall (a window with Uninstall, Open the viewer and Close), with
 `app\Setup Scripts\cmd\Uninstall.cmd`, or with **Uninstall** in Setup (both without the window: `--uninstall`).
 
 - It acts only as the copy in Program Files (only an administrator can change it) and refuses to run from
@@ -188,13 +196,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "app\Setup Scripts\build.ps1
 Output goes to `app\dist\` (for testing; it is not installed) and the Setup file to `app\release\`. The build checks the compiler's and the
 WebView2 files' Microsoft signatures and the WebView2 files' exact SHA-256, that the bundled libraries match
 the versions listed in `viewer.js` and that the page loads nothing from the internet. It then packs the page
-and libraries into `MarkdownViewerWebView2.Content.dll`, builds `Uninstall.exe` and Setup (`app\source\Setup.cs`), and signs
+and libraries into `ReadSafeViewer.Content.dll`, builds `Uninstall.exe` and Setup (`app\source\Setup.cs`), and signs
 the program, that DLL, `Uninstall.exe` and Setup with one certificate (Windows asks you to confirm the signing). Run it
 from a normal window: it refuses to build with administrator rights.
 
 ## Signing
 
-The program, `MarkdownViewerWebView2.Content.dll`, `Uninstall.exe` and Setup are Authenticode-signed by every build with one certificate. The program checks its own and the Content DLL's signature - plus Microsoft's on the WebView2 files and their exact SHA-256 - at every start (see [Security](#security)).
+The program, `ReadSafeViewer.Content.dll`, `Uninstall.exe` and Setup are Authenticode-signed by every build with one certificate. The program checks its own and the Content DLL's signature - plus Microsoft's on the WebView2 files and their exact SHA-256 - at every start (see [Security](#security)).
 
 The first build creates a code-signing certificate on your PC named
 "Markdown Viewer" (publisher; builds before 1.10 used "Markdown Viewer (WebView2) Code Signing"). It is stored in your personal certificate store, its private
@@ -340,11 +348,11 @@ a new empty Edge profile that cannot look up any host name.
 |---|---|
 | `app\source\viewer.html`, `app\source\viewer.js` | The viewer page and its logic (packed into the Content DLL at build time) |
 | `app\source\marked.min.js`, `app\source\lib\` | Bundled libraries (marked, KaTeX, highlight.js, Mermaid) |
-| `app\source\MarkdownViewerWebView2.cs` | The Windows app (C# 5, Windows Forms + WebView2) |
-| `app\source\Content.cs` | Resource-only `MarkdownViewerWebView2.Content.dll` that carries the page and the libraries |
+| `app\source\ReadSafeViewer.cs` | The Windows app (C# 5, Windows Forms + WebView2) |
+| `app\source\Content.cs` | Resource-only `ReadSafeViewer.Content.dll` that carries the page and the libraries |
 | `app\Setup Scripts\build.ps1` | Checks, compiles and signs the app into `app\dist\` |
 | `app\Setup Scripts\install.ps1` | `Install.cmd`: checks and records the project folder, builds (`build.ps1`) and installs with the Setup it made |
-| `app\source\Setup.cs` | Built twice by `build.ps1`: Setup (`app\release\MarkdownViewer-Setup-<version>.exe`, the signed program inside one signed file: installs, registers, adds and verifies the viewer firewall rules) and `Uninstall.exe` (installed next to the program: the opposite) |
+| `app\source\Setup.cs` | Built twice by `build.ps1`: Setup (`app\release\ReadSafeViewer-Setup-<version>.exe`, the signed program inside one signed file: installs, registers, adds and verifies the viewer firewall rules) and `Uninstall.exe` (installed next to the program: the opposite) |
 | `app\Setup Scripts\trust.ps1` | Optional certificate trust for the PC that builds (not installed) |
 | `app\Setup Scripts\check-source.ps1` | Records the project files' SHA-256 at install time (the record goes into Program Files) and compares the folder with it; `Check-Source.cmd` runs it only if it is exactly the recorded copy |
 | `app\Setup Scripts\check-updates.ps1` | Manually reports newer versions of the WebView2 SDK and bundled libraries |

@@ -1,4 +1,4 @@
-# Adds (or with -Remove takes away) the certificate that signs Markdown Viewer (WebView2) to the current
+# Adds (or with -Remove takes away) the certificate that signs ReadSafe Viewer to the current
 # user's trusted roots, so Windows shows the signature of the program and its Content DLL as valid.
 # Optional: the app checks its signatures at every start either way. Windows asks you to confirm the change.
 # - Only the copy installed in Program Files is used (only an administrator can change it), found through
@@ -11,7 +11,7 @@ param([switch]$Remove)
 # otherwise trust a different certificate).
 $env:PSModulePath = "$PSHOME\Modules"
 $ErrorActionPreference = 'Stop'
-$key = 'MarkdownViewerWebView2'
+$key = 'ReadSafeViewer'
 # This app's certificate names: the current one and the one earlier versions used.
 $subjects = 'CN=Markdown Viewer, O=Markdown Viewer', 'CN=Markdown Viewer (WebView2) Code Signing'
 $exe = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) "$key\$key.exe"

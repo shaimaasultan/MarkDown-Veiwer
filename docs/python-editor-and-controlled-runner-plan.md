@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-Add a Python editing workflow to Markdown Folder Viewer while preserving the viewer's existing rule that viewed source is displayed as text and is never executed automatically. The viewer will provide editing, local suggestions, on-demand formatting/checking, policy review, and an explicit Run action. A fixed external command runner will start Python outside the WebView2 page in a separate Command Prompt window.
+Add a Python editing workflow to ReadSafe Viewer while preserving the viewer's existing rule that viewed source is displayed as text and is never executed automatically. The viewer will provide editing, local suggestions, on-demand formatting/checking, policy review, and an explicit Run action. A fixed external command runner will start Python outside the WebView2 page in a separate Command Prompt window.
 
 This plan describes a useful, layered control system. It does **not** claim that static inspection proves arbitrary Python safe. Python runs with the Windows permissions of the identity that starts it unless a separate Windows security boundary is added and verified.
 

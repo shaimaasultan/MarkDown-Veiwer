@@ -1,7 +1,7 @@
-// Markdown Viewer (WebView2) - desktop app.
+// ReadSafe Viewer - desktop app.
 //
 // Opens a .md file in the HTML viewer (viewer.html) inside the program's own window, using Microsoft's
-// WebView2 control. The page and its libraries are resources of the signed MarkdownViewerWebView2.Content.dll
+// WebView2 control. The page and its libraries are resources of the signed ReadSafeViewer.Content.dll
 // (no loose script files); at every start the program checks its own signature, the Content DLL's (same
 // certificate) and Microsoft's on the WebView2 files. The page lives at a private address (https://mdviewer.example) that exists only inside
 // this window: every request it makes is intercepted and answered in-process. There is no web server
@@ -33,28 +33,28 @@ using Microsoft.Win32;
 using Microsoft.Win32.SafeHandles;
 
 [assembly: AssemblyTitle("Markdown Viewer (WebView2, preview only)")]
-[assembly: AssemblyProduct("Markdown Viewer (WebView2)")]
+[assembly: AssemblyProduct("ReadSafe Viewer")]
 [assembly: AssemblyDescription("Previews Markdown files with figures, math and diagrams. Never runs code from a document.")]
 [assembly: AssemblyCompany("Markdown Viewer")]
 [assembly: AssemblyCopyright("Markdown Viewer")]
 // The program's own calls into Windows DLLs (user32, kernel32, advapi32, wintrust) load them from System32
 // only, never from the program's folder or anywhere else on the search path.
 [assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
-[assembly: AssemblyVersion("1.15.1.0")]
-[assembly: AssemblyFileVersion("1.15.1.0")]
-[assembly: AssemblyInformationalVersion("1.15.1")]
+[assembly: AssemblyVersion("1.16.0.0")]
+[assembly: AssemblyFileVersion("1.16.0.0")]
+[assembly: AssemblyInformationalVersion("1.16.0")]
 
 static class Program
 {
-    const string AppName = "Markdown Viewer (WebView2)";
-    const string DataFolder = "MarkdownViewerWebView2";     // %APPDATA% (settings) and %LOCALAPPDATA% (browser data)
-    const string AppVersion = "1.15.1";
+    const string AppName = "ReadSafe Viewer";
+    const string DataFolder = "ReadSafeViewer";     // %APPDATA% (settings) and %LOCALAPPDATA% (browser data)
+    const string AppVersion = "1.16.0";
     // Exists only inside this program's windows. Not a .local name: Windows would first spend ~2 s
     // looking for a device called "mdviewer" on the local network before the page could load.
     const string PrivateHost = "https://mdviewer.example";
 
     // Page files: resources of the signed Content DLL (named by their path, e.g. "lib/katex/katex.min.js").
-    const string ContentDll = "MarkdownViewerWebView2.Content.dll";
+    const string ContentDll = "ReadSafeViewer.Content.dll";
     static readonly string[] AppFiles = { "viewer.html", "viewer.js", "marked.min.js", "favicon_readme.png" };
     static readonly string[] MicrosoftFiles = { "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll", "WebView2Loader.dll" };
 
@@ -324,7 +324,7 @@ static class Program
             get
             {
                 string sid = WindowsIdentity.GetCurrent().User.Value;
-                return "MarkdownViewerWebView2." + Process.GetCurrentProcess().SessionId + "." + sid;
+                return "ReadSafeViewer." + Process.GetCurrentProcess().SessionId + "." + sid;
             }
         }
 
@@ -572,7 +572,7 @@ static class Program
     // for configuration; an extra file or folder (a planted DLL, a ".local" redirection folder) stops the start.
     // source-manifest.txt: the project files' SHA-256 at install time (a text file, never loaded as code);
     // Uninstall.exe: removes the program, its Windows entries and its firewall rules (never loaded by the viewer).
-    static readonly string[] FolderFiles = { "MarkdownViewer.ico", "Uninstall.exe", "source-manifest.txt" };
+    static readonly string[] FolderFiles = { "ReadSafeViewer.ico", "Uninstall.exe", "source-manifest.txt" };
 
     static string CheckFolder()
     {
@@ -720,7 +720,7 @@ static class Program
 
     // An unexpected error is logged and the window keeps running, instead of a crash: a crash would hand
     // Windows Error Reporting a memory dump of the process, which can hold the open document. The log
-    // (%LOCALAPPDATA%\MarkdownViewerWebView2\errors.log) gets the error's type and stack only - never its
+    // (%LOCALAPPDATA%\ReadSafeViewer\errors.log) gets the error's type and stack only - never its
     // message, which can quote document text or file paths.
     static void CatchUnexpectedErrors()
     {
@@ -828,8 +828,8 @@ static class Program
 
     // Firewall (read-only). Nothing listens on the network, so no rules are needed. The block rules Setup adds
     // (and Uninstall.exe removes) make Windows refuse any traffic in or out of this program as well.
-    const string FirewallGroup = "Markdown Viewer (WebView2)";
-    const string FirewallDetail = "The viewer exposes no network port. When verified, its full-scope block rules make Windows refuse traffic in or out of MarkdownViewerWebView2.exe itself. Status checks Windows Firewall on all profiles and whether local policy changes are allowed; Group Policy can still affect effective firewall policy. The rules do not cover the WebView2 engine (msedgewebview2.exe), which Windows shares with other apps.";
+    const string FirewallGroup = "ReadSafe Viewer";
+    const string FirewallDetail = "The viewer exposes no network port. When verified, its full-scope block rules make Windows refuse traffic in or out of ReadSafeViewer.exe itself. Status checks Windows Firewall on all profiles and whether local policy changes are allowed; Group Policy can still affect effective firewall policy. The rules do not cover the WebView2 engine (msedgewebview2.exe), which Windows shares with other apps.";
 
     class FirewallStatus
     {
@@ -853,7 +853,7 @@ static class Program
             {
                 if (!Readable) return "Windows Firewall status or rules could not be read";
                 if (!FirewallOn) return "Windows Firewall is off for at least one profile";
-                if (Blocked) return "Full-scope local block rules verified for MarkdownViewerWebView2.exe; effective Windows policy may differ - and no network port";
+                if (Blocked) return "Full-scope local block rules verified for ReadSafeViewer.exe; effective Windows policy may differ - and no network port";
                 if (HasRules && !LocalRulesAllowed) return "Windows policy may prevent local firewall rules from taking effect";
                 if (BlockIn || BlockOut) return "Partly blocked (" + (BlockIn ? "incoming" : "outgoing") + " only) - no network port";
                 if (HasRules) return "Viewer firewall rules exist but do not prove a full block";
@@ -1428,7 +1428,7 @@ static class Program
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         static extern bool QueryFullProcessImageNameW(IntPtr process, int flags, StringBuilder name, ref int size);
 
-        // %LOCALAPPDATA%\MarkdownViewerWebView2\WebView2\<random>: a new, empty folder for this run. Each run
+        // %LOCALAPPDATA%\ReadSafeViewer\WebView2\<random>: a new, empty folder for this run. Each run
         // keeps a lock file open in its folder; folders without a held lock (ended runs, and the single shared
         // folder of earlier versions with its caches and history) are deleted. The last run's folder goes at
         // the next start, as the engine may still be closing when this program ends.

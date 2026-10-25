@@ -1,8 +1,8 @@
-# Builds Markdown Viewer (WebView2) with the C# compiler that ships with Windows (.NET Framework 4).
-#   build.ps1  ->  .\dist\MarkdownViewerWebView2.exe and MarkdownViewerWebView2.Content.dll (the page and the
+# Builds ReadSafe Viewer with the C# compiler that ships with Windows (.NET Framework 4).
+#   build.ps1  ->  .\dist\ReadSafeViewer.exe and ReadSafeViewer.Content.dll (the page and the
 #                  bundled libraries as resources - no loose script files), both signed, plus Microsoft's
 #                  WebView2 SDK files it needs, and Uninstall.exe (Windows entries, uninstall, firewall); and
-#                  .\release\MarkdownViewer-Setup-<version>.exe, one signed file that installs it on any PC.
+#                  .\release\ReadSafeViewer-Setup-<version>.exe, one signed file that installs it on any PC.
 #   -CertificateThumbprint <thumbprint>  sign with that code-signing certificate from Cert:\CurrentUser\My
 #                  (e.g. one bought from a certificate authority). Without it, the build uses - or creates
 #                  once - a certificate on this PC whose publisher is "Markdown Viewer", whose key
@@ -22,8 +22,8 @@ if ($elevated -and $uac) { throw 'Run the build from a normal window, not as adm
 $here = Split-Path $PSScriptRoot -Parent
 $root = Split-Path $here -Parent
 $dist = Join-Path $here 'dist'
-$exeName = 'MarkdownViewerWebView2.exe'
-$contentName = 'MarkdownViewerWebView2.Content.dll'
+$exeName = 'ReadSafeViewer.exe'
+$contentName = 'ReadSafeViewer.Content.dll'
 # The publisher name Windows shows for the program, its Content DLL and Setup (Properties > Digital Signatures).
 $certSubject = 'CN=Markdown Viewer, O=Markdown Viewer'
 # Names earlier versions gave this app's certificate.
@@ -75,7 +75,7 @@ if ($page -match '(?:src|href)="https?:') { throw 'The page loads something from
 
 # --- App icon: favicon_readme.png scaled to 256/48/32/16 and packed into an .ico (PNG entries).
 Add-Type -AssemblyName System.Drawing
-$ico = Join-Path $dist 'MarkdownViewer.ico'
+$ico = Join-Path $dist 'ReadSafeViewer.ico'
 $src = [System.Drawing.Image]::FromFile((Join-Path $srcDir 'favicon_readme.png'))
 try {
     $images = foreach ($size in 256, 48, 32, 16) {
@@ -133,7 +133,7 @@ $cscArgs = @('/nologo', '/target:winexe', '/optimize+', '/platform:x64',
              '/r:System.Management.dll',
              "/r:$(Join-Path $wv2 'Microsoft.Web.WebView2.Core.dll')",
              "/r:$(Join-Path $wv2 'Microsoft.Web.WebView2.WinForms.dll')",
-             (Join-Path $here 'source\MarkdownViewerWebView2.cs'), $pinned)
+             (Join-Path $here 'source\ReadSafeViewer.cs'), $pinned)
 & $csc @cscArgs
 $cscExit = $LASTEXITCODE
 Remove-Item $pinned -ErrorAction SilentlyContinue
@@ -184,7 +184,7 @@ static class SetupBuild { public const string Version = "$version"; }
 
 # --- Uninstall.exe, installed next to the program: uninstalls, unregisters and removes the firewall rules
 # (so no script file is installed).
-Build-SetupCs (Join-Path $dist 'Uninstall.exe') 'Markdown Viewer (WebView2) - Uninstall' 'Uninstalls Markdown Viewer (WebView2): the program, its Windows entries and its firewall rules.' @()
+Build-SetupCs (Join-Path $dist 'Uninstall.exe') 'ReadSafe Viewer - Uninstall' 'Uninstalls ReadSafe Viewer: the program, its Windows entries and its firewall rules.' @()
 
 # --- Sign the program, the Content DLL and Uninstall.exe with the same certificate
 if ($CertificateThumbprint) {
@@ -239,24 +239,25 @@ Write-Host "Built $dist\$exeName, $contentName and Uninstall.exe, signed by $($c
 $release = Join-Path $here 'release'
 New-Item -ItemType Directory -Force $release | Out-Null
 $version = (Get-Item (Join-Path $dist $exeName)).VersionInfo.ProductVersion
-$payload = @(@($exeName, $contentName, 'Uninstall.exe', 'MarkdownViewer.ico') + $sdkFiles | ForEach-Object { Join-Path $dist $_ })
+$payload = @(@($exeName, $contentName, 'Uninstall.exe', 'ReadSafeViewer.ico') + $sdkFiles | ForEach-Object { Join-Path $dist $_ })
 # One Setup: the files in $files, signed. Its list of SHA-256 is written next to it and removed afterwards.
 function Build-Setup([string]$out, [string[]]$files) {
     $list = Join-Path $release 'payload.sha256'
     [IO.File]::WriteAllLines($list, [string[]]@($files | ForEach-Object { "$(Split-Path $_ -Leaf)=$((Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash)" }))
     try {
-        Build-SetupCs $out 'Markdown Viewer (WebView2) Setup' 'Installs Markdown Viewer (WebView2): the program, its Windows entries and its firewall rules.' `
+        Build-SetupCs $out 'ReadSafe Viewer Setup' 'Installs ReadSafe Viewer: the program, its Windows entries and its firewall rules.' `
             (@("/resource:`"$list`",payload.sha256") + @($files | ForEach-Object { "/resource:`"$_`",payload/$(Split-Path $_ -Leaf)" }))
     } finally { if (Test-Path -LiteralPath $list) { [IO.File]::Delete($list) } }
     Set-AuthenticodeSignature -FilePath $out -Certificate $cert -HashAlgorithm SHA256 | Out-Null
     $s = Get-AuthenticodeSignature $out
     if (-not $s.SignerCertificate -or $s.SignerCertificate.Thumbprint -ne $cert.Thumbprint) { throw "Signing $(Split-Path $out -Leaf) failed ($($s.StatusMessage))." }
 }
-foreach ($oldSetup in @(Get-ChildItem -LiteralPath $release -Filter 'MarkdownViewer-Setup-*.exe')) { [IO.File]::Delete($oldSetup.FullName) }
+# (Setups made under the name before 1.16, MarkdownViewer-Setup-*.exe, go as well.)
+foreach ($oldSetup in @(Get-ChildItem -LiteralPath $release -Filter '*-Setup-*.exe' | Where-Object { $_.Name -like 'ReadSafeViewer-Setup-*' -or $_.Name -like 'MarkdownViewer-Setup-*' })) { [IO.File]::Delete($oldSetup.FullName) }
 if ($Record) {
     if (-not (Test-Path -LiteralPath $Record -PathType Leaf) -or (Split-Path $Record -Leaf) -ne 'source-manifest.txt') { throw "Record not found: $Record" }
     $payload += (Resolve-Path -LiteralPath $Record).Path
 }
-$setupExe = Join-Path $release "MarkdownViewer-Setup-$version.exe"
+$setupExe = Join-Path $release "ReadSafeViewer-Setup-$version.exe"
 Build-Setup $setupExe $payload
 Write-Host "Built $setupExe (installs the program on any PC$(if ($Record) { '; with the project record' })), signed by the same certificate"

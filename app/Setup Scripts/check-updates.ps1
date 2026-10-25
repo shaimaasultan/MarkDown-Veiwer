@@ -9,7 +9,7 @@
 # - every answer has a 15-second time limit and a size limit, and only a version number is taken from it;
 # - nothing is downloaded or installed: the SDK files are pinned by SHA-256 in build.ps1, so an update is a
 #   deliberate step (see README > Updating the WebView2 SDK and libraries).
-# The result is remembered in %LOCALAPPDATA%\MarkdownViewerWebView2\update-check.txt, so Install.cmd can
+# The result is remembered in %LOCALAPPDATA%\ReadSafeViewer\update-check.txt, so Install.cmd can
 # remind you when updates were found (a newer WebView2 SDK on a line of its own) or the last check is more than
 # 30 days old.
 [CmdletBinding()]
@@ -35,7 +35,7 @@ function Get-Json([string]$url, [string]$expectedHost, [int]$maxBytes) {
         $req.Timeout = 15000
         $req.ReadWriteTimeout = 15000
         $req.Accept = 'application/json'
-        $req.UserAgent = 'MarkdownViewerWebView2-update-check'
+        $req.UserAgent = 'ReadSafeViewer-update-check'
         $resp = $req.GetResponse()
         try {
             if ([int]$resp.StatusCode -ne 200 -or $resp.ResponseUri.Host -ne $expectedHost) { return $null }
@@ -130,7 +130,7 @@ if ($updates.Count) {
 if ($failed.Count) { Write-Host "Could not check: $(($failed | ForEach-Object Name) -join ', ') (no internet connection, or the site answered unexpectedly)." -ForegroundColor Yellow }
 
 # Remember the result for Install.cmd's reminder.
-$stateDir = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'MarkdownViewerWebView2'
+$stateDir = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'ReadSafeViewer'
 New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
 # The earlier in-app check's status file is no longer used.
 Remove-Item -LiteralPath (Join-Path $stateDir 'webview2-update-status.txt') -Force -ErrorAction SilentlyContinue
