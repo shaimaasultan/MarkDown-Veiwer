@@ -105,6 +105,28 @@ before then. `Install.cmd` warns once less than a year is left.
 - Administrator rights once per install or update (for the copy into Program Files and the viewer firewall rules) and
   once to uninstall; on a standard account, Windows asks for an administrator's password
 
+## Command files at a glance
+
+All launchers are in `app\Setup Scripts\cmd\`. Double-click them from File Explorer, or run them from a normal
+Command Prompt / PowerShell window - never "Run as administrator": the ones that need administrator rights ask
+for them themselves, for that one step only. Each window stays open at the end so you can read the result.
+
+| File | What it does | When to run it | How |
+|---|---|---|---|
+| `Install.cmd` | Lists project files changed since the last install (asks for **Y**), builds and signs the app, and installs it to `C:\Program Files\ReadSafeViewer` with the Setup it made: file types, Open with, Start menu, Settings › Apps and the viewer firewall rules. Moves an install of the old name (Markdown Viewer (WebView2)) over. | First install; after pulling changes, editing the source or updating the SDK or libraries. | Double-click. One administrator prompt (the copy to Program Files); Windows asks you to confirm each signing. |
+| `Check-Source.cmd` | Compares the project folder with the record of the last install (kept in Program Files) and lists files changed, added or removed. Its checker runs only if it is exactly the recorded copy. Changes nothing. | Before `Install.cmd`, after a `git pull`, or whenever you want to know that nothing changed the project behind your back. | Double-click. |
+| `Test-Viewer.cmd` | Opens every document in `docs\test\fixtures\` in the viewer page, in Microsoft Edge without a window, and fails if anything that could run code reaches the page or a view is wrong. Changes nothing. | After editing `viewer.js` / `viewer.html`; `Update-Libraries.cmd` runs it for you. | Double-click. Add your own documents: `Test-Viewer.cmd -Folder C:\path\to\folder`. Exit code 0 = all passed. |
+| `Check-Updates.cmd` | Reports newer WebView2 SDK DLLs (nuget.org) and bundled libraries (npm), and the WebView2 Runtime on this PC. Only reports - nothing is downloaded. Its result feeds the reminders in `Install.cmd` and the app's WebView2 dialog. | Every month or two, or when `Install.cmd` says the last check is over 30 days old. | Double-click. Goes online (HTTPS, two fixed hosts) only while it runs. |
+| `Update-WebView2-SDK.cmd` | Shows the plan, asks, then downloads `Microsoft.Web.WebView2`, checks nuget.org's SHA-512, Microsoft's signature and the version, and replaces the three SDK DLLs and their SHA-256 pins in `build.ps1`. Never builds or installs. | When `Check-Updates.cmd` (or the yellow reminder) reports a newer SDK. | Double-click; answer **Y**. Releases younger than 7 days are held back - add `-AllowNew` to take one, `-Version 1.0.xxxx.yy` for a specific one. Then `Install.cmd`, then `Check-Updates.cmd`. |
+| `Update-Libraries.cmd` | Shows the plan, asks, then downloads marked, KaTeX, highlight.js or Mermaid from npm, checks the SHA-512, replaces only the expected files in `app\source\` and runs the viewer test ("Do not install this" if it fails). Never builds or installs. | When `Check-Updates.cmd` reports a newer library. | Double-click; answer **Y**. `-Library KaTeX` for one library, `-AllowNew` for releases younger than 7 days. Then look at a few documents, `Install.cmd`, `Check-Updates.cmd`. |
+| `Trust-Certificate.cmd` | Adds your own signing certificate (taken from the installed program) to your account's Trusted Roots, so Windows shows the program's signature as valid. Optional: the app checks its own signatures either way. | Once on the PC that builds the app, after the first install or a new signing certificate. | Double-click; Windows asks you to confirm. |
+| `Untrust-Certificate.cmd` | Removes that trust again. | When you no longer want the certificate trusted (uninstalling does it too). | Double-click; Windows asks you to confirm. |
+| `Uninstall.cmd` | Uninstalls with the installed `Uninstall.exe`: the program, its file types, Open with, shortcuts, Settings › Apps entry, settings and browser data, the firewall rules and the certificate trust; restores your previous `.md` default. Same as Settings › Apps › ReadSafe Viewer › Uninstall. | When you want the app removed. | Double-click. One administrator prompt (firewall rules and the Program Files folder). |
+| `Python-Firewall.cmd` | Optional tool, not part of the viewer: creates, checks or removes outbound firewall block rules for the Python Software Foundation-signed `python.exe` / `py.exe` on your PATH. Runs only if it matches the install record. | Only if you want Python itself blocked from the network. | Double-click, then press **C** to create or replace the rules, **R** to check them or **M** to remove them; one administrator prompt. Rules stay after uninstalling the viewer until you choose Remove. |
+
+On other PCs you need none of these: run `ReadSafeViewer-Setup-<version>.exe` (from `app\release\` or the GitHub release) -
+it installs, updates and uninstalls with its own window.
+
 ## Install
 
 All double-click `.cmd` launchers are grouped in `app\Setup Scripts\cmd\`; PowerShell setup and maintenance scripts are in `app\Setup Scripts\`.
@@ -362,7 +384,7 @@ a new empty Edge profile that cannot look up any host name.
 | `app\Setup Scripts\update-sdk.ps1` and `cmd\Update-WebView2-SDK.cmd` | Downloads, checks (nuget.org SHA-512, Microsoft signature, version) and replaces the three WebView2 SDK DLLs and their SHA-256 pins in `build.ps1` (plan first; asks before downloading; holds back releases under 7 days old) |
 | `app\Setup Scripts\update-libs.ps1` | Downloads, checks and replaces the bundled libraries in `app\source\` (plan first; asks before downloading; holds back releases under 7 days old) |
 | `app\Setup Scripts\test-viewer.ps1` | Tests the viewer page with the documents in `docs\test\fixtures\` (display, breakdown, nothing that could run code) |
-| `app\Setup Scripts\cmd\*.cmd` | Double-click launchers: `Install`, `Uninstall`, `Check-Source`, `Check-Updates`, `Update-Libraries`, `Test-Viewer`, `Trust-` / `Untrust-Certificate` |
+| `app\Setup Scripts\cmd\*.cmd` | Double-click launchers - see [Command files at a glance](#command-files-at-a-glance) |
 | `docs\test\fixtures\` | Test documents grouped into `markdown\`, `tables\`, `json\`, `xml\`, `html\`, `code\`, `spreadsheets\` and `notebooks\`; `docs\test\tools\` holds the test harness and fixture generators |
 | `app\Setup Scripts\webview2\` | Microsoft WebView2 SDK files needed to build the app, with their license |
 | `docs\` | Promo video and its poster picture, the security hardening history, and `test\` with fixtures and test tools |
