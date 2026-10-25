@@ -245,7 +245,9 @@ engine, when the app was built, and what to do - all read on this PC, nothing is
 - **Engine updated within 45 days** - nothing to do. **Older** - Microsoft releases a new engine about every four
   weeks, so it suggests Windows Update and, if the version stays the same, Microsoft's WebView2 Runtime download
   (the link asks before opening the browser, like every web link).
-- **Engine older than the app's SDK** (by build number) - some features may be off; update the engine.
+- **Engine older than the app's SDK** (by build number) - normal for a few weeks after an SDK release, since Microsoft
+  publishes the SDK before the matching engine reaches Windows: a neutral note while the engine is updating. Only when
+  the engine has also not updated for 45 days does it warn and suggest Windows Update.
 - **App's SDK far behind the engine on this PC** - Windows has no WebView2 SDK of its own (every app ships its own
   copy; this PC alone has six different ones from Dell, Office, WSL and this app), so the engine's build number is
   the PC's side of the comparison. The dialog shows both (`On this PC: WebView2 engine build 4283 · in this app: SDK

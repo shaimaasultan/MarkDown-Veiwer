@@ -8174,9 +8174,14 @@ async function showWebViewStatus() {
   // of the comparison: lower than the app's SDK build → update the engine; far higher → the app's SDK is behind.
   const rb = buildOf(s.runtime), sb = buildOf(s.sdk);
   const releasesBehind = rb !== null && sb !== null ? Math.round((rb - sb) / BUILDS_PER_RELEASE) : null;
+  // Microsoft publishes an SDK before the matching engine reaches every PC, so a recently updated engine that is
+  // still older than the SDK is normal and only noted; it is a warning only when the engine has also stopped updating.
   if (rb !== null && sb !== null) engine.push(rb >= sb
     ? ['ok', `✓ Compatible: the engine (build ${rb}) is at least as new as the SDK the app was built with (build ${sb}).`]
-    : ['warn', `⚠ The engine (build ${rb}) is older than the SDK the app was built with (build ${sb}); some features may be off. Update the engine with Windows Update.`]);
+    : runtimeAge === null || runtimeAge <= RUNTIME_STALE_DAYS
+      ? ['info', `The engine (build ${rb}) is a little older than the SDK the app was built with (build ${sb}). Microsoft publishes a new SDK ` +
+          'before the matching engine reaches Windows; it usually arrives within a few weeks. Nothing is needed now - the viewer works with this engine.']
+      : ['warn', `⚠ The engine (build ${rb}) is older than the SDK the app was built with (build ${sb}) and is not updating; some features may be off. Update the engine with Windows Update.`]);
 
   // The SDK: only a new build of the app changes it.
   const buildAge = daysSince(s.built);
