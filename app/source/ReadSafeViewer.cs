@@ -36,7 +36,7 @@ using Microsoft.Win32.SafeHandles;
 [assembly: AssemblyProduct("ReadSafe Viewer")]
 [assembly: AssemblyDescription("Previews Markdown files with figures, math and diagrams. Never runs code from a document.")]
 [assembly: AssemblyCompany("Markdown Viewer")]
-[assembly: AssemblyCopyright("Markdown Viewer")]
+[assembly: AssemblyCopyright("Copyright (c) 2026 Shaimaa Said Soltan - MIT License")]
 // The program's own calls into Windows DLLs (user32, kernel32, advapi32, wintrust) load them from System32
 // only, never from the program's folder or anywhere else on the search path.
 [assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
@@ -971,7 +971,8 @@ static class Program
     {
         StringBuilder sb = new StringBuilder();
         sb.AppendLine(AppName + " " + AppVersion);
-        sb.AppendLine("Created by Shaimaa Soltan");
+        sb.AppendLine("Created by Shaimaa Soltan - MIT License");
+        sb.AppendLine("Contact: shaimaasultan@hotmail.com - https://github.com/shaimaasultan");
         sb.AppendLine();
         sb.AppendLine("PREVIEW ONLY: Markdown files are displayed, never executed. Scripts, event handlers,");
         sb.AppendLine("javascript: links, frames, forms and plugins in a document are removed before display");
@@ -1025,7 +1026,8 @@ static class Program
                       ", WebView2 SDK " + (wvSdk ?? "?") + " (Microsoft.Web.WebView2)");
         sb.AppendLine("- Installer: PowerShell scripts (build, install, uninstall); installed in Program Files (one administrator prompt, for the copy only), file association for your account");
         sb.AppendLine("- Viewer: HTML, CSS and JavaScript, no frameworks");
-        sb.AppendLine("- Created by: Shaimaa Soltan");
+        sb.AppendLine("- Created by: Shaimaa Said Soltan (shaimaasultan@hotmail.com, https://github.com/shaimaasultan)");
+        sb.AppendLine("- License: MIT (see LICENSE); bundled libraries keep their own licenses");
         sb.AppendLine("- Made using: GPT-5 (original viewer); extended and tested with Claude Code (Anthropic)");
         sb.AppendLine();
         FirewallStatus fw = GetFirewallStatus();

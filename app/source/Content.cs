@@ -10,7 +10,7 @@ using System.Reflection;
 [assembly: AssemblyProduct("ReadSafe Viewer")]
 [assembly: AssemblyDescription("The viewer page and its bundled libraries (marked, KaTeX, highlight.js, Mermaid) as signed resources.")]
 [assembly: AssemblyCompany("Markdown Viewer")]
-[assembly: AssemblyCopyright("Markdown Viewer")]
+[assembly: AssemblyCopyright("Copyright (c) 2026 Shaimaa Said Soltan - MIT License")]
 [assembly: AssemblyVersion("1.16.0.0")]
 [assembly: AssemblyFileVersion("1.16.0.0")]
 [assembly: AssemblyInformationalVersion("1.16.0")]

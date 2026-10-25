@@ -9,6 +9,8 @@ and logs as data and text, never run.
 
 ▶ **[Watch the promo video](docs/promo.mp4)** (MP4, 1080p, 1:16, no sound)
 
+By **Shaimaa Said Soltan** · [MIT License](LICENSE) · [shaimaasultan@hotmail.com](mailto:shaimaasultan@hotmail.com) · [github.com/shaimaasultan](https://github.com/shaimaasultan)
+
 ## Features
 
 - **Markdown rendering** with [marked](https://github.com/markedjs/marked), including tables, task lists and inline HTML (sanitised)
@@ -376,3 +378,18 @@ a new empty Edge profile that cannot look up any host name.
 | Microsoft WebView2 SDK | 1.0.4314.35 | see `app\Setup Scripts\webview2\WebView2-SDK-LICENSE.txt` |
 
 The original viewer was made using GPT-5; this version was extended and tested with Claude Code (Anthropic).
+
+## License
+
+ReadSafe Viewer is released under the [MIT License](LICENSE): you may use, copy, change and share it, including
+commercially, as long as the copyright notice and license text stay with it. The bundled components above keep
+their own licenses.
+
+## Author
+
+**Shaimaa Said Soltan**
+
+- Email: [shaimaasultan@hotmail.com](mailto:shaimaasultan@hotmail.com)
+- GitHub: [github.com/shaimaasultan](https://github.com/shaimaasultan)
+
+Questions, bug reports and ideas are welcome as [GitHub issues](https://github.com/shaimaasultan/MarkDown-Veiwer/issues).

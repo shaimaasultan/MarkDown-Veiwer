@@ -43,7 +43,7 @@ using Microsoft.Win32;
 
 [assembly: AssemblyProduct("ReadSafe Viewer")]
 [assembly: AssemblyCompany("Markdown Viewer")]
-[assembly: AssemblyCopyright("Markdown Viewer")]
+[assembly: AssemblyCopyright("Copyright (c) 2026 Shaimaa Said Soltan - MIT License")]
 // Windows DLLs this file calls (kernel32, advapi32, wintrust, shell32) come from System32 only.
 [assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
 
