@@ -40,13 +40,13 @@ $csc = Join-Path ([Environment]::GetFolderPath('Windows')) 'Microsoft.NET\Framew
 if (-not (Test-Path $csc)) { throw 'The 64-bit C# compiler (csc.exe) from .NET Framework 4 was not found.' }
 $cscSig = Get-AuthenticodeSignature $csc
 if ($cscSig.Status -ne 'Valid' -or $cscSig.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation,') { throw "$csc does not carry a valid Microsoft signature." }
-# The WebView2 SDK files must be exactly these (SDK 1.0.4258.31) and carry Microsoft's valid signature. A
+# The WebView2 SDK files must be exactly these (SDK 1.0.4314.35) and carry Microsoft's valid signature. A
 # changed file stops the build before anything is compiled or signed - including a Microsoft-signed file of
 # another version. Update these hashes together with the SDK files.
 $sdkHashes = @{
-    'Microsoft.Web.WebView2.Core.dll'     = 'D60E6E94245078CB56E44EBD5F360DC04BF18E460136BE93BFC4CFCA43B98505'
-    'Microsoft.Web.WebView2.WinForms.dll' = '6A9E6856F23C463783C3AFB0CA5D78F56324C86657162CCB16D5227B3233B32A'
-    'WebView2Loader.dll'                  = '3426DCC55FDFB8B5E7AC623CF33B4CCF283FBF68A0C5A65BDDFDB4D749A8ABEE'
+    'Microsoft.Web.WebView2.Core.dll'     = 'ACDD517B951829F763D1255F32DF1E6A936CB8623A7EBFF6B8B24172DEDE6BD6'
+    'Microsoft.Web.WebView2.WinForms.dll' = 'C66437F80886AECF074804B61AF4CC10AD90A95310C8E0A717F31EA377C26B03'
+    'WebView2Loader.dll'                  = 'D3FCE90BDEECB08596E377DEA6A316354DD8949E32FF09B89D51BE00C14E21B6'
 }
 foreach ($f in $sdkFiles) {
     $p = Join-Path $wv2 $f

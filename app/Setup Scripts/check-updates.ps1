@@ -84,7 +84,7 @@ $rows | Format-Table Name, Current, Latest, State -AutoSize | Out-String -Width 
 # the SDK DLLs already pinned in the project. The app and Setup do not update themselves.
 $sdkState = $rows | Where-Object Name -eq 'WebView2 SDK DLLs (build input)' | Select-Object -First 1
 if ($sdkState.State -eq 'UPDATE AVAILABLE') {
-    Write-Host "WEBVIEW2 APP DLL UPDATE AVAILABLE: stable SDK $($sdkState.Latest) is newer than the project DLLs ($($sdkState.Current)). After reviewing the release, update the three signed files and SHA-256 pins, then rebuild and install." -ForegroundColor Yellow
+    Write-Host "WEBVIEW2 APP DLL UPDATE AVAILABLE: stable SDK $($sdkState.Latest) is newer than the project DLLs ($($sdkState.Current)). After reviewing the release, run Update-WebView2-SDK.cmd (it replaces the three signed files and SHA-256 pins), then Install.cmd." -ForegroundColor Yellow
 } elseif ($sdkState.State -eq 'up to date') {
     Write-Host "WebView2 app SDK DLLs: project inputs are current at $($sdkState.Current)."
 } else {

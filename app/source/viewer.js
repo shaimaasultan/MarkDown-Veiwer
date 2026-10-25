@@ -7900,7 +7900,7 @@ async function walk(entry, prefix, out) {
 const LIBRARIES = [
   { name: 'marked', version: '18.1.1', use: 'Markdown → HTML', match: /marked/i,
     loaded: () => typeof window.marked?.Marked === 'function' },
-  { name: 'KaTeX', version: '0.19.0', use: 'Math equations', match: /katex/i,
+  { name: 'KaTeX', version: '0.19.1', use: 'Math equations', match: /katex/i,
     loaded: () => typeof window.katex?.renderToString === 'function', actual: () => window.katex?.version },
   { name: 'highlight.js', version: '11.12.0', use: 'Code colouring', match: /highlight/i,
     loaded: () => typeof window.hljs?.highlightElement === 'function', actual: () => window.hljs?.versionString },
@@ -8179,7 +8179,7 @@ async function showWebViewStatus() {
   const app = [];
   if (s.devSdkLatest && s.sdk && versionGreater(s.devSdkLatest, s.sdk))
     app.push(['warn', `⚠ Check-Updates.cmd on this PC found SDK ${s.devSdkLatest}${s.devChecked ? ` (${dateOf(s.devChecked)})` : ''}. ` +
-      'Replace the three DLLs in app\\Setup Scripts\\webview2\\, update their SHA-256 pins in build.ps1 and run Install.cmd (README › Updating the WebView2 SDK and libraries).']);
+      'Run app\\Setup Scripts\\cmd\\Update-WebView2-SDK.cmd (it replaces the three DLLs and their SHA-256 pins), then Install.cmd.']);
   else if (releasesBehind !== null && releasesBehind >= SDK_BEHIND_RELEASES)
     app.push(['warn', `⚠ The app's SDK (build ${sb}) is about ${releasesBehind} engine releases behind the WebView2 engine on this PC (build ${rb}). ` +
       'It still works, but ask whoever provides Markdown Viewer for a version with a newer SDK - a new version is the only way the SDK is updated. (Developer: run Check-Updates.cmd.)']);

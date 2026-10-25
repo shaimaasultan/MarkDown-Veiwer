@@ -129,7 +129,7 @@ if ($sdkLatest -and $sdkHave -and [version]$sdkLatest -gt [version]$sdkHave) {
     Write-Host ''
     Write-Host "REMINDER - WebView2 SDK update: $sdkLatest is out; this build still uses $sdkHave." -ForegroundColor Yellow
     Write-Host '  Windows keeps the WebView2 Runtime up to date, but not the three SDK DLLs in app\Setup Scripts\webview2\.' -ForegroundColor Yellow
-    Write-Host '  Update them: README > Updating the WebView2 SDK and libraries (new DLLs, SHA-256 pins in build.ps1, Install.cmd).' -ForegroundColor Yellow
+    Write-Host '  Update them with app\Setup Scripts\cmd\Update-WebView2-SDK.cmd, then run Install.cmd again.' -ForegroundColor Yellow
 }
 # The SDK is covered above (or already updated): not listed again with the other updates.
 if ($sdkLatest) {

@@ -262,7 +262,8 @@ Users have nothing to update. The SDK DLLs cannot be left out or swapped: Window
 SHA-256 is compiled into the signed program, so the viewer refuses to start with any other copy - only the exact
 Microsoft files it was built with load. An older SDK keeps working with a newer Runtime.
 
-**Reminder for the developer:** run `Check-Updates.cmd` every month or two. When it finds a newer SDK, `Install.cmd`
+**Reminder for the developer:** run `Check-Updates.cmd` every month or two. When it finds a newer SDK, update it with
+`Update-WebView2-SDK.cmd` ([steps](#updating-the-webview2-sdk-and-libraries)); until then `Install.cmd`
 shows a yellow *REMINDER - WebView2 SDK update* at every install until the DLLs in `app\Setup Scripts\webview2\` reach
 that version; it also suggests a new check when the last one is more than 30 days old.
 
@@ -291,12 +292,16 @@ reminder - or when it is more than 30 days old.
 
 The SDK files are pinned by SHA-256, so an update is a deliberate step:
 
-1. **WebView2 SDK:** download the `Microsoft.Web.WebView2` package of the new version from nuget.org (a
-   `.nupkg` is a zip file). Take `lib\net462\Microsoft.Web.WebView2.Core.dll`,
-   `lib\net462\Microsoft.Web.WebView2.WinForms.dll` and `runtimes\win-x64\native\WebView2Loader.dll` and
-   replace the three files in `app\Setup Scripts\webview2\`. Check that each carries Microsoft's valid signature (file
-   Properties › Digital Signatures), then put their SHA-256 (`Get-FileHash`) into `$sdkHashes` in
-   `app\Setup Scripts\build.ps1` and the new version in its comment and in the table below.
+1. **WebView2 SDK:** double-click `app\Setup Scripts\cmd\Update-WebView2-SDK.cmd`. It shows the plan (current and
+   new version, the exact download, what it replaces) and asks before downloading anything. Then it downloads the
+   `Microsoft.Web.WebView2` package from api.nuget.org only (HTTPS, no redirects, size limit), checks it against the
+   SHA-512 nuget.org publishes, takes out only `lib\net462\Microsoft.Web.WebView2.Core.dll`,
+   `lib\net462\Microsoft.Web.WebView2.WinForms.dll`, `runtimes\win-x64\native\WebView2Loader.dll` and the licence
+   into a folder of its own, and checks there that each DLL carries Microsoft's valid signature and is that version.
+   Only then does it replace the files in `app\Setup Scripts\webview2\`, put their SHA-256 into `$sdkHashes` in
+   `app\Setup Scripts\build.ps1` and the version into its comment and the table below. A release published less
+   than 7 days ago is held back; add `-AllowNew` to take it anyway (`-Version 1.0.xxxx.yy` for a specific one).
+   Undo with `git checkout -- "app/Setup Scripts/webview2" "app/Setup Scripts/build.ps1" README.md`.
 2. **Libraries:** double-click `app\Setup Scripts\cmd\Update-Libraries.cmd`. It first shows the plan - for each library the
    new version, the exact download and which files in `app\source\` it replaces - and asks before downloading
    anything. Then it downloads each package from registry.npmjs.org only (HTTPS, no redirects, size limit),
@@ -342,6 +347,7 @@ a new empty Edge profile that cannot look up any host name.
 | `app\Setup Scripts\check-source.ps1` | Records the project files' SHA-256 at install time (the record goes into Program Files) and compares the folder with it; `Check-Source.cmd` runs it only if it is exactly the recorded copy |
 | `app\Setup Scripts\check-updates.ps1` | Manually reports newer versions of the WebView2 SDK and bundled libraries |
 | `app\Setup Scripts\python-firewall.ps1` and `cmd\Python-Firewall.cmd` | Optional manual tool to create, check or remove outbound firewall blocks for trusted Python executables found on PATH; checks local rules and ActiveStore; rules do not cover subprocesses; not packaged or run by Setup |
+| `app\Setup Scripts\update-sdk.ps1` and `cmd\Update-WebView2-SDK.cmd` | Downloads, checks (nuget.org SHA-512, Microsoft signature, version) and replaces the three WebView2 SDK DLLs and their SHA-256 pins in `build.ps1` (plan first; asks before downloading; holds back releases under 7 days old) |
 | `app\Setup Scripts\update-libs.ps1` | Downloads, checks and replaces the bundled libraries in `app\source\` (plan first; asks before downloading; holds back releases under 7 days old) |
 | `app\Setup Scripts\test-viewer.ps1` | Tests the viewer page with the documents in `docs\test\fixtures\` (display, breakdown, nothing that could run code) |
 | `app\Setup Scripts\cmd\*.cmd` | Double-click launchers: `Install`, `Uninstall`, `Check-Source`, `Check-Updates`, `Update-Libraries`, `Test-Viewer`, `Trust-` / `Untrust-Certificate` |
@@ -354,9 +360,9 @@ a new empty Edge profile that cannot look up any host name.
 | Component | Version | License |
 |---|---|---|
 | marked | 18.1.1 | MIT |
-| KaTeX | 0.19.0 | MIT |
+| KaTeX | 0.19.1 | MIT |
 | highlight.js | 11.12.0 | BSD-3-Clause |
 | Mermaid | 12.2.0 | MIT |
-| Microsoft WebView2 SDK | 1.0.4258.31 | see `app\Setup Scripts\webview2\WebView2-SDK-LICENSE.txt` |
+| Microsoft WebView2 SDK | 1.0.4314.35 | see `app\Setup Scripts\webview2\WebView2-SDK-LICENSE.txt` |
 
 The original viewer was made using GPT-5; this version was extended and tested with Claude Code (Anthropic).
