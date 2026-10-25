@@ -11,7 +11,17 @@
   // Everything the page loads (files, addresses) and everything the security policy blocks, as it happens.
   const loads = [], blocked = [];
   new PerformanceObserver(list => { for (const e of list.getEntries()) loads.push(e.name); }).observe({ type: 'resource' });
-  document.addEventListener('securitypolicyviolation', e => blocked.push(`${e.effectiveDirective} ${e.blockedURI || ''}`.trim()));
+  // Where each block came from (script and line that caused it, and the element for an inline handler), so a
+  // failure points at its cause.
+  document.addEventListener('securitypolicyviolation', e => {
+    const el = e.target && e.target.nodeType === 1 && e.target !== document ? e.target : null;
+    // As in the viewer: an event handler only counts on an element of this page. Newer engines also report the
+    // handlers in the documents the viewer parses with DOMParser (never shown, nothing runs); those name no element.
+    if (e.effectiveDirective === 'script-src-attr' && !(el && el.isConnected)) return;
+    const where = e.sourceFile ? ` at ${e.sourceFile.split('/').pop()}:${e.lineNumber}` : '';
+    const what = el ? ` on <${el.localName}${el.id ? '#' + el.id : ''}${el.className && typeof el.className === 'string' ? '.' + el.className.split(' ')[0] : ''}> in ${el.closest('dialog, #output, #sidebar, header')?.id || el.closest('dialog, #output, #sidebar, header')?.localName || 'page'}` : '';
+    blocked.push(`${e.effectiveDirective} ${e.blockedURI || ''}${where}${what}`.replace(/\s+/g, ' ').trim());
+  });
   // win.ini's own lines: they must never show up (an XML external entity or XInclude reading the file).
   const LEAK = /for 16-bit app support|\[fonts\]|\[extensions\]|\[mci extensions\]/i;
   const BAD_TAGS = 'script, iframe, frame, object, embed, applet, form, base, meta, link, portal, frameset';
@@ -406,15 +416,22 @@
     const dlg = document.getElementById('codeAlert');
     if (!dlg.open || !document.getElementById('caTitle').textContent.includes('shown as text')) problems.push('no "contains code" warning');
     if (dlg.open) dlg.close();
-    const source = new TextDecoder().decode(bytes).replace(/^﻿/, '');
-    const shown = output.querySelector('pre.code-text code').textContent;
+    // The code view shows each line on its own, so a file saved with Windows line ends (CRLF) is compared without the CRs.
+    const source = new TextDecoder().decode(bytes).replace(/^﻿/, '').replace(/\r\n?/g, '\n');
+    const shown = output.querySelector('pre.code-text code').textContent.replace(/\r\n?/g, '\n');
     if (shown !== source) problems.push('not the exact source');
     if (!output.querySelector('pre.code-text code span')) problems.push('not coloured');
-    if (!/never opened as a page/.test(output.querySelector('.csv-bar').textContent)) problems.push('no "never opened as a page" note');
+    // Since the optional sandboxed Preview: "Source view - this file is shown as text by default".
+    if (!/shown as text by default/.test(output.querySelector('.csv-bar').textContent)) problems.push('no "shown as text by default" note');
     if (output.querySelector('pre.code-text code *:not(span)')) problems.push('elements other than colour spans in the code');
     if (!/Contains code/.test(document.getElementById('stats').textContent) || !/✗ Unsafe/.test(document.getElementById('stats').textContent)) problems.push('status line: ' + document.getElementById('stats').textContent.slice(0, 160));
-    // Comments: code, conditional comments, early ends and hidden commands are flagged; an ordinary note is only listed.
+    // Comments (page.html holds the comment tricks; the other HTML files are ordinary pages with scripts): code,
+    // conditional comments, early ends and hidden commands are flagged; an ordinary note is only listed.
     const found = new Map((lastSafety && lastSafety.findings || []).map(f => [f.id, f]));
+    if (name !== 'page.html') {
+      if (!found.has('active')) problems.push('scripts not reported in the safety check');
+      return problems;
+    }
     for (const [id, n] of [['commentcode', 2], ['commentif', 1], ['commenttrick', 2], ['cmd-risk', 1]])
       if (!found.has(id) || found.get(id).count < n) problems.push(`comments: ${id} ${found.has(id) ? found.get(id).count : 'missing'}`);
     const plain = found.get('comment');

@@ -4144,11 +4144,15 @@ function alertBlockedCode() {
 // eval inside the bundled libraries is not something a document can cause.
 // (base-uri is not code: a <base> only changes where links point, and the clean-up removes it. Chromium reports it
 // while the clean-up parses a document in a separate, never-shown document, so it is no sign of a gap.)
+// An event handler (on…=) is only a gap when it sits on an element of this page, and the report then names that
+// element. Newer engines (Edge / WebView2 155) also report the handlers in documents the viewer parses with
+// DOMParser to check or show a file - never shown, nothing can run there - and those reports name no element.
 const CODE_DIRECTIVES = /^(script-src|script-src-elem|script-src-attr|object-src|frame-src|child-src|worker-src|form-action)$/;
 const policyBlocks = [];
 document.addEventListener('securitypolicyviolation', e => {
   const directive = e.effectiveDirective || e.violatedDirective || '';
   if (!CODE_DIRECTIVES.test(directive) || /^(wasm-)?eval$/.test(e.blockedURI)) return;
+  if (directive === 'script-src-attr' && !(e.target instanceof Element && e.target.isConnected)) return;
   policyBlocks.push(`${directive}: ${e.blockedURI || 'code written into the page'}` +
                     (e.sample ? ` — “${e.sample.slice(0, 60)}”` : ''));
   showCodeAlert('The window refused to run it, so nothing happened. It should already have been removed ' +
