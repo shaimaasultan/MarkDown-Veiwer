@@ -62,7 +62,7 @@ Every point below, with where it is implemented and how it was tested, is listed
 
 - **Preview only.** Scripts, event handlers, `javascript:` links, frames, forms and plugins in rendered documents are removed before display and also blocked by the window's Content-Security-Policy. Supported text files are shown as text; HTML has an optional sanitized preview in a sandboxed frame with no script permission and `script-src 'none'`. CSS is parsed as styling data; imports and resource URLs are discarded, and external requests are blocked. No document code is executed.
 - **No network port.** The page lives at a private address (`https://mdviewer.example`) that exists only inside the app window; every request is answered by the program itself.
-- **Documents and the viewer page do not access the internet.** All libraries are bundled (`app\source\lib\`) and packed into the signed Content DLL. The WebView2 engine is started so it cannot look up internet addresses; linked web pictures are shown as *not loaded*. The viewer EXE stays firewall-blocked. A signed helper process checks only the stable WebView2 SDK version at `api.nuget.org`, at most once a day, so the header's WebView2 badge can show whether an update is available. It sends no document data and downloads nothing. The optional `Check-Updates.cmd` performs the fuller manual check, including bundled library versions; see [Checking for updates](#checking-for-updates).
+- **Documents and the viewer page do not access the internet.** All libraries are bundled (`app\source\lib\`) and packed into the signed Content DLL. The WebView2 engine is started so it cannot look up internet addresses; linked web pictures are shown as *not loaded*. The viewer EXE stays firewall-blocked, and the viewer itself never goes online - not even for an update check. The header's WebView2 tag shows the Runtime version in use; see [How WebView2 is kept up to date](#how-webview2-is-kept-up-to-date).
 - **Links ask first.** Web and mail links open outside the app only after a question that shows the real address.
 - **Private.** The window runs InPrivate, so no history of the documents you view is kept. Camera, microphone, location, notifications and clipboard reading are refused; downloads come only from the viewer itself; the right-click menu has no Share, web capture or other browser extras.
 - **Scoped file access.** Each window keeps a resolved directory handle for its read boundary (the Git worktree root, or the parent of the document folder outside a worktree). Opened files are checked by their final handle path, so junctions and symbolic links cannot redirect reads outside that boundary. Very large files (over 50 MB of text, or 200 MB of media or Excel) are not opened. A document cannot draw over the viewer's own controls, and a diagram cannot add CSS of its own.
@@ -228,6 +228,41 @@ certificate (the one on this PC with its private key), and adds it straight from
 that could be swapped.
 `Untrust-Certificate.cmd` undoes that, and so does uninstalling the app.
 
+## How WebView2 is kept up to date
+
+The viewer uses two separate WebView2 parts, and they are updated in different ways:
+
+| | WebView2 **Runtime** (the browser engine) | WebView2 **SDK** (three DLLs next to the program) |
+|---|---|---|
+| What it is | Microsoft's Edge engine that draws the page | The bridge the program is built against: `Microsoft.Web.WebView2.Core.dll`, `Microsoft.Web.WebView2.WinForms.dll`, `WebView2Loader.dll` |
+| Security fixes | Nearly all of them | Rarely; mostly new features |
+| Updated by | **Windows, automatically** (Microsoft Edge Update) - the viewer uses the new engine at its next start | **The developer**, with a new signed build ([steps](#updating-the-webview2-sdk-and-libraries)) |
+| Shown in the app | Header tag (`WebView2 <Runtime version>`) and About | Header tag tooltip and About |
+
+**Click the `WebView2` tag** in the header for *WebView2 on this PC*: both versions, when Windows installed this
+engine, when the app was built, and what to do - all read on this PC, nothing is sent or downloaded:
+
+- **Engine updated within 45 days** - nothing to do. **Older** - Microsoft releases a new engine about every four
+  weeks, so it suggests Windows Update and, if the version stays the same, Microsoft's WebView2 Runtime download
+  (the link asks before opening the browser, like every web link).
+- **Engine older than the app's SDK** (by build number) - some features may be off; update the engine.
+- **App built more than 120 days ago** - check whether a newer version of Markdown Viewer is available, since a new
+  version is the only way the SDK changes.
+- **On the PC that builds the app** - when the last `Check-Updates.cmd` found a newer SDK, it names that version and
+  the update steps.
+
+Users have nothing to update. The SDK DLLs cannot be left out or swapped: Windows does not provide them, and their
+SHA-256 is compiled into the signed program, so the viewer refuses to start with any other copy - only the exact
+Microsoft files it was built with load. An older SDK keeps working with a newer Runtime.
+
+**Reminder for the developer:** run `Check-Updates.cmd` every month or two. When it finds a newer SDK, `Install.cmd`
+shows a yellow *REMINDER - WebView2 SDK update* at every install until the DLLs in `app\Setup Scripts\webview2\` reach
+that version; it also suggests a new check when the last one is more than 30 days old.
+
+Earlier versions checked the SDK version online once a day from inside the viewer (a signed PowerShell helper).
+That was removed after the 2026-10-25 security review: users cannot act on an SDK update, and the viewer
+no longer needs any network path of its own.
+
 ## Checking for updates
 
 ```powershell
@@ -240,11 +275,10 @@ Mermaid) are available on the npm registry. It also reports the WebView2 Runtime
 Windows keeps up to date separately. An SDK update means review and refresh the three pinned SDK files, then
 rebuild and install; a stale `app\dist` means rebuild to copy the already-pinned DLLs. The checker only reports:
 nothing is downloaded or installed. It uses HTTPS to `api.nuget.org` and `registry.npmjs.org` only, follows no
-redirects, applies time and size limits, and reads only version numbers. The app's green WebView2 badge also
-checks the latest stable SDK automatically at most once per 24 hours, through a signed helper process that
-contacts only `api.nuget.org`; it downloads nothing and sends no document data. The viewer EXE remains
-firewall-blocked, and the WebView2 engine cannot access the internet. `Install.cmd` reminds you (without going
-online) when the last full manual check found updates, or when it is more than 30 days old.
+redirects, applies time and size limits, and reads only version numbers. It is the project's only update check:
+the viewer itself never goes online, and the WebView2 engine cannot access the internet. `Install.cmd` reminds you
+(without going online) when the last check found updates - a newer WebView2 SDK as a separate, highlighted
+reminder - or when it is more than 30 days old.
 
 ### Updating the WebView2 SDK and libraries
 
@@ -300,7 +334,6 @@ a new empty Edge profile that cannot look up any host name.
 | `app\Setup Scripts\trust.ps1` | Optional certificate trust for the PC that builds (not installed) |
 | `app\Setup Scripts\check-source.ps1` | Records the project files' SHA-256 at install time (the record goes into Program Files) and compares the folder with it; `Check-Source.cmd` runs it only if it is exactly the recorded copy |
 | `app\Setup Scripts\check-updates.ps1` | Manually reports newer versions of the WebView2 SDK and bundled libraries |
-| `app\Setup Scripts\webview2-update-agent.ps1` | Fixed-host SDK version check, embedded in the signed Content DLL and launched by the viewer at most once a day (never installed as a loose script) |
 | `app\Setup Scripts\python-firewall.ps1` and `cmd\Python-Firewall.cmd` | Optional manual tool to create, check or remove outbound firewall blocks for trusted Python executables found on PATH; checks local rules and ActiveStore; rules do not cover subprocesses; not packaged or run by Setup |
 | `app\Setup Scripts\update-libs.ps1` | Downloads, checks and replaces the bundled libraries in `app\source\` (plan first; asks before downloading; holds back releases under 7 days old) |
 | `app\Setup Scripts\test-viewer.ps1` | Tests the viewer page with the documents in `docs\test\fixtures\` (display, breakdown, nothing that could run code) |

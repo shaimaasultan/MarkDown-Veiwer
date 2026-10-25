@@ -3,13 +3,15 @@
 # installed on this PC (read locally).
 #   check-updates.ps1    exit code: 0 up to date, 1 updates available, 2 could not check everything
 #
-# This manual checker contacts these hosts only when you run it. The app also has a separate daily SDK-only check:
+# This is the project's only update check: it contacts these hosts only when you run it (the viewer itself never
+# goes online; the WebView2 Runtime is updated by Windows):
 # - HTTPS only, to two fixed hosts (api.nuget.org, registry.npmjs.org); redirects are not followed;
 # - every answer has a 15-second time limit and a size limit, and only a version number is taken from it;
 # - nothing is downloaded or installed: the SDK files are pinned by SHA-256 in build.ps1, so an update is a
 #   deliberate step (see README > Updating the WebView2 SDK and libraries).
 # The result is remembered in %LOCALAPPDATA%\MarkdownViewerWebView2\update-check.txt, so Install.cmd can
-# remind you when updates were found or the last check is more than 30 days old.
+# remind you when updates were found (a newer WebView2 SDK on a line of its own) or the last check is more than
+# 30 days old.
 [CmdletBinding()]
 param()
 # Only Windows PowerShell's own modules (set before any command is used).
@@ -130,20 +132,10 @@ if ($failed.Count) { Write-Host "Could not check: $(($failed | ForEach-Object Na
 # Remember the result for Install.cmd's reminder.
 $stateDir = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'MarkdownViewerWebView2'
 New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
-$webState = if ($sdkState.State -eq 'UPDATE AVAILABLE') { 'available' }
-            elseif ($sdkState.State -eq 'could not check') { 'unknown' }
-            elseif ($buildNeedsRefresh) { 'build-stale' }
-            else { 'current' }
-$statusPath = Join-Path $stateDir 'webview2-update-status.txt'
-$statusTemp = $statusPath + '.' + [Guid]::NewGuid().ToString('N') + '.new'
-$statusText = "checked=$([DateTime]::UtcNow.ToString('o'))`r`nstate=$webState`r`ncurrent=$($sdkState.Current)`r`nlatest=$($sdkState.Latest)`r`n"
-try {
-    $statusBytes = [Text.Encoding]::UTF8.GetBytes($statusText)
-    $statusStream = [IO.File]::Open($statusTemp, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
-    try { $statusStream.Write($statusBytes, 0, $statusBytes.Length); $statusStream.Flush($true) } finally { $statusStream.Dispose() }
-    if ([IO.File]::Exists($statusPath)) { [IO.File]::Replace($statusTemp, $statusPath, $null) }
-    else { [IO.File]::Move($statusTemp, $statusPath) }
-} finally { if ([IO.File]::Exists($statusTemp)) { [IO.File]::Delete($statusTemp) } }
+# The earlier in-app check's status file is no longer used.
+Remove-Item -LiteralPath (Join-Path $stateDir 'webview2-update-status.txt') -Force -ErrorAction SilentlyContinue
 $lines = @("checked=$((Get-Date).ToString('s'))", "complete=$(-not $failed.Count)") + @($updates | ForEach-Object { "update=$($_.Name) $($_.Current) -> $($_.Latest)" })
+# The SDK on a line of its own: Install.cmd names it until the project's DLLs reach that version.
+if ($sdkState.State -eq 'UPDATE AVAILABLE') { $lines += "sdk=$($sdkState.Latest)" }
 [IO.File]::WriteAllLines((Join-Path $stateDir 'update-check.txt'), [string[]]$lines)
 exit $(if ($failed.Count) { 2 } elseif ($updates.Count) { 1 } else { 0 })

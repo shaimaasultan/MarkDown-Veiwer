@@ -114,12 +114,26 @@ Write-Host "Installed $name $version to $dest"
 Write-Host "Setup for reinstalling (here or on other PCs): $setupFile - it includes the project record (file names and SHA-256)."
 # Update reminder, from the last Check-Updates.cmd result (the installer itself never goes online).
 $updateState = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) "$key\update-check.txt"
-$checked = $null; $updatesFound = @()
+$checked = $null; $updatesFound = @(); $sdkLatest = $null
 if (Test-Path -LiteralPath $updateState) {
     foreach ($line in Get-Content -LiteralPath $updateState) {
         if ($line -like 'checked=*') { try { $checked = [datetime]::Parse($line.Substring(8)) } catch { } }
         elseif ($line -like 'update=*') { $updatesFound += $line.Substring(7) }
+        elseif ($line -match '^sdk=(\d{1,6}(\.\d{1,9}){1,3})$') { $sdkLatest = $Matches[1] }
     }
+}
+# The WebView2 SDK DLLs are the one part Windows does not update (the Runtime it does): say so plainly, until the
+# project's DLLs reach the version found.
+$sdkHave = (Get-Item -LiteralPath (Join-Path $here 'Setup Scripts\webview2\Microsoft.Web.WebView2.Core.dll')).VersionInfo.FileVersion
+if ($sdkLatest -and $sdkHave -and [version]$sdkLatest -gt [version]$sdkHave) {
+    Write-Host ''
+    Write-Host "REMINDER - WebView2 SDK update: $sdkLatest is out; this build still uses $sdkHave." -ForegroundColor Yellow
+    Write-Host '  Windows keeps the WebView2 Runtime up to date, but not the three SDK DLLs in app\Setup Scripts\webview2\.' -ForegroundColor Yellow
+    Write-Host '  Update them: README > Updating the WebView2 SDK and libraries (new DLLs, SHA-256 pins in build.ps1, Install.cmd).' -ForegroundColor Yellow
+}
+# The SDK is covered above (or already updated): not listed again with the other updates.
+if ($sdkLatest) {
+    $updatesFound = @($updatesFound | Where-Object { $_ -notlike 'WebView2 SDK DLLs*' -and $_ -notlike 'WebView2 application build output*' })
 }
 if ($updatesFound.Count) {
     Write-Host "Updates were available at the last check ($($checked.ToString('yyyy-MM-dd'))): $($updatesFound -join '; ')" -ForegroundColor Yellow

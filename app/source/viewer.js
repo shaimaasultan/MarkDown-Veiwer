@@ -8049,7 +8049,7 @@ async function initApp() {
   renderConnStatus();
   fetchFirewall();
   setInterval(fetchFirewall, 60000);
-  refreshWebViewUpdateStatus();
+  showWebViewVersion();
 
   const file = new URLSearchParams(location.search).get('file') || info.file;
   if (!file) return;
@@ -8107,73 +8107,106 @@ function fillFirewallRow(dd) {
 }
 document.getElementById('fwBadge').addEventListener('click', () => showAbout());
 
-// The green WebView2 pill doubles as an SDK freshness indicator. The viewer EXE itself stays
-// network-blocked; its private endpoint reports the result from the signed, fixed-host helper.
-let webViewUpdateTag = null;
-let webViewUpdatePoll = null;
-async function refreshWebViewUpdateStatus() {
-  if (!APP || !webViewUpdateTag) return;
-  try {
-    const response = await apiFetch('webview2-update', { cache: 'no-store' });
-    if (!response.ok) throw new Error('status unavailable');
-    const result = await response.json();
-    const state = ['checking', 'current', 'available', 'unknown'].includes(result.state) ? result.state : 'unknown';
-    const labels = {
-      checking: ['WebView2 · Checking', 'checking'],
-      current: ['WebView2 · Up to date', ''],
-      available: ['WebView2 · Update available', 'update-available'],
-      unknown: ['WebView2 · Check unavailable', 'status-unknown']
-    };
-    const [label, className] = labels[state];
-    webViewUpdateTag.textContent = label;
-    webViewUpdateTag.className = 'app-tag' + (className ? ' ' + className : '');
-    const details = [];
-    if (result.current) details.push('Bundled SDK: ' + result.current);
-    if (result.latest) details.push('Latest stable SDK: ' + result.latest);
-    if (result.checked) {
-      const date = new Date(result.checked);
-      if (!Number.isNaN(date.getTime())) details.push('Checked: ' + date.toLocaleString());
-    }
-    const explanations = {
-      checking: 'Checking the fixed NuGet SDK version endpoint. No files are downloaded.',
-      current: 'The bundled WebView2 SDK is current. The check runs at most once every 24 hours.',
-      available: 'A newer stable WebView2 SDK is available. Review it with Check-Updates.cmd; nothing is downloaded automatically.',
-      unknown: 'The latest SDK version could not be checked. Check your connection or run Check-Updates.cmd.'
-    };
-    webViewUpdateTag.title = [explanations[state], ...details].join('\n');
-    if (state === 'checking') {
-      if (!webViewUpdatePoll) webViewUpdatePoll = setInterval(async () => {
-        await refreshWebViewUpdateStatus();
-        if (!webViewUpdateTag || !webViewUpdateTag.textContent.includes('Checking')) {
-          clearInterval(webViewUpdatePoll);
-          webViewUpdatePoll = null;
-        }
-      }, 1200);
-    } else if (webViewUpdatePoll) {
-      clearInterval(webViewUpdatePoll);
-      webViewUpdatePoll = null;
-    }
-  } catch {
-    webViewUpdateTag.textContent = 'WebView2 · Status unavailable';
-    webViewUpdateTag.className = 'app-tag status-unknown';
-    webViewUpdateTag.title = 'Could not read the local WebView2 SDK update status.';
-    if (webViewUpdatePoll) {
-      clearInterval(webViewUpdatePoll);
-      webViewUpdatePoll = null;
-    }
-  }
+// The header's WebView2 tag: the engine's version. Windows keeps the engine up to date (Microsoft Edge Update);
+// the bundled SDK files are pinned and change only with a new signed build, so the viewer never checks online.
+let webViewTag = null;
+function showWebViewVersion() {
+  if (!webViewTag || !appInfo) return;
+  if (appInfo.webview2Runtime) webViewTag.textContent = `WebView2 ${appInfo.webview2Runtime}`;
+  webViewTag.title = [
+    appInfo.webview2Runtime && `WebView2 Runtime ${appInfo.webview2Runtime}: the browser engine. Windows updates it automatically, with its security fixes.`,
+    appInfo.webview2Sdk && `Bundled WebView2 SDK ${appInfo.webview2Sdk}: pinned by SHA-256 and signed with the program; it changes only with a new build.`,
+    'Click for what this PC can tell about updates.'
+  ].filter(Boolean).join('\n');
 }
+
+// Clicking the tag: what this PC can tell about the engine and the SDK, with advice. Everything is read locally
+// (<token>/webview2); the only way out is the Microsoft link, which asks first like every web link.
+const RUNTIME_STALE_DAYS = 45;     // Microsoft ships a new engine about every 4 weeks
+const BUILD_OLD_DAYS = 120;        // after this, suggest looking for a newer version of the app
+const daysSince = iso => { const t = Date.parse(iso || ''); return Number.isNaN(t) ? null : Math.floor((Date.now() - t) / 864e5); };
+const dateOf = iso => new Date(iso).toLocaleDateString();
+const buildOf = v => { const n = parseInt(String(v || '').split('.')[2], 10); return Number.isNaN(n) ? null : n; };
+const versionGreater = (a, b) => {
+  const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  return false;
+};
+
+async function showWebViewStatus() {
+  let s;
+  try { s = await (await apiFetch('webview2', { cache: 'no-store' })).json(); }
+  catch { s = { runtime: appInfo?.webview2Runtime, sdk: appInfo?.webview2Sdk }; }
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
+  const section = (title, facts, advice) => {
+    const sec = el('section');
+    sec.append(el('h3', '', title), el('p', 'facts', facts.filter(Boolean).join(' · ')));
+    for (const [kind, text, link] of advice) {
+      const p = el('p', 'advice ' + kind, text);
+      if (link) {
+        const a = el('a', '', link.text);
+        a.href = link.href; a.target = '_blank'; a.rel = 'noopener noreferrer';
+        p.append(' ', a);
+      }
+      sec.append(p);
+    }
+    return sec;
+  };
+
+  // The engine: Windows updates it; advise only when it looks stuck or older than what the app was built with.
+  const runtimeAge = daysSince(s.runtimeInstalled);
+  const engine = [];
+  if (!s.runtime) engine.push(['warn', 'The WebView2 Runtime version could not be read. Repair it in Settings › Apps, or install it from Microsoft:',
+    { text: 'WebView2 Runtime download', href: 'https://developer.microsoft.com/microsoft-edge/webview2/' }]);
+  else if (runtimeAge === null) engine.push(['info', 'Windows keeps the engine up to date automatically; nothing to do.']);
+  else if (runtimeAge <= RUNTIME_STALE_DAYS) engine.push(['ok', `✓ Updated ${runtimeAge === 0 ? 'today' : `${runtimeAge} day${runtimeAge === 1 ? '' : 's'} ago`}. Windows keeps it up to date automatically; nothing to do.`]);
+  else engine.push(['warn', `⚠ Not updated for ${runtimeAge} days, while Microsoft releases a new engine about every 4 weeks - its security fixes may be missing. ` +
+    'Run Windows Update and restart the viewer. If the version stays the same, reinstall the Evergreen Runtime from Microsoft:',
+    { text: 'WebView2 Runtime download', href: 'https://developer.microsoft.com/microsoft-edge/webview2/' }]);
+  const rb = buildOf(s.runtime), sb = buildOf(s.sdk);
+  if (rb !== null && sb !== null) engine.push(rb >= sb
+    ? ['ok', `✓ Compatible: the engine (build ${rb}) is at least as new as the SDK the app was built with (build ${sb}).`]
+    : ['warn', `⚠ The engine (build ${rb}) is older than the SDK the app was built with (build ${sb}); some features may be off. Update the engine with Windows Update.`]);
+
+  // The SDK: only a new build of the app changes it.
+  const buildAge = daysSince(s.built);
+  const app = [];
+  if (s.devSdkLatest && s.sdk && versionGreater(s.devSdkLatest, s.sdk))
+    app.push(['warn', `⚠ Check-Updates.cmd on this PC found SDK ${s.devSdkLatest}${s.devChecked ? ` (${dateOf(s.devChecked)})` : ''}. ` +
+      'Replace the three DLLs in app\\Setup Scripts\\webview2\\, update their SHA-256 pins in build.ps1 and run Install.cmd (README › Updating the WebView2 SDK and libraries).']);
+  else if (buildAge !== null && buildAge > BUILD_OLD_DAYS)
+    app.push(['warn', `⚠ This build is ${buildAge} days old. Check whether a newer version of Markdown Viewer is available from whoever provides it - ` +
+      'a new version is the only way the SDK is updated. (Developer: run Check-Updates.cmd.)']);
+  else app.push(['ok', '✓ Nothing to do. The SDK changes only with a new version of the app; check for one every few months. (Developer: run Check-Updates.cmd every month or two.)']);
+
+  document.getElementById('wvBody').replaceChildren(
+    section('WebView2 Runtime - the browser engine', [
+      s.runtime ? `Version ${s.runtime}` : 'Version unknown',
+      s.runtimeInstalled && `installed on this PC ${dateOf(s.runtimeInstalled)}`,
+      'updated by Windows'], engine),
+    section('WebView2 SDK - built into this app', [
+      s.sdk ? `Version ${s.sdk}` : 'Version unknown',
+      s.app && `Markdown Viewer ${s.app}`,
+      s.built && `built ${dateOf(s.built)}`,
+      'pinned by SHA-256'], app));
+  const dlg = document.getElementById('wvDlg');
+  if (!dlg.open) dlg.showModal();
+}
+document.getElementById('wvClose').addEventListener('click', () => document.getElementById('wvDlg').close());
 
 if (APP) initApp();
 
 // The app's name tag in the header.
 {
-  const tag = document.createElement('span');
+  const tag = document.createElement(APP ? 'button' : 'span');
   tag.className = 'app-tag';
-  tag.textContent = APP ? 'WebView2 · Checking' : 'WebView2';
-  if (APP) tag.classList.add('checking');
+  tag.textContent = 'WebView2';
   tag.title = 'Own window, bundled libraries, no network port';
-  webViewUpdateTag = tag;
+  if (APP) {
+    tag.type = 'button';
+    tag.addEventListener('click', showWebViewStatus);
+  }
+  webViewTag = tag;
   document.querySelector('header h1').append(' ', tag);
 }
 

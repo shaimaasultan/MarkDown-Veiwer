@@ -1,8 +1,8 @@
 // Markdown Viewer (WebView2) - page and libraries.
 //
-// Resource-only assembly (no code): viewer.html, viewer.js, marked, the bundled libraries and the fixed-host
-// WebView2 update-check helper are packed into this DLL by build.ps1 and signed with the same certificate as
-// the program, so there are no loose runtime scripts. The program checks the signature before reading them.
+// Resource-only assembly (no code): viewer.html, viewer.js, marked and the bundled libraries are packed into
+// this DLL by build.ps1 and signed with the same certificate as the program, so there are no loose runtime
+// scripts. The program checks the signature before reading them.
 
 using System.Reflection;
 

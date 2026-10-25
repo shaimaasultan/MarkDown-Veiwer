@@ -57,10 +57,6 @@ static class Program
     const string ContentDll = "MarkdownViewerWebView2.Content.dll";
     static readonly string[] AppFiles = { "viewer.html", "viewer.js", "marked.min.js", "favicon_readme.png" };
     static readonly string[] MicrosoftFiles = { "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll", "WebView2Loader.dll" };
-    static readonly object updateCheckLock = new object();
-    static Process updateCheckWorker;
-    static DateTime updateCheckStartedUtc;
-    static bool updateCheckFailed;
 
     // Documents the viewer shows (listed in the file list): Markdown, tables, JSON, Excel, XML, notebooks, source
     // code, config and text. Every one of them is handed to the page as plain text (or, for .xlsx, as bytes the
@@ -260,7 +256,6 @@ static class Program
             }
         }
 
-        try { StartWebViewUpdateCheckIfDue(); } catch { }
         ViewerApp app = new ViewerApp();
         app.Open(DocScope.For(startFile));
         SingleInstance.Listen(app);
@@ -940,153 +935,6 @@ static class Program
                ",\"detail\":" + Json(FirewallDetail) + ",\"rules\":[" + rules + "]}";
     }
 
-    // The viewer EXE remains network-blocked. Once a day, a signed Content DLL resource runs in the
-    // Microsoft-signed Windows PowerShell process and checks only the fixed NuGet WebView2 SDK endpoint.
-    static string WebViewUpdateStatusPath()
-    {
-        return Path.Combine(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), DataFolder), "webview2-update-status.txt");
-    }
-
-    static string WebViewSdkVersion()
-    {
-        try { return FileVersionInfo.GetVersionInfo(Path.Combine(appDir, MicrosoftFiles[0])).FileVersion; }
-        catch { return null; }
-    }
-
-    static Dictionary<string, string> ReadWebViewUpdateStatus()
-    {
-        Dictionary<string, string> values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        try
-        {
-            string path = WebViewUpdateStatusPath();
-            if (!File.Exists(path) || new FileInfo(path).Length > 4096) return values;
-            foreach (string line in File.ReadAllLines(path, Encoding.UTF8))
-            {
-                int eq = line.IndexOf('=');
-                if (eq <= 0) continue;
-                string key = line.Substring(0, eq), value = line.Substring(eq + 1);
-                if (key == "checked" || key == "state" || key == "current" || key == "latest") values[key] = value;
-            }
-        }
-        catch { }
-        return values;
-    }
-
-    static void StartWebViewUpdateCheckIfDue()
-    {
-        lock (updateCheckLock)
-        {
-            if (updateCheckWorker != null) return;
-            string current = WebViewSdkVersion();
-            Dictionary<string, string> old = ReadWebViewUpdateStatus();
-            string savedCurrent, savedState, savedChecked;
-            DateTime checkedAt = DateTime.MinValue;
-            bool sameBuild = old.TryGetValue("current", out savedCurrent) && string.Equals(current, savedCurrent, StringComparison.OrdinalIgnoreCase);
-            bool validTime = old.TryGetValue("checked", out savedChecked) && DateTime.TryParse(savedChecked, null,
-                System.Globalization.DateTimeStyles.RoundtripKind, out checkedAt) && checkedAt <= DateTime.UtcNow.AddMinutes(5);
-            old.TryGetValue("state", out savedState);
-            TimeSpan age = validTime ? DateTime.UtcNow - checkedAt : TimeSpan.MaxValue;
-            bool recentlyChecked = sameBuild && ((savedState == "current" || savedState == "available")
-                ? age < TimeSpan.FromHours(24)
-                : savedState == "unknown" && age < TimeSpan.FromHours(1));
-            if (recentlyChecked) return;
-
-            try
-            {
-                byte[] source = ContentFile("webview2-update-agent.ps1");
-                if (source == null || string.IsNullOrEmpty(current)) { updateCheckFailed = true; return; }
-                string powershell = Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe");
-                SignatureInfo psSignature = Signature(powershell);
-                if (!psSignature.Trusted || psSignature.Subject == null || psSignature.Subject.IndexOf("O=Microsoft Corporation,", StringComparison.Ordinal) < 0)
-                { updateCheckFailed = true; return; }
-                string script = Encoding.UTF8.GetString(source).TrimStart('\uFEFF');
-                string encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
-                string statusPath = WebViewUpdateStatusPath();
-                Directory.CreateDirectory(Path.GetDirectoryName(statusPath));
-                ProcessStartInfo psi = new ProcessStartInfo(powershell,
-                    "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " + encoded);
-                psi.UseShellExecute = false;
-                psi.CreateNoWindow = true;
-                psi.WindowStyle = ProcessWindowStyle.Hidden;
-                psi.WorkingDirectory = Environment.SystemDirectory;
-                psi.EnvironmentVariables["MDV_WEBVIEW2_STATUS"] = statusPath;
-                psi.EnvironmentVariables["MDV_WEBVIEW2_CURRENT"] = current;
-                updateCheckStartedUtc = DateTime.UtcNow;
-                updateCheckFailed = false;
-                updateCheckWorker = Process.Start(psi);
-                if (updateCheckWorker == null) updateCheckFailed = true;
-                else
-                {
-                    Process worker = updateCheckWorker;
-                    System.Threading.ThreadPool.QueueUserWorkItem(delegate(object ignored)
-                    {
-                        bool exited = false;
-                        try { exited = worker.WaitForExit(30000); } catch { }
-                        if (exited) return;
-                        lock (updateCheckLock)
-                        {
-                            if (!object.ReferenceEquals(updateCheckWorker, worker)) return;
-                            try { if (!worker.HasExited) worker.Kill(); worker.WaitForExit(2000); } catch { }
-                            try { worker.Dispose(); } catch { }
-                            updateCheckWorker = null;
-                            updateCheckFailed = true;
-                        }
-                    });
-                }
-            }
-            catch { updateCheckFailed = true; }
-        }
-    }
-
-    static string WebViewUpdateJson()
-    {
-        Dictionary<string, string> status = ReadWebViewUpdateStatus();
-        string state = "unknown", savedCurrent, savedLatest, savedChecked;
-        string current = WebViewSdkVersion();
-        status.TryGetValue("current", out savedCurrent);
-        status.TryGetValue("latest", out savedLatest);
-        status.TryGetValue("checked", out savedChecked);
-        lock (updateCheckLock)
-        {
-            if (updateCheckWorker != null)
-            {
-                try
-                {
-                    if (!updateCheckWorker.HasExited && DateTime.UtcNow - updateCheckStartedUtc > TimeSpan.FromSeconds(30))
-                    {
-                        updateCheckWorker.Kill();
-                        updateCheckWorker.WaitForExit(2000);
-                        updateCheckWorker.Dispose();
-                        updateCheckWorker = null;
-                        updateCheckFailed = true;
-                    }
-                    else if (!updateCheckWorker.HasExited) state = "checking";
-                    else
-                    {
-                        int exitCode = updateCheckWorker.ExitCode;
-                        updateCheckWorker.Dispose();
-                        updateCheckWorker = null;
-                        DateTime wroteAt;
-                        bool wroteThisRun = status.TryGetValue("checked", out savedChecked) && DateTime.TryParse(savedChecked, null,
-                            System.Globalization.DateTimeStyles.RoundtripKind, out wroteAt) && wroteAt >= updateCheckStartedUtc.AddSeconds(-2);
-                        if (exitCode != 0 || !wroteThisRun) updateCheckFailed = true;
-                    }
-                }
-                catch { updateCheckFailed = true; updateCheckWorker = null; }
-            }
-            if (state != "checking" && !updateCheckFailed && string.Equals(current, savedCurrent, StringComparison.OrdinalIgnoreCase))
-            {
-                if (savedStateIs(status, "current") || savedStateIs(status, "available")) state = status["state"];
-            }
-        }
-        return "{\"state\":" + Json(state) + ",\"current\":" + Json(current) + ",\"latest\":" + Json(savedLatest) + ",\"checked\":" + Json(savedChecked) + "}";
-    }
-
-    static bool savedStateIs(Dictionary<string, string> status, string value)
-    {
-        string state;
-        return status.TryGetValue("state", out state) && string.Equals(state, value, StringComparison.OrdinalIgnoreCase);
-    }
 
     // ------------------------------------------------------------------ about
 
@@ -1136,8 +984,9 @@ static class Program
         sb.AppendLine("show documents if WebView2 debugging has been switched on.");
         sb.AppendLine();
         sb.AppendLine("NO DOCUMENT NETWORK ACCESS: the WebView2 engine cannot look up internet addresses, and the window");
-        sb.AppendLine("loads no linked web pictures or media. A signed helper checks only the WebView2 SDK version");
-        sb.AppendLine("at api.nuget.org at most once a day; it sends no document data and downloads nothing.");
+        sb.AppendLine("loads no linked web pictures or media, and the program itself never goes online.");
+        sb.AppendLine("UPDATES: the WebView2 Runtime (the browser engine) is kept up to date by Windows; the three");
+        sb.AppendLine("WebView2 SDK files next to this program are pinned and change only with a new signed build.");
         sb.AppendLine("Web and mail links open outside this window only after you have seen the real address.");
         sb.AppendLine();
         sb.AppendLine("PRIVATE: the window runs InPrivate - no history of the documents you view is kept. No camera,");
@@ -1189,6 +1038,58 @@ static class Program
     }
 
     // Installed WebView2 Runtime (updates with Windows/Edge) and the SDK this program was built with.
+    // The checked msedgewebview2.exe this run's engine started from (set by CheckEngine).
+    static string enginePath;
+
+    // GET <token>/webview2, for the header's WebView2 tag: what this PC can tell about the engine and the SDK, read
+    // locally - nothing goes online. The Runtime's version folder is created when Windows installs that version; the
+    // program's link time is when the SDK was built in; update-check.txt is the last Check-Updates.cmd result, on
+    // the PC that builds the app.
+    static string WebView2Json()
+    {
+        string runtime, sdk;
+        WebView2Versions(out runtime, out sdk);
+        string installed = null;
+        try { if (enginePath != null) installed = Directory.GetCreationTimeUtc(Path.GetDirectoryName(enginePath)).ToString("o"); } catch { }
+        string built = null;
+        try
+        {
+            // A deterministic build stores a hash there instead of a time: only a plausible time is shown.
+            DateTime link = LinkTimeUtc(Application.ExecutablePath);
+            if (link.Year >= 2020 && link <= DateTime.UtcNow.AddDays(1)) built = link.ToString("o");
+        }
+        catch { }
+        string checkedAt = null, sdkLatest = null;
+        try
+        {
+            string state = Path.Combine(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), DataFolder), "update-check.txt");
+            if (File.Exists(state) && new FileInfo(state).Length <= 65536)
+                foreach (string line in File.ReadAllLines(state))
+                {
+                    Match m = Regex.Match(line, @"^checked=(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)$");
+                    if (m.Success) checkedAt = m.Groups[1].Value;
+                    m = Regex.Match(line, @"^sdk=(\d{1,6}(?:\.\d{1,9}){1,3})$");
+                    if (m.Success) sdkLatest = m.Groups[1].Value;
+                }
+        }
+        catch { }
+        return "{\"runtime\":" + Json(runtime) + ",\"runtimeInstalled\":" + Json(installed) + ",\"sdk\":" + Json(sdk) +
+               ",\"app\":" + Json(AppVersion) + ",\"built\":" + Json(built) +
+               ",\"devChecked\":" + Json(checkedAt) + ",\"devSdkLatest\":" + Json(sdkLatest) + "}";
+    }
+
+    // The time the C# compiler wrote into the program's PE header (seconds since 1970, UTC).
+    static DateTime LinkTimeUtc(string exe)
+    {
+        byte[] head = new byte[4096];
+        using (FileStream f = new FileStream(exe, FileMode.Open, FileAccess.Read, FileShare.Read))
+            if (f.Read(head, 0, head.Length) < 512) throw new InvalidDataException();
+        int pe = BitConverter.ToInt32(head, 0x3C);
+        if (pe < 0 || pe + 12 > head.Length || head[pe] != 'P' || head[pe + 1] != 'E' || head[pe + 2] != 0 || head[pe + 3] != 0)
+            throw new InvalidDataException();
+        return new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddSeconds(BitConverter.ToUInt32(head, pe + 8));
+    }
+
     static void WebView2Versions(out string runtime, out string sdk)
     {
         runtime = null; sdk = null;
@@ -1492,6 +1393,7 @@ static class Program
             SignatureInfo s = Signature(real);
             if (!s.Trusted || s.Subject.IndexOf("O=Microsoft Corporation,", StringComparison.Ordinal) < 0)
                 return "The WebView2 engine is not signed by Microsoft:\n" + real;
+            enginePath = real;
             return null;
         }
 
@@ -1745,14 +1647,14 @@ static class Program
 
         if (rest == "firewall")
             Send(stream, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(FirewallJson()), null, headOnly);
-        else if (rest == "webview2-update")
-            Send(stream, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(WebViewUpdateJson()), null, headOnly);
         else if (rest == "pref")
         {
             foreach (Match m in Regex.Matches(q >= 0 ? target.Substring(q + 1) : "", @"(?:^|&)(\w+)=(\w+)"))
                 SavePref(m.Groups[1].Value, m.Groups[2].Value);
             Send(stream, 204, "text/plain", new byte[0], null, headOnly);
         }
+        else if (rest == "webview2")
+            Send(stream, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(WebView2Json()), null, headOnly);
         else if (rest == "info") SendInfo(stream, headOnly, scope);
         else if (rest.StartsWith("app/", StringComparison.Ordinal)) SendAppFile(stream, Uri.UnescapeDataString(rest.Substring(4)), headOnly);
         else if (rest.StartsWith("fs/", StringComparison.Ordinal)) SendDiskFile(stream, Uri.UnescapeDataString(rest.Substring(3)), headOnly, range, scope);
