@@ -8124,6 +8124,8 @@ function showWebViewVersion() {
 // (<token>/webview2); the only way out is the Microsoft link, which asks first like every web link.
 const RUNTIME_STALE_DAYS = 45;     // Microsoft ships a new engine about every 4 weeks
 const BUILD_OLD_DAYS = 120;        // after this, suggest looking for a newer version of the app
+const BUILDS_PER_RELEASE = 60;     // engine build numbers grow by roughly this much per 4-weekly release
+const SDK_BEHIND_RELEASES = 3;     // the app's SDK this many engine releases behind → ask for an app update
 const daysSince = iso => { const t = Date.parse(iso || ''); return Number.isNaN(t) ? null : Math.floor((Date.now() - t) / 864e5); };
 const dateOf = iso => new Date(iso).toLocaleDateString();
 const buildOf = v => { const n = parseInt(String(v || '').split('.')[2], 10); return Number.isNaN(n) ? null : n; };
@@ -8163,7 +8165,11 @@ async function showWebViewStatus() {
   else engine.push(['warn', `⚠ Not updated for ${runtimeAge} days, while Microsoft releases a new engine about every 4 weeks - its security fixes may be missing. ` +
     'Run Windows Update and restart the viewer. If the version stays the same, reinstall the Evergreen Runtime from Microsoft:',
     { text: 'WebView2 Runtime download', href: 'https://developer.microsoft.com/microsoft-edge/webview2/' }]);
+  // Windows has no WebView2 SDK of its own (every app ships its own copy); what this PC has is the engine, and an
+  // SDK release is numbered after the engine build it first needs. So the engine's build number is this PC's side
+  // of the comparison: lower than the app's SDK build → update the engine; far higher → the app's SDK is behind.
   const rb = buildOf(s.runtime), sb = buildOf(s.sdk);
+  const releasesBehind = rb !== null && sb !== null ? Math.round((rb - sb) / BUILDS_PER_RELEASE) : null;
   if (rb !== null && sb !== null) engine.push(rb >= sb
     ? ['ok', `✓ Compatible: the engine (build ${rb}) is at least as new as the SDK the app was built with (build ${sb}).`]
     : ['warn', `⚠ The engine (build ${rb}) is older than the SDK the app was built with (build ${sb}); some features may be off. Update the engine with Windows Update.`]);
@@ -8174,21 +8180,40 @@ async function showWebViewStatus() {
   if (s.devSdkLatest && s.sdk && versionGreater(s.devSdkLatest, s.sdk))
     app.push(['warn', `⚠ Check-Updates.cmd on this PC found SDK ${s.devSdkLatest}${s.devChecked ? ` (${dateOf(s.devChecked)})` : ''}. ` +
       'Replace the three DLLs in app\\Setup Scripts\\webview2\\, update their SHA-256 pins in build.ps1 and run Install.cmd (README › Updating the WebView2 SDK and libraries).']);
+  else if (releasesBehind !== null && releasesBehind >= SDK_BEHIND_RELEASES)
+    app.push(['warn', `⚠ The app's SDK (build ${sb}) is about ${releasesBehind} engine releases behind the WebView2 engine on this PC (build ${rb}). ` +
+      'It still works, but ask whoever provides Markdown Viewer for a version with a newer SDK - a new version is the only way the SDK is updated. (Developer: run Check-Updates.cmd.)']);
   else if (buildAge !== null && buildAge > BUILD_OLD_DAYS)
     app.push(['warn', `⚠ This build is ${buildAge} days old. Check whether a newer version of Markdown Viewer is available from whoever provides it - ` +
       'a new version is the only way the SDK is updated. (Developer: run Check-Updates.cmd.)']);
-  else app.push(['ok', '✓ Nothing to do. The SDK changes only with a new version of the app; check for one every few months. (Developer: run Check-Updates.cmd every month or two.)']);
+  else app.push(['ok', `✓ Nothing to do${releasesBehind !== null && releasesBehind > 0 ? ` - the app's SDK is within ${releasesBehind} engine release${releasesBehind === 1 ? '' : 's'} of this PC's engine` : ''}. ` +
+    'The SDK changes only with a new version of the app; check for one every few months. (Developer: run Check-Updates.cmd every month or two.)']);
 
+  // Always say what was read from the Check-Updates.cmd record, so a missing reminder can be explained.
+  const recordState = !s.devRecord ? 'not reported by the program'
+    : s.devRecord === 'missing' ? 'not on this PC (normal, except on the PC that builds the app)'
+    : !s.devRecord.startsWith('read') ? s.devRecord
+    : [s.devRecord,
+       s.devChecked ? `last check ${dateOf(s.devChecked)}` : 'no check date',
+       s.devSdkLatest ? `SDK ${s.devSdkLatest} listed (${s.sdk && versionGreater(s.devSdkLatest, s.sdk) ? 'newer than' : 'not newer than'} ${s.sdk || 'this build'})` : 'no newer SDK listed'
+      ].join('; ');
+  const sdkSection = section('WebView2 SDK - built into this app', [
+    s.sdk ? `Version ${s.sdk}` : 'Version unknown',
+    s.app && `Markdown Viewer ${s.app}`,
+    s.built && `built ${dateOf(s.built)}`,
+    'pinned by SHA-256'], app);
+  // This PC's side: Windows has no SDK of its own, so the engine's build is what the app's SDK is compared with.
+  if (rb !== null && sb !== null)
+    sdkSection.querySelector('.facts').after(el('p', 'facts',
+      `On this PC: WebView2 engine build ${rb} · in this app: SDK build ${sb} · ` +
+      (rb < sb ? 'the engine is older' : releasesBehind > 0 ? `the SDK is about ${releasesBehind} engine release${releasesBehind === 1 ? '' : 's'} behind` : 'same release')));
+  sdkSection.append(el('p', 'facts', `Check-Updates.cmd record${s.devRecordPath ? ` (${s.devRecordPath})` : ''}: ${recordState}`));
   document.getElementById('wvBody').replaceChildren(
     section('WebView2 Runtime - the browser engine', [
       s.runtime ? `Version ${s.runtime}` : 'Version unknown',
       s.runtimeInstalled && `installed on this PC ${dateOf(s.runtimeInstalled)}`,
       'updated by Windows'], engine),
-    section('WebView2 SDK - built into this app', [
-      s.sdk ? `Version ${s.sdk}` : 'Version unknown',
-      s.app && `Markdown Viewer ${s.app}`,
-      s.built && `built ${dateOf(s.built)}`,
-      'pinned by SHA-256'], app));
+    sdkSection);
   const dlg = document.getElementById('wvDlg');
   if (!dlg.open) dlg.showModal();
 }

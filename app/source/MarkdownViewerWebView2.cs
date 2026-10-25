@@ -1059,23 +1059,36 @@ static class Program
             if (link.Year >= 2020 && link <= DateTime.UtcNow.AddDays(1)) built = link.ToString("o");
         }
         catch { }
-        string checkedAt = null, sdkLatest = null;
+        // How the record was read is reported too ("missing", "read: N lines", "too large: N bytes", "error: <type>"),
+        // so the dialog shows why a newer SDK is or is not named.
+        string checkedAt = null, sdkLatest = null, record = null, recordPath = null;
         try
         {
-            string state = Path.Combine(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), DataFolder), "update-check.txt");
-            if (File.Exists(state) && new FileInfo(state).Length <= 65536)
-                foreach (string line in File.ReadAllLines(state))
+            recordPath = Path.Combine(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), DataFolder), "update-check.txt");
+            if (!File.Exists(recordPath)) record = "missing";
+            else
+            {
+                long size = new FileInfo(recordPath).Length;
+                if (size > 65536) record = "too large: " + size + " bytes";
+                else
                 {
-                    Match m = Regex.Match(line, @"^checked=(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)$");
-                    if (m.Success) checkedAt = m.Groups[1].Value;
-                    m = Regex.Match(line, @"^sdk=(\d{1,6}(?:\.\d{1,9}){1,3})$");
-                    if (m.Success) sdkLatest = m.Groups[1].Value;
+                    string[] lines = File.ReadAllLines(recordPath);
+                    foreach (string line in lines)
+                    {
+                        Match m = Regex.Match(line, @"^checked=(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)$");
+                        if (m.Success) checkedAt = m.Groups[1].Value;
+                        m = Regex.Match(line, @"^sdk=(\d{1,6}(?:\.\d{1,9}){1,3})$");
+                        if (m.Success) sdkLatest = m.Groups[1].Value;
+                    }
+                    record = "read: " + lines.Length + " lines";
                 }
+            }
         }
-        catch { }
+        catch (Exception e) { record = "error: " + e.GetType().Name; }
         return "{\"runtime\":" + Json(runtime) + ",\"runtimeInstalled\":" + Json(installed) + ",\"sdk\":" + Json(sdk) +
                ",\"app\":" + Json(AppVersion) + ",\"built\":" + Json(built) +
-               ",\"devChecked\":" + Json(checkedAt) + ",\"devSdkLatest\":" + Json(sdkLatest) + "}";
+               ",\"devChecked\":" + Json(checkedAt) + ",\"devSdkLatest\":" + Json(sdkLatest) +
+               ",\"devRecord\":" + Json(record) + ",\"devRecordPath\":" + Json(recordPath) + "}";
     }
 
     // The time the C# compiler wrote into the program's PE header (seconds since 1970, UTC).

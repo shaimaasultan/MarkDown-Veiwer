@@ -246,6 +246,13 @@ engine, when the app was built, and what to do - all read on this PC, nothing is
   weeks, so it suggests Windows Update and, if the version stays the same, Microsoft's WebView2 Runtime download
   (the link asks before opening the browser, like every web link).
 - **Engine older than the app's SDK** (by build number) - some features may be off; update the engine.
+- **App's SDK far behind the engine on this PC** - Windows has no WebView2 SDK of its own (every app ships its own
+  copy; this PC alone has six different ones from Dell, Office, WSL and this app), so the engine's build number is
+  the PC's side of the comparison. The dialog shows both (`On this PC: WebView2 engine build 4283 · in this app: SDK
+  build 4258`); when the SDK is about three engine releases (~180 builds) or more behind, it asks the user to get a
+  version of the app with a newer SDK.
+- **Check-Updates record line** - always says what the viewer read from `update-check.txt` (*not on this PC* on
+  users' PCs, where `Check-Updates.cmd` is never run).
 - **App built more than 120 days ago** - check whether a newer version of Markdown Viewer is available, since a new
   version is the only way the SDK changes.
 - **On the PC that builds the app** - when the last `Check-Updates.cmd` found a newer SDK, it names that version and
