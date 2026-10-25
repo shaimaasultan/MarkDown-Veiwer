@@ -32,6 +32,10 @@ let source = 'local';        // 'local' = files picked/dropped in the page, 'app
 let repoRoot = '';           // app mode: folder that "/x" links resolve against
 let listBase = '';           // app mode: folder the sidebar paths are shown relative to
 const fsURL = p => apiBase + 'fs/' + p.split('/').map(encodeURIComponent).join('/');
+// The program answers its own requests (settings, file checks, status) only when they carry this header. A
+// document's pictures, styles and links cannot add headers, so a relative address such as "../pref?…" in a
+// document can never change a setting or start a check.
+const apiFetch = (path, init = {}) => fetch(apiBase + path, { ...init, headers: { ...init.headers, 'X-Markdown-Viewer': 'page' } });
 
 // ---------------------------------------------------------------- paths
 const norm = p => p.replace(/\\/g, '/').replace(/\/+/g, '/');
@@ -126,10 +130,45 @@ const SAFE_IMG_DATA = /^data:image\/(png|gif|jpe?g|webp|bmp|avif|svg\+xml)[;,]/i
 const safeLink = v => ['', 'http', 'https', 'mailto'].includes(scheme(v));
 const safeSrc = v => ['', 'http', 'https'].includes(scheme(v)) || SAFE_IMG_DATA.test(v.trim());
 
-function sanitize(html, { diagram = false } = {}) {
+// CSS can fetch too: url(), image-set() and friends in a style attribute or an SVG attribute (fill, mask,
+// marker-end, …) would load from the viewer's own address, where "../pref?…" reaches the program and
+// "../fs/…" skips Pictures off. Only references inside the document (url(#id)) and inline pictures are kept.
+const CSS_FETCH = /image-set\s*\(|cross-fade\s*\(|element\s*\(|paint\s*\(|src\s*\(|@import|expression\s*\(|-moz-binding|behavior\s*:|javascript:|vbscript:/i;
+function cssRefsSafe(value) {
+  if (CSS_FETCH.test(value)) return false;
+  const at = /url\(/gi;
+  const re = /url\(\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|([^"'()\s]*))\s*\)/yi;
+  for (let found; (found = at.exec(value));) {
+    re.lastIndex = found.index;
+    const m = re.exec(value);
+    if (!m) return false;                                     // a url( we cannot read: refuse it
+    const target = (m[1] ?? m[2] ?? m[3]).trim();
+    if (!target.startsWith('#') && !SAFE_IMG_DATA.test(target)) return false;
+  }
+  return true;
+}
+// A style attribute, as the browser reads it (escapes such as u\72l( resolved): declarations that fetch are
+// dropped. Returns the value unchanged when nothing had to go.
+function safeStyle(value) {
+  const style = document.createElement('div').style;
+  style.cssText = value;
+  let dropped = false;
+  for (let i = style.length - 1; i >= 0; i--) {
+    const name = style[i];
+    if (!cssRefsSafe(style.getPropertyValue(name))) { style.removeProperty(name); dropped = true; }
+  }
+  return dropped ? style.cssText : value;
+}
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+// baseDir: the document's folder, for its pictures, media and links (see fixResources). Without it they are
+// left out. Either way this happens here, while the document is still inert: a picture starts loading the moment
+// it joins the page, and an address not yet pointed at the folder would be read against the viewer's own address.
+function sanitize(html, { diagram = false, baseDir = null } = {}) {
   const doc = new DOMParser().parseFromString(`<!DOCTYPE html><body>${html}`, 'text/html');
   cleanChildren(doc.head, diagram);
   cleanChildren(doc.body, diagram);
+  if (baseDir !== null) fixResources(doc.body, baseDir); else stripResources(doc.body);
   const frag = document.createDocumentFragment();
   while (doc.body.firstChild) frag.appendChild(document.adoptNode(doc.body.firstChild));
   return frag;
@@ -143,6 +182,8 @@ function cleanChildren(node, diagram) {
     // Mermaid's own diagram output needs its <style> sheet and HTML labels; both are still filtered.
     const diagramExtra = diagram && (tag === 'style' || tag === 'foreignobject');
     if (DROP_TAGS.has(tag) && !diagramExtra) { child.remove(); continue; }
+    // The diagram's sheet keeps its ordinary rules; imports, fonts and anything that fetches are left out.
+    if (diagramExtra && tag === 'style') { child.textContent = previewCssText(child.textContent); continue; }
     cleanChildren(child, diagram);
     if (!ALLOWED_TAGS.has(tag) && !diagramExtra) { child.replaceWith(...child.childNodes); continue; }
     cleanAttributes(child, tag, diagram);
@@ -163,8 +204,13 @@ function cleanAttributes(el, tag, diagram) {
     } else if (ok && name === 'srcset') {
       ok = value.split(',').every(part => safeSrc(part.trim().split(/\s+/)[0] || ''));
     } else if (ok && name === 'style') {
-      ok = !/expression\s*\(|javascript:|vbscript:|-moz-binding|behavior\s*:/i.test(value) &&
-           !el.closest('pre, code');          // nothing hidden inside code: what you copy is what you see
+      ok = !el.closest('pre, code');          // nothing hidden inside code: what you copy is what you see
+      const kept = ok ? safeStyle(value) : '';
+      if (kept) { if (kept !== value) el.setAttribute(attr.name, kept); continue; }
+      ok = false;
+    } else if (ok && el.namespaceURI === SVG_NS && name !== 'id' && name !== 'class' && name !== 'title') {
+      // SVG presentation attributes are CSS values; an escaped "url(" needs a backslash and a bracket.
+      ok = cssRefsSafe(value) && !(value.includes('\\') && value.includes('('));
     } else if (ok && name === 'hidden') {
       ok = !el.closest('pre, code');
     } else if (ok && (name === 'id' || name === 'name') && !diagram) {
@@ -541,7 +587,7 @@ async function checkOrigin(path) {
   if (source !== 'app' || !path) return;
   let r;
   try {
-    const res = await fetch(apiBase + 'check/' + path.split('/').map(encodeURIComponent).join('/'), { cache: 'no-store' });
+    const res = await apiFetch('check/' + path.split('/').map(encodeURIComponent).join('/'), { cache: 'no-store' });
     if (!res.ok) return;
     r = await res.json();
   } catch { return; }
@@ -713,9 +759,8 @@ function renderDoc({ anchor = null, keepScroll = false } = {}) {
 
   slugCounts = new Map();
   dropHint.hidden = true;
-  output.replaceChildren(sanitize(md.parse(text)));
+  output.replaceChildren(sanitize(md.parse(text), { baseDir: dirOf(currentPath) }));
 
-  fixResources(output, dirOf(currentPath));
   markCallouts(output);
   setDirections(output);
   renderLeftoverMath(output);
@@ -767,6 +812,16 @@ const VIDEO_EXT = /\.(mp4|webm)$/i, AUDIO_EXT = /\.(mp3|wav|ogg)$/i;
 const MEDIA_FILE = /\.(png|jpe?g|gif|webp|avif|bmp|ico|svg|mp4|webm|mp3|wav|ogg)$/i;
 
 // Point images/figures/links at the files inside the chosen folder.
+// Every address a picture, video, audio, track or SVG <image> could load, except inline pictures, is removed
+// (HTML only measured or checked, and diagrams).
+function stripResources(root) {
+  root.querySelectorAll('img, video, audio, source, track, image').forEach(el => {
+    for (const name of ['src', 'srcset', 'poster', 'href', 'xlink:href'])
+      if (el.hasAttribute(name) && !(name !== 'srcset' && SAFE_IMG_DATA.test(el.getAttribute(name).trim()))) el.removeAttribute(name);
+  });
+}
+
+// Runs inside sanitize (pass baseDir), on the inert document, never on content already in the page.
 function fixResources(root, baseDir) {
   // Video and audio written like a picture - ![clip](clip.mp4), as GitHub allows - play in a player.
   root.querySelectorAll('img[src]').forEach(img => {
@@ -774,7 +829,7 @@ function fixResources(root, baseDir) {
     const file = src.split(/[?#]/)[0];
     const kind = VIDEO_EXT.test(file) ? 'video' : AUDIO_EXT.test(file) ? 'audio' : null;
     if (!kind || isWeb(src)) return;
-    const media = document.createElement(kind);
+    const media = img.ownerDocument.createElement(kind);     // made in the inert document: nothing loads yet
     media.setAttribute('src', src);
     media.controls = true;
     media.preload = 'metadata';
@@ -799,16 +854,33 @@ function fixResources(root, baseDir) {
       return;
     }
     if (isWeb(src)) { markWeb(el, src); return; }
-    if (!isExternal(src) && isImg) markMissing(el, src, baseDir);
+    // Not found: the address is not left in place, where it would be read against the viewer's own address.
+    if (!isExternal(src)) {
+      if (isImg) markMissing(el, src, baseDir);
+      el.removeAttribute('src');
+    }
   });
   root.querySelectorAll('img[srcset], source[srcset]').forEach(el => {
     if (block && (el.tagName === 'IMG' || el.parentElement?.tagName === 'PICTURE')) { el.removeAttribute('srcset'); return; }
     el.srcset = el.getAttribute('srcset').split(',').map(part => {
       const [url, ...rest] = part.trim().split(/\s+/);
-      const entry = localEntry(baseDir, url);
-      return isWeb(url) ? '' : [entry ? blobURL(entry) : url, ...rest].join(' ');
+      if (SAFE_IMG_DATA.test(url)) return part.trim();
+      const entry = isWeb(url) ? null : localEntry(baseDir, url);
+      return entry ? [blobURL(entry), ...rest].join(' ') : '';
     }).filter(Boolean).join(', ');
   });
+  // The other places a document can name a file - a video's poster, an SVG picture, a subtitle track - follow
+  // the same rules: inline pictures stay, files in the folder are pointed at, anything else is never loaded.
+  for (const [selector, names, picture] of [['video', ['poster'], true], ['image', ['href', 'xlink:href'], true], ['track', ['src'], false]]) {
+    root.querySelectorAll(selector).forEach(el => {
+      for (const name of names) {
+        const value = el.getAttribute(name);
+        if (value === null || (picture && SAFE_IMG_DATA.test(value.trim()))) continue;
+        const entry = (block && picture) || isWeb(value) ? null : localEntry(baseDir, value);
+        if (entry) el.setAttribute(name, blobURL(entry)); else el.removeAttribute(name);
+      }
+    });
+  }
   root.querySelectorAll('a[href]').forEach(a => {
     const href = a.getAttribute('href');
     a.dataset.origHref = href;
@@ -2157,10 +2229,9 @@ function renderHtmlPreview() {
   const styleLinks = [...parsed.querySelectorAll('link[rel][href]')].filter(link =>
     link.relList.contains('stylesheet') && !link.disabled && (!link.type || link.type.toLowerCase() === 'text/css'));
   const safe = document.createElement('div');
-  safe.append(sanitize(currentSource));
+  safe.append(sanitize(currentSource, { baseDir: dirOf(previewPath) }));
   // Keep styling in the filtered sheets above; per-element CSS can otherwise carry resource URLs too.
   safe.querySelectorAll('[style]').forEach(el => el.removeAttribute('style'));
-  fixResources(safe, dirOf(previewPath));
   safe.querySelectorAll('a').forEach(a => { a.removeAttribute('href'); a.removeAttribute('target'); a.removeAttribute('rel'); });
 
   const frame = document.createElement('iframe');
@@ -2724,7 +2795,7 @@ function renderNotebookDocument() {
       markdown++;
       checked.push(src);
       const box = make('div', 'nb-cell nb-md');
-      box.append(sanitize(md.parse(src)));
+      box.append(sanitize(md.parse(src), { baseDir: dirOf(currentPath) }));
       cellsBox.append(box);
     } else if (cell.cell_type === 'code') {
       code++;
@@ -2754,12 +2825,12 @@ function renderNotebookDocument() {
           } else if (d['text/html']) {
             checked.push(join(d['text/html']));
             const div = make('div', 'nb-html');
-            div.append(sanitize(join(d['text/html'])));
+            div.append(sanitize(join(d['text/html']), { baseDir: dirOf(currentPath) }));
             outs.append(div);
           } else if (d['text/markdown']) {
             checked.push(join(d['text/markdown']));
             const div = make('div', 'nb-html');
-            div.append(sanitize(md.parse(join(d['text/markdown']))));
+            div.append(sanitize(md.parse(join(d['text/markdown'])), { baseDir: dirOf(currentPath) }));
             outs.append(div);
           } else if (d['text/plain']) outs.append(make('pre', 'nb-stream', ansi(join(d['text/plain']))));
         }
@@ -2773,7 +2844,6 @@ function renderNotebookDocument() {
     }
   }
   output.replaceChildren(view);
-  fixResources(cellsBox, dirOf(currentPath));
   markCallouts(cellsBox);
   setDirections(cellsBox);
   renderLeftoverMath(cellsBox);
@@ -5734,7 +5804,7 @@ function loadPref(name) {
 }
 
 function savePref(name, value) {
-  if (APP) fetch(`${apiBase}pref?${name}=${value}`).catch(() => {});
+  if (APP) apiFetch(`pref?${name}=${value}`).catch(() => {});
   else try { localStorage.setItem('mdv-' + name, value); } catch {}
 }
 
@@ -7973,7 +8043,7 @@ async function initApp() {
   // Let the deferred diagram library finish loading first.
   if (document.readyState === 'loading') await new Promise(r => document.addEventListener('DOMContentLoaded', r));
   let info;
-  try { info = await (await fetch(apiBase + 'info')).json(); }
+  try { info = await (await apiFetch('info')).json(); }
   catch { return; }
   appInfo = info.app || null;
   renderConnStatus();
@@ -8008,7 +8078,7 @@ let firewall = null;
 const firewallOk = () => !!(firewall && firewall.readable && firewall.firewallOn && (firewall.state === 'nonetwork' || firewall.state === 'blocked'));
 
 async function fetchFirewall() {
-  try { firewall = await (await fetch(apiBase + 'firewall')).json(); } catch { /* app closed */ }
+  try { firewall = await (await apiFetch('firewall')).json(); } catch { /* app closed */ }
   renderFirewall();
 }
 
@@ -8044,7 +8114,7 @@ let webViewUpdatePoll = null;
 async function refreshWebViewUpdateStatus() {
   if (!APP || !webViewUpdateTag) return;
   try {
-    const response = await fetch(apiBase + 'webview2-update', { cache: 'no-store' });
+    const response = await apiFetch('webview2-update', { cache: 'no-store' });
     if (!response.ok) throw new Error('status unavailable');
     const result = await response.json();
     const state = ['checking', 'current', 'available', 'unknown'].includes(result.state) ? result.state : 'unknown';

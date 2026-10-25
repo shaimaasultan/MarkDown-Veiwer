@@ -121,9 +121,12 @@ static class Program
             if (file == null) return None;
             string dir = Path.GetDirectoryName(file);
             string git = FindGitRoot(dir);
-            // Allow one level up so "../images/x.png" from a docs folder still works.
+            if (git != null && TooBroad(git)) git = null;       // e.g. a home folder kept in Git (dotfiles)
+            // Allow one level up so "../images/x.png" from a docs folder still works - but never up to a whole
+            // drive or user profile (a file in Downloads would otherwise let the page read the profile's .env,
+            // .npmrc, .ini… files); then the document's own folder is the boundary.
             DirectoryInfo parent = Directory.GetParent(dir);
-            string allowRoot = git ?? (parent != null ? parent.FullName : dir);
+            string allowRoot = git ?? (parent != null && !TooBroad(parent.FullName) ? parent.FullName : dir);
             SafeFileHandle root = null;
             string realRoot = null;
             try
@@ -135,6 +138,19 @@ static class Program
             }
             catch { if (root != null) root.Dispose(); root = null; }
             return new DocScope(file, dir, git ?? dir, allowRoot, root, realRoot);
+        }
+
+        // A drive root, the user's profile or a folder above it (C:\Users), or the Windows folder.
+        static bool TooBroad(string folder)
+        {
+            string f = folder.TrimEnd('\\') + "\\";
+            if (Path.GetPathRoot(f).TrimEnd('\\') + "\\" == f) return true;
+            foreach (Environment.SpecialFolder s in new[] { Environment.SpecialFolder.UserProfile, Environment.SpecialFolder.Windows })
+            {
+                string special = Environment.GetFolderPath(s);
+                if (special.Length > 0 && (special.TrimEnd('\\') + "\\").StartsWith(f, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
         }
 
         public bool HasPinnedRoot
@@ -174,6 +190,8 @@ static class Program
 
     // Random per-run token every page address must start with.
     static readonly string Token = RandomHex(16);
+    // Request header only the viewer's own script sends (fetch can add it; pictures, styles and links cannot).
+    const string PageHeader = "X-Markdown-Viewer";
     static string AppBase { get { return PrivateHost + "/" + Token + "/app/"; } }
 
     [STAThread]
@@ -1539,15 +1557,77 @@ static class Program
             bool mail = uri.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase);
             if (!(mail || uri.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
                   uri.StartsWith("https://", StringComparison.OrdinalIgnoreCase))) return;
+            string shown;
+            if (mail)
+            {
+                shown = DescribeMailLink(uri);
+                if (shown == null)
+                {
+                    BeginInvoke((Action)(() => MessageBox.Show(this, "This e-mail link was not opened: it asks the mail app to attach a file " +
+                        "or uses parts the viewer cannot show in full.", AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning)));
+                    return;
+                }
+            }
+            // A web address's site comes first, so shortening the end hides nothing about where it goes.
+            else shown = uri.Length > 600 ? uri.Substring(0, 600) + "..." : uri;
             BeginInvoke((Action)(() =>
             {
-                string shown = uri.Length > 600 ? uri.Substring(0, 600) + "..." : uri;
                 string question = (mail ? "Write an e-mail with your mail app?" : "Open this web address in your browser?") +
                                   "\n\n" + shown + "\n\nThis window never goes online; the link opens outside it.";
                 if (MessageBox.Show(this, question, AppName, MessageBoxButtons.YesNo, MessageBoxIcon.Question,
                                     MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
                 try { Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true }); } catch { }
             }));
+        }
+
+        // A mail link as the question shows it: every recipient in full (To, Cc, Bcc), the subject and the start of
+        // the text. Null - not opened - when it has any other part, such as attach= (some mail apps attach the named
+        // file), or when its recipients are too long to show.
+        static string DescribeMailLink(string uri)
+        {
+            string rest = uri.Substring("mailto:".Length);
+            int q = rest.IndexOf('?');
+            Dictionary<string, List<string>> parts = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                parts["to"] = new List<string> { Uri.UnescapeDataString(q >= 0 ? rest.Substring(0, q) : rest) };
+                if (q >= 0)
+                    foreach (string pair in rest.Substring(q + 1).Split('&'))
+                    {
+                        if (pair.Length == 0) continue;
+                        int eq = pair.IndexOf('=');
+                        string name = Uri.UnescapeDataString(eq >= 0 ? pair.Substring(0, eq) : pair);
+                        if (!Regex.IsMatch(name, "^(?i:to|cc|bcc|subject|body)$")) return null;
+                        if (!parts.ContainsKey(name)) parts[name] = new List<string>();
+                        parts[name].Add(Uri.UnescapeDataString(eq >= 0 ? pair.Substring(eq + 1) : ""));
+                    }
+            }
+            catch (UriFormatException) { return null; }
+
+            Func<string, string> oneLine = v => Regex.Replace(v, @"[\x00-\x1f\x7f-\x9f  ]+", " ").Trim();
+            StringBuilder sb = new StringBuilder();
+            foreach (string field in new[] { "to", "cc", "bcc" })
+            {
+                List<string> values;
+                if (!parts.TryGetValue(field, out values)) continue;
+                string all = oneLine(string.Join(", ", values.Where(v => v.Trim().Length > 0).ToArray()));
+                if (all.Length == 0) continue;
+                if (all.Length > 1000) return null;
+                sb.Append(field == "to" ? "To: " : field == "cc" ? "Cc: " : "Bcc: ").Append(all).Append('\n');
+            }
+            if (sb.Length == 0) sb.Append("To: (nobody yet)\n");
+            List<string> subject, body;
+            if (parts.TryGetValue("subject", out subject))
+            {
+                string s = oneLine(string.Join(" ", subject.ToArray()));
+                sb.Append("Subject: ").Append(s.Length > 200 ? s.Substring(0, 200) + "..." : s).Append('\n');
+            }
+            if (parts.TryGetValue("body", out body))
+            {
+                string b = oneLine(string.Join(" ", body.ToArray()));
+                sb.Append("Text: ").Append(b.Length > 300 ? b.Substring(0, 300) + "..." : b).Append('\n');
+            }
+            return sb.ToString().TrimEnd('\n');
         }
 
         void OnRequest(object sender, CoreWebView2WebResourceRequestedEventArgs e)
@@ -1559,8 +1639,12 @@ static class Program
             string range = null;
             try { if (e.Request.Headers.Contains("Range")) range = e.Request.Headers.GetHeader("Range"); } catch { }
             if (range != null && !Regex.IsMatch(range, @"^bytes=\d{0,18}-\d{0,18}$")) range = null;
+            // Set only by the viewer's own script (see PageHeader); passed on as the fixed value or not at all.
+            bool fromPage = false;
+            try { fromPage = e.Request.Headers.Contains(PageHeader) && e.Request.Headers.GetHeader(PageHeader) == "page"; } catch { }
             byte[] request = Encoding.ASCII.GetBytes(e.Request.Method + " " + u.PathAndQuery + " HTTP/1.1\r\n" +
-                                                     (range != null ? "Range: " + range + "\r\n" : "") + "\r\n");
+                                                     (range != null ? "Range: " + range + "\r\n" : "") +
+                                                     (fromPage ? PageHeader + ": page\r\n" : "") + "\r\n");
             InMemoryExchange io = new InMemoryExchange(request);
             try { HandleStream(io, scope); } catch { }
             e.Response = ToResponse(io.Output.ToArray());
@@ -1626,8 +1710,12 @@ static class Program
 
         string target = requestLine[1];
         string range = null;
+        bool fromPage = false;
         foreach (string line in head.Split(new[] { "\r\n" }, StringSplitOptions.None))
+        {
             if (line.StartsWith("Range:", StringComparison.OrdinalIgnoreCase)) range = line.Substring(6).Trim();
+            if (line == PageHeader + ": page") fromPage = true;
+        }
         int q = target.IndexOf('?');
         string path = q >= 0 ? target.Substring(0, q) : target;
 
@@ -1635,6 +1723,14 @@ static class Program
         string prefix = "/" + Token + "/";
         if (!path.StartsWith(prefix, StringComparison.Ordinal)) { NotFound(stream); return; }
         string rest = path.Substring(prefix.Length);
+
+        // Settings, file checks and status answer only the viewer's own script. A document's pictures, styles and
+        // links reach these addresses too (e.g. "../pref?…" read against the page's address) but cannot add a header.
+        if (!fromPage && !rest.StartsWith("app/", StringComparison.Ordinal) && !rest.StartsWith("fs/", StringComparison.Ordinal))
+        {
+            Send(stream, 403, "text/plain", Encoding.UTF8.GetBytes("Forbidden"), null, headOnly);
+            return;
+        }
 
         if (rest == "firewall")
             Send(stream, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(FirewallJson()), null, headOnly);
@@ -1838,8 +1934,10 @@ static class Program
         string scan;
         long length = scoped.Content.Length;
         string ext = Path.GetExtension(full);
+        // No larger than the viewer itself would read: text up to MaxTextBytes (it is also copied as UTF-16), Excel
+        // up to MaxMediaBytes.
         if (!TextTypes.Contains(ext) && !ext.Equals(".xlsx", StringComparison.OrdinalIgnoreCase)) scan = "notscanned";
-        else if (length > MaxMediaBytes) scan = "toolarge";
+        else if (length > (TextTypes.Contains(ext) ? MaxTextBytes : MaxMediaBytes)) scan = "toolarge";
         else
         {
             byte[] bytes = null;

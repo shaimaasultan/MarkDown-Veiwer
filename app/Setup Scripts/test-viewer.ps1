@@ -182,6 +182,7 @@ foreach ($d in $r.results) {
     if (@($d.badTags).Count) { $problems += "elements: $(@($d.badTags) -join ', ')" }
     if (@($d.onAttrs).Count) { $problems += "on... attributes on: $(@($d.onAttrs) -join ', ')" }
     if (@($d.badUrls).Count) { $problems += "code addresses on: $(@($d.badUrls) -join ', ')" }
+    if (@($d.fetchAttrs).Count) { $problems += "addresses read against the viewer's own address on: $(@($d.fetchAttrs) -join ', ')" }
     if ($d.otherInputs) { $problems += "$($d.otherInputs) input(s) other than disabled checkboxes" }
     if ($d.pwn) { $problems += "a payload ran: $($d.pwn)" }
     if ($d.loads -and @($d.loads).Count) { $problems += "loaded: $(@($d.loads | Select-Object -First 5) -join ', ')" }

@@ -22,6 +22,17 @@
     const onAttrs = all.filter(el => [...el.attributes].some(a => /^on/i.test(a.name)));
     const badUrls = all.filter(el => [...el.attributes].some(a =>
       /^(href|src|action|formaction|xlink:href|data|poster|background)$/i.test(a.name) && BAD_URL.test(a.value)));
+    // Addresses a document names for pictures, posters, tracks and styles: only inline pictures, references inside
+    // the document and files from the folder (blob: here, <token>/fs/ in the app) may reach the page; a relative
+    // address would be read against the viewer's own address (in the app "../pref?…" is its settings).
+    const fetchable = v => /^(blob:|data:image\/|#)/i.test(v.trim()) || (!!apiBase && v.startsWith(apiBase + 'fs/'));
+    const fetchAttrs = all.filter(el => [...el.attributes].some(a => {
+      const name = a.name.toLowerCase();
+      if (name === 'style') return !cssRefsSafe(el.style.cssText) || !cssRefsSafe(a.value);
+      if (name === 'srcset') return a.value.split(',').some(p => p.trim() && !fetchable(p.trim().split(/\s+/)[0]));
+      if (name === 'src' || name === 'poster' || ((name === 'href' || name === 'xlink:href') && el.localName === 'image')) return !fetchable(a.value);
+      return el.namespaceURI === 'http://www.w3.org/2000/svg' && /url\(/i.test(a.value) && !cssRefsSafe(a.value);
+    }));
     // The table view's own filter boxes and header switch are the viewer's controls, not document content.
     const inputs = [...output.querySelectorAll('input, textarea, select, button[form], button[formaction]')]
       .filter(el => !el.closest('.csv-bar, .csv-filters'));
@@ -29,6 +40,7 @@
       badTags: [...output.querySelectorAll(BAD_TAGS)].map(el => el.tagName.toLowerCase()),
       onAttrs: onAttrs.map(el => el.tagName.toLowerCase()),
       badUrls: badUrls.map(el => el.tagName.toLowerCase()),
+      fetchAttrs: fetchAttrs.map(el => el.tagName.toLowerCase()),
       otherInputs: inputs.filter(el => !(el.tagName === 'INPUT' && (el.getAttribute('type') || '').toLowerCase() === 'checkbox' && el.disabled)).length,
       checkboxes: inputs.length
     };
