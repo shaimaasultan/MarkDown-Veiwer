@@ -1,0 +1,26 @@
+ReadSafe Viewer
+Copyright (c) 2026 Shaimaa Said Soltan <shaimaasultan@hotmail.com>
+https://github.com/shaimaasultan/MarkDown-Veiwer
+
+Licensed under the MIT License (see LICENSE).
+
+Please credit the author
+------------------------
+If you use, share, or build on ReadSafe Viewer - in a product, a fork, a
+project, an article, a talk or a course - please credit the author, for
+example:
+
+    ReadSafe Viewer by Shaimaa Said Soltan
+    https://github.com/shaimaasultan/MarkDown-Veiwer
+
+A link in your README, About box, documentation or credits is enough.
+This is a request, not a condition of the license: the MIT License itself
+requires only that the copyright notice and license text stay with every copy
+or substantial portion of the software.
+
+Third-party components
+----------------------
+ReadSafe Viewer bundles marked (MIT), KaTeX (MIT), highlight.js (BSD-3-Clause),
+Mermaid (MIT) and the Microsoft WebView2 SDK
+(app/Setup Scripts/webview2/WebView2-SDK-LICENSE.txt). Each keeps its own
+license.

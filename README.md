@@ -9,7 +9,7 @@ and logs as data and text, never run.
 
 ▶ **[Watch the promo video](docs/promo.mp4)** (MP4, 1080p, 1:16, no sound)
 
-By **Shaimaa Said Soltan** · [MIT License](LICENSE) · [shaimaasultan@hotmail.com](mailto:shaimaasultan@hotmail.com) · [github.com/shaimaasultan](https://github.com/shaimaasultan)
+By **Shaimaa Said Soltan** · [MIT License](LICENSE) ([please credit](#please-credit-the-author)) · [shaimaasultan@hotmail.com](mailto:shaimaasultan@hotmail.com) · [github.com/shaimaasultan](https://github.com/shaimaasultan)
 
 ## Features
 
@@ -406,6 +406,17 @@ The original viewer was made using GPT-5; this version was extended and tested w
 ReadSafe Viewer is released under the [MIT License](LICENSE): you may use, copy, change and share it, including
 commercially, as long as the copyright notice and license text stay with it. The bundled components above keep
 their own licenses.
+
+### Please credit the author
+
+If you use, share or build on ReadSafe Viewer - in a product, a fork, a project, an article, a talk or a course -
+please credit the author, for example:
+
+> ReadSafe Viewer by Shaimaa Said Soltan - https://github.com/shaimaasultan/MarkDown-Veiwer
+
+A link in your README, About box, documentation or credits is enough. This is a request, not a condition of the
+license (see [NOTICE](NOTICE)): the MIT License itself only requires that the copyright notice and license text
+stay with every copy.
 
 ## Author
 
