@@ -1439,6 +1439,17 @@ static class Program
                 if (IsPrivate(e.Uri)) app.Show(new ViewerForm(e.Uri, scope, app));   // e.g. a linked image: same folder scope
                 else AskOpenOutside(e.Uri);
             };
+            // Frames never go anywhere: the only one, the HTML preview, is written in by the page (about:srcdoc).
+            // NavigationStarting above covers the window itself, not its frames.
+            core.FrameNavigationStarting += (s, e) =>
+            {
+                if (e.Uri != "about:srcdoc" && e.Uri != "about:blank") e.Cancel = true;
+            };
+            // Other programs are never started through a link's scheme (ms-settings:, search-ms:, …); web and mail
+            // links go through AskOpenOutside only.
+            core.LaunchingExternalUriScheme += (s, e) => { e.Cancel = true; };
+            // No screen, window or tab capture.
+            core.ScreenCaptureStarting += (s, e) => { e.Cancel = true; };
             core.DocumentTitleChanged += (s, e) => { Text = core.DocumentTitle; };
             core.Navigate(startUrl);
         }
