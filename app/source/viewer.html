@@ -794,6 +794,21 @@
     }
     @media (max-width: 560px) { .fcd-overview { grid-template-columns: repeat(2, minmax(90px, 1fr)); } .fcd-actions .note { flex-basis: 100%; } }
 
+    /* ---- Split text into a preview table ---- */
+    dialog#splitTextDlg { width: min(980px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 1rem 1.25rem; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--fg); }
+    dialog#splitTextDlg[open] { display: flex; flex-direction: column; gap: .65rem; }
+    dialog#splitTextDlg::backdrop { background: rgba(0,0,0,.55); }
+    dialog#splitTextDlg h2 { margin: 0; font-size: 1.2rem; }
+    #splitTextNote, #splitTextInfo { margin: 0; color: var(--muted); font-size: .86rem; }
+    .split-controls { display: flex; flex-wrap: wrap; gap: .6rem 1rem; align-items: end; }
+    .split-controls label { display: grid; gap: .25rem; font-size: .84rem; }
+    .split-controls select, .split-controls input { min-height: 2.25rem; max-width: 16rem; padding: .35rem .5rem; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--fg); }
+    #splitCustomWrap[hidden] { display: none; }
+    #splitPreview { min-height: 5rem; max-height: 55vh; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
+    #splitPreview table { border-collapse: collapse; width: max-content; min-width: 100%; }
+    #splitPreview td { border: 1px solid var(--border); padding: .35rem .55rem; max-width: 24rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+    dialog#splitTextDlg .actions { display: flex; gap: .5rem; justify-content: flex-end; flex-wrap: wrap; }
+    @media (max-width: 600px) { dialog#splitTextDlg { padding: .75rem; } .split-controls label { flex: 1 1 8rem; } }
     /* ---- A picture's text (like Notepad) ---- */
     dialog#textView {
       width: min(1100px, calc(100vw - 32px)); height: calc(100vh - 48px); padding: 1rem 1.25rem;
@@ -991,6 +1006,7 @@
         <div id="documentMenu" class="menu" role="menu" hidden>
           <div class="menu-label">Document panels</div>
           <button id="fixErrorsBtn" type="button" role="menuitem" disabled title="Review detected issues and safe corrections">🛠 Fix errors<span>Review problems before applying any changes</span></button>
+          <button id="splitTextBtn" type="button" role="menuitem" disabled title="Split text into a safe table preview">↔ Split text into table<span>Choose a separator and arrange the words into rows and columns</span></button>
           <button id="tocBtn" type="button" role="menuitem" aria-pressed="false" disabled title="Show/hide the table of contents (Ctrl+Shift+O)">📑 Contents</button>
           <button id="imgBtn" type="button" role="menuitem" aria-pressed="false" disabled title="Show/hide the list of pictures in this document (Ctrl+Shift+G)">🖼️ Images</button>
           <button id="linkBtn" type="button" role="menuitem" aria-pressed="false" disabled title="Show/hide the list of links in this document (Ctrl+Shift+L)">🔗 Links</button>
@@ -1156,6 +1172,41 @@
     </div>
   </dialog>
 
+  <dialog id="splitTextDlg" aria-labelledby="splitTextTitle">
+    <h2 id="splitTextTitle">↔ Split text into a table</h2>
+    <p id="splitTextNote">Choose how to split this file and how tokens fill the table. The original file stays unchanged.</p>
+    <div class="split-controls">
+      <label>Separator
+        <select id="splitSeparator">
+          <option value="whitespace">Any whitespace</option>
+          <option value=",">Comma</option>
+          <option value=";">Semicolon</option>
+          <option value="tab">Tab</option>
+          <option value="|">Vertical bar</option>
+          <option value="custom">Custom text</option>
+        </select>
+      </label>
+      <label id="splitCustomWrap" hidden>Custom separator
+        <input id="splitCustom" type="text" maxlength="32" autocomplete="off" spellcheck="false" aria-label="Custom separator">
+      </label>
+      <label>Fill order
+        <select id="splitFillOrder">
+          <option value="across">Across rows, then wrap</option>
+          <option value="down">Down columns, then next column</option>
+        </select>
+      </label>
+      <label>Columns
+        <input id="splitColumnCount" type="number" min="1" max="50" value="4" inputmode="numeric">
+      </label>
+    </div>
+    <p id="splitTextInfo" role="status" aria-live="polite"></p>
+    <div id="splitPreview" aria-label="Split text table preview"></div>
+    <div class="actions">
+      <button id="splitCopyBtn" class="btn secondary" type="button" disabled>⧉ Copy TSV</button>
+      <button id="splitSaveBtn" class="btn secondary" type="button" disabled>⬇ Save CSV</button>
+      <button id="splitCloseBtn" class="btn" type="button">Close</button>
+    </div>
+  </dialog>
   <dialog id="textView" aria-labelledby="tvTitle">
     <div class="tv-head"><h2 id="tvTitle">Picture</h2><span id="tvInfo"></span></div>
     <div id="tvBody"></div>

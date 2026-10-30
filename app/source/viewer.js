@@ -5082,9 +5082,12 @@ wireDropdown(document.getElementById('compareMenuBtn'), document.getElementById(
   onSelect: item => item.id === 'cmpBtn' ? openCompare() : openFolderCompare()
 });
 const documentMenuBtn = document.getElementById('documentMenuBtn');
+const splitTextBtn = document.getElementById('splitTextBtn');
 const documentMenu = document.getElementById('documentMenu');
 const documentMenuGroup = document.getElementById('documentMenuGroup');
 function updateDocumentMenuAvailability() {
+  const kind = currentPath ? typeOf(currentPath) : null;
+  splitTextBtn.disabled = !(kind && kind.id !== 'xlsx' && !currentBinary && typeof currentSource === 'string');
   const items = [...documentMenu.querySelectorAll('[role^="menuitem"]')];
   for (const item of items) item.hidden = item.disabled;
   const available = items.some(item => !item.hidden);
@@ -5095,6 +5098,108 @@ function updateDocumentMenuAvailability() {
   }
 }
 wireDropdown(documentMenuBtn, documentMenu);
+
+const splitTextDlg = document.getElementById('splitTextDlg');
+const splitSeparator = document.getElementById('splitSeparator');
+const splitCustomWrap = document.getElementById('splitCustomWrap');
+const splitCustom = document.getElementById('splitCustom');
+const splitFillOrder = document.getElementById('splitFillOrder');
+const splitColumnCount = document.getElementById('splitColumnCount');
+const splitTextInfo = document.getElementById('splitTextInfo');
+const splitPreview = document.getElementById('splitPreview');
+const splitCopyBtn = document.getElementById('splitCopyBtn');
+const splitSaveBtn = document.getElementById('splitSaveBtn');
+let splitRows = [];
+
+function makeSplitRows() {
+  const source = currentSource || '';
+  if (source.length > 2 * 1024 * 1024) throw new Error('This tool supports files up to 2 MB to keep the preview responsive.');
+  const mode = splitSeparator.value;
+  let tokens;
+  if (mode === 'whitespace') tokens = source.trim() ? source.trim().split(/\s+/) : [];
+  else if (mode === 'custom') {
+    const delimiter = splitCustom.value;
+    if (!delimiter) throw new Error('Enter a custom separator.');
+    tokens = source.split(delimiter);
+  } else {
+    const delimiter = mode === 'tab' ? '\t' : mode;
+    tokens = parseDelimited(source, delimiter).flat();
+  }
+  tokens = tokens.map(token => String(token).trim()).filter(Boolean);
+  if (tokens.length > 100000) throw new Error('The split result exceeds 100,000 tokens.');
+  const columns = Math.max(1, Math.min(50, Number.parseInt(splitColumnCount.value, 10) || 1));
+  splitColumnCount.value = columns;
+  if (!tokens.length) return [];
+  const rowCount = Math.ceil(tokens.length / columns);
+  const rows = Array.from({ length: rowCount }, () => Array(columns).fill(''));
+  for (let i = 0; i < tokens.length; i++) {
+    const row = splitFillOrder.value === 'down' ? i % rowCount : Math.floor(i / columns);
+    const column = splitFillOrder.value === 'down' ? Math.floor(i / rowCount) : i % columns;
+    rows[row][column] = tokens[i];
+  }
+  return rows;
+}
+
+function refreshSplitPreview() {
+  splitCustomWrap.hidden = splitSeparator.value !== 'custom';
+  splitPreview.replaceChildren();
+  splitRows = [];
+  try {
+    splitRows = makeSplitRows();
+    if (!splitRows.length) {
+      splitTextInfo.textContent = 'No words were found.';
+      splitCopyBtn.disabled = splitSaveBtn.disabled = true;
+      return;
+    }
+    const table = document.createElement('table');
+    const body = document.createElement('tbody');
+    for (const values of splitRows.slice(0, 500)) {
+      const tr = document.createElement('tr');
+      for (const value of values) {
+        const td = document.createElement('td');
+        td.textContent = value;
+        tr.append(td);
+      }
+      body.append(tr);
+    }
+    table.append(body);
+    splitPreview.append(table);
+    const count = splitRows.reduce((sum, row) => sum + row.filter(Boolean).length, 0);
+    splitTextInfo.textContent = fmt(count) + ' tokens · ' + fmt(splitRows.length) + ' rows · ' + fmt(splitRows[0].length) +
+      ' columns' + (splitRows.length > 500 ? ' · showing first 500 rows' : '');
+    splitCopyBtn.disabled = splitSaveBtn.disabled = false;
+  } catch (error) {
+    splitTextInfo.textContent = error.message;
+    splitCopyBtn.disabled = splitSaveBtn.disabled = true;
+  }
+}
+
+splitTextBtn.addEventListener('click', () => {
+  splitSeparator.value = 'whitespace';
+  splitCustom.value = '';
+  splitFillOrder.value = 'across';
+  splitColumnCount.value = 4;
+  refreshSplitPreview();
+  splitTextDlg.showModal();
+});
+for (const control of [splitSeparator, splitCustom, splitFillOrder, splitColumnCount]) {
+  control.addEventListener('input', refreshSplitPreview);
+  control.addEventListener('change', refreshSplitPreview);
+}
+splitCopyBtn.addEventListener('click', async () => {
+  const text = splitRows.map(row => row.join('\t')).join('\r\n');
+  showToast(await copyToClipboard(text) ? 'Split table copied as tab-separated cells.' : 'Could not copy the split table.');
+});
+splitSaveBtn.addEventListener('click', async () => {
+  const csv = splitRows.map(row => row.map(value => /[",\r\n]/.test(value) ? '"' + value.replace(/"/g, '""') + '"' : value).join(',')).join('\r\n');
+  const base = (currentPath || 'text').split('/').pop().replace(/\.[^.]+$/, '');
+  try {
+    const saved = await saveFileAs(new Blob([String.fromCharCode(0xFEFF) + csv], { type: 'text/csv;charset=utf-8' }), base + '-split.csv',
+      { description: 'CSV table', accept: { 'text/csv': ['.csv'] } });
+    if (saved) showToast('Saved “' + saved + '”.');
+  } catch (error) { showToast('Saving failed: ' + error.message); }
+});
+document.getElementById('splitCloseBtn').addEventListener('click', () => splitTextDlg.close());
 
 const fixErrorsDlg = document.getElementById('fixErrorsDlg');
 const fixErrorsBtn = document.getElementById('fixErrorsBtn');
